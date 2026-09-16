@@ -16,13 +16,13 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
@@ -137,13 +137,12 @@ copy debug\lualibdll.dll ..\..\..\Lib\lualibdll.dll
       <OutputFile>.\Release/LuaLibDll.bsc</OutputFile>
     </Bscmake>
     <PostBuildEvent>
-      <Command>copy Release\lualibdll.lib ..\..\..\Lib\lualibdll.lib
-copy Release\lualibdll.dll ..\..\..\Lib\lualibdll.dll
+      <Command>copy Release\LuaLibDll.lib ..\..\..\Lib\LuaLibDll.lib
+copy Release\LuaLibDll.dll ..\..\..\Lib\LuaLibDll.dll
 md ..\..\..\..\Release\Server\
-copy Release\lualibdll.dll ..\..\..\..\Release\Server\lualibdll.dll
+copy Release\LuaLibDll.dll ..\..\..\..\Release\Server\LuaLibDll.dll
 md ..\..\..\..\Release\Client\
-copy Release\lualibdll.dll ..\..\..\..\Release\Client\lualibdll.dll
-</Command>
+copy Release\LuaLibDll.dll ..\..\..\..\Release\Client\LuaLibDll.dll</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

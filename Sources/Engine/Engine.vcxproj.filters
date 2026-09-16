@@ -861,14 +861,16 @@
     <CustomBuild Include="..\..\Lib\debug\mp3lib.lib">
       <Filter>library files\Debug</Filter>
     </CustomBuild>
-    <CustomBuild Include="..\..\Lib\release\JpgLib.lib">
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="..\..\lib\LuaLibDll.lib">
       <Filter>library files\release</Filter>
-    </CustomBuild>
-    <CustomBuild Include="..\..\Lib\release\LuaLibDll.lib">
+    </Library>
+    <Library Include="..\..\lib\JpgLib.lib">
       <Filter>library files\release</Filter>
-    </CustomBuild>
-    <CustomBuild Include="..\..\Lib\release\mp3lib.lib">
+    </Library>
+    <Library Include="..\..\lib\mp3lib.lib">
       <Filter>library files\release</Filter>
-    </CustomBuild>
+    </Library>
   </ItemGroup>
 </Project>

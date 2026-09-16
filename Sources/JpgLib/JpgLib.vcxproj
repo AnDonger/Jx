@@ -77,6 +77,9 @@
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <OutputFile>.\Release\JpgLib.lib</OutputFile>
     </Lib>
+    <PostBuildEvent>
+      <Command>copy /Y "$(TargetPath)" "$(ProjectDir)..\..\Lib\JpgLib.lib"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -107,6 +110,9 @@
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <OutputFile>.\Debug\JpgLib.lib</OutputFile>
     </Lib>
+    <PostBuildEvent>
+      <Command>copy Debug\JpgLib.lib ..\..\..\Lib\JpgLib.lib</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Src\KJpegColor.c" />
