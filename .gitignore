@@ -43,3 +43,5 @@ Sources/FilterText/FilterText_StaticLib___Win32_Release/FilterText_StaticLib.log
 *.log
 Sources/FilterText/FilterText_StaticLib___Win32_Release/FilterText_StaticLib.log
 .vs/
+Release/Client
+Resources/
