@@ -67,11 +67,13 @@
     <CustomBuild Include="..\..\..\Lib\release\common.lib">
       <Filter>Lib\release</Filter>
     </CustomBuild>
-    <CustomBuild Include="..\..\..\Lib\release\CoreServer.lib">
-      <Filter>Lib\release</Filter>
-    </CustomBuild>
     <CustomBuild Include="..\..\..\Lib\release\engine.lib">
       <Filter>Lib\release</Filter>
     </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="..\..\..\lib\release\Coreserver.lib">
+      <Filter>Lib\release</Filter>
+    </Library>
   </ItemGroup>
 </Project>

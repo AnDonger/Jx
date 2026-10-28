@@ -308,17 +308,12 @@ copy debug\engine.dll ..\..\..\bin\server\debug\engine.dll
       <OutputFile>.\Release/Engine.bsc</OutputFile>
     </Bscmake>
     <PostBuildEvent>
-      <Command>md ..\..\lib\release
-copy release\engine.lib ..\..\lib\release\engine.lib
-md ..\..\..\Release\Client\
-copy release\engine.dll ..\..\..\Release\Client\engine.dll
-copy release\engine.pdb ..\..\..\Release\Client\engine.pdb
-copy release\engine.map ..\..\..\Release\Client\engine.map
-md ..\..\..\Release\Server\
-copy release\engine.dll ..\..\..\Release\Server\engine.dll
-copy release\engine.pdb ..\..\..\Release\Server\engine.pdb
-copy release\engine.map ..\..\..\Release\Server\engine.map
-</Command>
+      <Command>md "$(ProjectDir)..\..\lib\release\"
+copy /Y "$(TargetDir)$(TargetName).lib" "$(ProjectDir)..\..\lib\release\$(TargetName).lib"
+md "$(ProjectDir)..\..\Release\Server\"
+copy /Y "$(TargetPath)" "$(ProjectDir)..\..\Release\Server\$(TargetFileName)"
+copy /Y "$(TargetDir)$(TargetName).pdb" "$(ProjectDir)..\..\Release\Server\$(TargetName).pdb"
+copy /Y "$(TargetDir)$(TargetName).map" "$(ProjectDir)..\..\Release\Server\$(TargetName).map"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

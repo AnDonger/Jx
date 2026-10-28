@@ -102,6 +102,7 @@ public:
 
 #ifdef _SERVER
 #include	<list>
+#include    <string>
 #endif
 
 class KPlayerChat

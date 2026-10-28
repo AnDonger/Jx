@@ -16,13 +16,13 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
@@ -95,14 +95,10 @@
       <OutputFile>.\Release/Rainbow.bsc</OutputFile>
     </Bscmake>
     <PostBuildEvent>
-      <Command>md ..\..\..\Release\Client\
-copy release\Rainbow.dll ..\..\..\..\Release\Client\Rainbow.dll
-copy release\Rainbow.pdb ..\..\..\..\Release\Client\Rainbow.pdb
-copy release\Rainbow.map ..\..\..\..\Release\Client\Rainbow.map
-md ..\..\..\Release\Server\
-copy release\Rainbow.dll ..\..\..\..\Release\Server\Rainbow.dll
-copy release\Rainbow.pdb ..\..\..\..\Release\Server\Rainbow.pdb
-copy release\Rainbow.map ..\..\..\..\Release\Server\Rainbow.map
+      <Command>md "$(ProjectDir)..\..\..\Release\Server\"
+copy /Y "$(TargetPath)" "$(ProjectDir)..\..\..\Release\Server\$(TargetFileName)"
+copy /Y "$(TargetDir)$(TargetName).pdb" "$(ProjectDir)..\..\..\Release\Server\$(TargetName).pdb"
+copy /Y "$(TargetDir)$(TargetName).map" "$(ProjectDir)..\..\..\Release\Server\$(TargetName).map"
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>

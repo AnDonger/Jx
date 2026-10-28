@@ -16,13 +16,13 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
@@ -95,11 +95,10 @@
       <OutputFile>.\Release/GameServer.bsc</OutputFile>
     </Bscmake>
     <PostBuildEvent>
-      <Command>md ..\..\..\..\Release\Server\
-copy Release\GameServer.exe ..\..\..\..\Release\Server\GameServer.exe
-copy Release\GameServer.pdb ..\..\..\..\Release\Server\GameServer.pdb
-copy Release\GameServer.map ..\..\..\..\Release\Server\GameServer.map
-</Command>
+      <Command>md "$(ProjectDir)..\..\..\Release\Server\"
+copy /Y "$(TargetPath)" "$(ProjectDir)..\..\..\Release\Server\$(TargetFileName)"
+copy /Y "$(TargetDir)$(TargetName).pdb" "$(ProjectDir)..\..\..\Release\Server\$(TargetName).pdb"
+copy /Y "$(TargetDir)$(TargetName).map" "$(ProjectDir)..\..\..\Release\Server\$(TargetName).map"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -177,15 +176,15 @@ copy debug\GameServer.exe ..\..\..\..\bin\Server\debug\GameServer.exe
     <CustomBuild Include="..\..\..\Lib\release\common.lib">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
     </CustomBuild>
-    <CustomBuild Include="..\..\..\Lib\release\CoreServer.lib">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
-    </CustomBuild>
     <CustomBuild Include="..\..\..\Lib\release\engine.lib">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
     <Text Include="ReadMe.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="..\..\..\lib\release\Coreserver.lib" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

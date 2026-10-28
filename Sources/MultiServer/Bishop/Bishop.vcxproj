@@ -96,8 +96,8 @@
       <OutputFile>.\Release/Bishop.bsc</OutputFile>
     </Bscmake>
     <PostBuildEvent>
-      <Command>md "$(ProjectDir)..\..\..\Release\Client\"
-copy /Y "$(TargetPath)" "$(ProjectDir)..\..\..\Release\Client\Bishop.exe"
+      <Command>md "$(ProjectDir)..\..\..\Release\Server\"
+copy /Y "$(TargetPath)" "$(ProjectDir)..\..\..\Release\Server\Bishop.exe"
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>

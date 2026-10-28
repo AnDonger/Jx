@@ -137,12 +137,11 @@ copy debug\lualibdll.dll ..\..\..\Lib\lualibdll.dll
       <OutputFile>.\Release/LuaLibDll.bsc</OutputFile>
     </Bscmake>
     <PostBuildEvent>
-      <Command>copy Release\LuaLibDll.lib ..\..\..\Lib\LuaLibDll.lib
-copy Release\LuaLibDll.dll ..\..\..\Lib\LuaLibDll.dll
-md ..\..\..\..\Release\Server\
-copy Release\LuaLibDll.dll ..\..\..\..\Release\Server\LuaLibDll.dll
-md ..\..\..\..\Release\Client\
-copy Release\LuaLibDll.dll ..\..\..\..\Release\Client\LuaLibDll.dll</Command>
+      <Command>md "$(ProjectDir)..\..\..\lib\"
+md "$(ProjectDir)..\..\..\Release\Server\"
+copy /Y "$(TargetPath)" "$(ProjectDir)..\..\..\lib\$(TargetFileName)"
+copy /Y "$(TargetDir)$(TargetName).lib" "$(ProjectDir)..\..\..\lib\$(TargetName).lib"
+copy /Y "$(TargetPath)" "$(ProjectDir)..\..\..\Release\Server\$(TargetFileName)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

@@ -20,29 +20,30 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{585F380B-3EA4-4F24-9819-91C150872957}</ProjectGuid>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Client Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Server Release|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Client Release|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Server Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
@@ -80,9 +81,10 @@
     <LinkIncremental>false</LinkIncremental>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Server Release|Win32'">
-    <OutDir>.\ServerRelease\</OutDir>
-    <IntDir>.\ServerRelease\</IntDir>
+    <OutDir>.\Release\</OutDir>
+    <IntDir>.\Release\</IntDir>
     <LinkIncremental>false</LinkIncremental>
+    <TargetName>Coreserver</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Client Debug|Win32'">
     <OutDir>.\ClientDebug\</OutDir>
@@ -241,15 +243,15 @@ copy ClientRelease\CoreClient.lib ..\..\lib\release\CoreClient.lib
       <Culture>0x0804</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>odbc32.lib;odbccp32.lib;lualibdll.lib;Ws2_32.lib;Winmm.lib;Shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <OutputFile>ServerRelease\CoreServer.dll</OutputFile>
+      <AdditionalDependencies>odbc32.lib;odbccp32.lib;LualibDll.lib;Ws2_32.lib;Winmm.lib;Shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>Release\Coreserver.dll</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalLibraryDirectories>..\..\Lib\release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>..\..\Lib;..\..\Lib\release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <ProgramDatabaseFile>.\ServerRelease/CoreServer.pdb</ProgramDatabaseFile>
+      <ProgramDatabaseFile>.\Release/Coreserver.pdb</ProgramDatabaseFile>
       <GenerateMapFile>true</GenerateMapFile>
-      <MapFileName>.\ServerRelease/CoreServer.map</MapFileName>
-      <ImportLibrary>.\ServerRelease/CoreServer.lib</ImportLibrary>
+      <MapFileName>.\Release/Coreserver.map</MapFileName>
+      <ImportLibrary>.\Release/Coreserver.lib</ImportLibrary>
       <TargetMachine>MachineX86</TargetMachine>
     </Link>
     <Bscmake>
@@ -257,13 +259,12 @@ copy ClientRelease\CoreClient.lib ..\..\lib\release\CoreClient.lib
       <OutputFile>.\ServerRelease/Core.bsc</OutputFile>
     </Bscmake>
     <PostBuildEvent>
-      <Command>md ..\..\..\Release\Server
-md ..\..\lib\release
-copy ServerRelease\CoreServer.map ..\..\..\Release\Server\Coreserver.map
-copy ServerRelease\CoreServer.pdb ..\..\..\Release\Server\Coreserver.pdb
-copy ServerRelease\CoreServer.dll ..\..\..\Release\Server\Coreserver.dll
-copy ServerRelease\CoreServer.lib ..\..\lib\release\CoreServer.lib
-</Command>
+      <Command>md "$(ProjectDir)..\..\..\Release\Server\"
+md "$(ProjectDir)..\..\lib\release\"
+copy /Y "$(TargetDir)$(TargetName).map" "$(ProjectDir)..\..\Release\Server\$(TargetName).map"
+copy /Y "$(TargetDir)$(TargetName).pdb" "$(ProjectDir)..\..\Release\Server\$(TargetName).pdb"
+copy /Y "$(TargetPath)" "$(ProjectDir)..\..\Release\Server\$(TargetFileName)"
+copy /Y "$(TargetDir)$(TargetName).lib" "$(ProjectDir)..\..\lib\release\$(TargetName).lib"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Client Debug|Win32'">
@@ -655,6 +656,7 @@ copy ClientDebug\CoreClient.lib ..\..\lib\debug\CoreClient.lib
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Client Release|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Server Release|Win32'">true</ExcludedFromBuild>
     </CustomBuild>
+    <Library Include="..\..\lib\LuaLibDll.lib" />
     <Library Include="Src\USBKey\EP1KDL20.LIB" />
     <Library Include="Src\USBKey\EpsForJoLib.lib" />
   </ItemGroup>

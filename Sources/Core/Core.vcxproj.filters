@@ -606,6 +606,9 @@
     <Library Include="Src\USBKey\EpsForJoLib.lib">
       <Filter>USBKey</Filter>
     </Library>
+    <Library Include="..\..\lib\LuaLibDll.lib">
+      <Filter>Lib\Release</Filter>
+    </Library>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Src\KNewProtocolProcess.h">
