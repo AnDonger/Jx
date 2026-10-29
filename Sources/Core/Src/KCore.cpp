@@ -212,7 +212,8 @@ CORE_API void g_InitCore()
 	g_TeamSet.Init();
 	
 //	g_SetFilePath("\\");
-	g_SubWorldSet.Load("\\maps\\WorldSet.ini");
+	if (!g_SubWorldSet.Load("\\settings\\maplist.ini"))
+		printf("[MapList] No usable game world was loaded.\n");
 	g_WorldScript.Init();
 	g_WorldScript.RegisterFunctions(WorldScriptFuns, g_GetWorldScriptFunNum());
 		

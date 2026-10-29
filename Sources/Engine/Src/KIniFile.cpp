@@ -1209,7 +1209,7 @@ BOOL KIniFile::GetNextKey(LPCSTR pSection, LPCSTR pKey, LPSTR pNextKey)
 	if (!pKey[0])
 	{
 		//	Ã»ÓÐKey£¬·µ»ØÊ§°Ü
-		if (!pNextKeyNode->pKey)
+		if (!pNextKeyNode || !pNextKeyNode->pKey)
 		{
 			return FALSE;
 		}

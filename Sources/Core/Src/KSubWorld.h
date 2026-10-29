@@ -2,7 +2,7 @@
 #define	KWorldH
 
 #ifdef _SERVER
-#define	MAX_SUBWORLD	80
+#define	MAX_SUBWORLD	255
 #else
 #define	MAX_SUBWORLD	1
 #endif

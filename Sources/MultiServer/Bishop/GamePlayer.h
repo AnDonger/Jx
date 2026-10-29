@@ -175,6 +175,10 @@ private:
 
 	OnlineGameLib::Win32::_tstring	m_sAccountName;
 	OnlineGameLib::Win32::_tstring	m_sPassword;
+	DWORD m_dwLoginCryptSign;
+	WORD m_wLoginProtocolVersion;
+	bool m_bCurrentLogin;
+	BYTE m_LoginPassword[64];
 	OnlineGameLib::Win32::_tstring	m_sRoleName;
 
     bool    m_bUseSuperPassword;

@@ -304,8 +304,14 @@ void CSmartClient::_Verify(IClient* pClient, bool bDisconnect)
 	/*
 	* Wait for write back
 	*/
+	DWORD dwVerifyStarted = GetTickCount();
 	while ( pClient )
 	{
+		if ( GetTickCount() - dwVerifyStarted >= 15000 )
+		{
+			SetClientStatus( enumClientError );
+			break;
+		}
 		if ( !IsVerifying() )
 		{
 			break;	//因为正常的状态变化引起的退出

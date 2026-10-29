@@ -11,9 +11,7 @@
 //---------------------------------------------------------------------------
 #include "KFile.h"
 
-#ifndef _SERVER
 #include "XPackFile.h"
-#endif
 
 //---------------------------------------------------------------------------
 ENGINE_API void g_SetPakFileMode(int nFileMode);
@@ -34,9 +32,8 @@ public:
 	BOOL		Save(const char* pszFileName);
 private:
 	KFile		m_File;			// 真实文件(不在包中)
-	#ifndef _SERVER
-		XPackElemFileRef	m_PackRef;
-	#endif
+	// Engine.dll 与服务端 Core 必须使用相同的对象布局。
+	XPackElemFileRef	m_PackRef;
 };
 
 //---------------------------------------------------------------------------

@@ -59,6 +59,7 @@ public:
 #ifdef _SERVER
 	// 载入服务器端地图上本region 的 object数据（包括npc、trap、box等）
 	BOOL		LoadObject(int nSubWorld, int nX, int nY);
+	BOOL		LoadServerObject(int nSubWorld, int nX, int nY);
 	// 载入服务器端地图上本 region 的障碍数据
 	BOOL		LoadServerObstacle(KPakFile *pFile, DWORD dwDataSize);
 	// 载入服务器端地图上本 region 的 trap 数据

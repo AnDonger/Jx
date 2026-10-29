@@ -15,6 +15,90 @@
 
 #include "SmartClient.h"
 
+#include "../../Engine/Src/KWin32.h"
+#include "../../Engine/Src/KCodec.h"
+
+#include <wincrypt.h>
+#include <time.h>
+
+#pragma comment( lib, "Advapi32.lib" )
+
+// Decode the current client's CPinCrypt field before using the existing account service.
+static bool DecodeLoginPassword( BYTE password[64], DWORD cryptSign, char md5[33] )
+{
+	BYTE first = password[0];
+	password[0] = ~password[63];
+	password[63] = ~first;
+
+	char key[32];
+	key[0] = password[0];
+	key[1] = password[63];
+	memcpy( key + 2, "kSbzFS", 6 );
+	int digits = sprintf( key + 8, "%x", cryptSign );
+
+	HCRYPTPROV provider = 0;
+	HCRYPTHASH hash = 0;
+	BYTE summary[16];
+	DWORD summarySize = sizeof( summary );
+	bool result = false;
+
+	if ( CryptAcquireContext( &provider, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT ) &&
+		CryptCreateHash( provider, CALG_MD5, 0, 0, &hash ) &&
+		CryptHashData( hash, reinterpret_cast< BYTE * >( key ), 8 + digits, 0 ) &&
+		CryptGetHashParam( hash, HP_HASHVAL, summary, &summarySize, 0 ) &&
+		summarySize == sizeof( summary ) )
+	{
+		for ( size_t i = 0; i < sizeof( summary ); ++i )
+		{
+			summary[i] = ~summary[i];
+		}
+		for ( size_t offset = 0; offset < sizeof( summary ); offset += 5 )
+		{
+			size_t end = offset + 5;
+			if ( end > sizeof( summary ) )
+			{
+				end = sizeof( summary );
+			}
+			for ( size_t left = offset, right = end - 1; left < right; ++left, --right )
+			{
+				BYTE value = summary[left];
+				summary[left] = summary[right];
+				summary[right] = value;
+			}
+		}
+		for ( size_t i = 1; i < 63; ++i )
+		{
+			password[i] ^= summary[( i - 1 ) % sizeof( summary )];
+		}
+
+		result = true;
+		for ( size_t i = 0; i < 32; ++i )
+		{
+			BYTE value = password[i];
+			if ( !( value >= '0' && value <= '9' ) &&
+				!( value >= 'a' && value <= 'f' ) &&
+				!( value >= 'A' && value <= 'F' ) )
+			{
+				result = false;
+				break;
+			}
+			md5[i] = value >= 'a' && value <= 'f' ? value - 'a' + 'A' : value;
+		}
+		md5[32] = '\0';
+	}
+	if ( hash )
+	{
+		CryptDestroyHash( hash );
+	}
+	if ( provider )
+	{
+		CryptReleaseContext( provider, 0 );
+	}
+	SecureZeroMemory( key, sizeof( key ) );
+	SecureZeroMemory( summary, sizeof( summary ) );
+	return result;
+}
+
 using OnlineGameLib::Win32::Output;
 using OnlineGameLib::Win32::CException;
 using OnlineGameLib::Win32::CCriticalSection;
@@ -271,6 +355,9 @@ CGamePlayer::CGamePlayer( UINT nIdentityID /*  = ( UINT )( -1 ) */ )
 				, m_nCurrentTaskID( 0 )
 				, m_nAttachServerID( -1 )
 				, m_bActiveStatus( false )
+				, m_dwLoginCryptSign( 0 )
+				, m_wLoginProtocolVersion( 0 )
+				, m_bCurrentLogin( true )
 				, m_dwTaskBeginTimer( 0 )
 				, m_dwTaskTotalTimer( 0 )
 				, m_bAutoUnlockAccount( false )
@@ -310,7 +397,32 @@ bool CGamePlayer::Active()
 
 	::InterlockedExchangeAdd( &m_lnWorkingCounts, 1 );
 
-	return true;
+	m_bCurrentLogin = true;
+	m_wLoginProtocolVersion = 0;
+	ZeroMemory( m_LoginPassword, sizeof( m_LoginPassword ) );
+
+	GUID challenge;
+	if ( FAILED( CoCreateGuid( &challenge ) ) )
+	{
+		m_pPlayerServer->ShutdownClient( m_lnIdentityID );
+		return false;
+	}
+	m_dwLoginCryptSign = challenge.Data1;
+
+	BYTE packet[1 + sizeof( KLoginAccountInfoCurrent )];
+	ZeroMemory( packet, sizeof( packet ) );
+	packet[0] = s2c_login;
+	KLoginAccountInfoCurrent *pLogin =
+		reinterpret_cast< KLoginAccountInfoCurrent * >( packet + 1 );
+	pLogin->Size = sizeof( *pLogin );
+	pLogin->Param = LOGIN_A_INITIALIZE;
+	pLogin->nLeftTime = m_dwLoginCryptSign;
+
+	HRESULT result = m_pPlayerServer->SendData( m_lnIdentityID, packet, sizeof( packet ) );
+	OnlineGameLib::Win32::TraceNetworkData(
+		"stage=login_initialize slot=" + OnlineGameLib::Win32::ToString( m_lnIdentityID ) +
+		" result=" + OnlineGameLib::Win32::ToString( result ), packet, sizeof( packet ) );
+	return SUCCEEDED( result );
 }
 
 bool CGamePlayer::Inactive()
@@ -735,7 +847,53 @@ UINT CGamePlayer::WaitForAccPwd()
 	 
 	if ( pRetBuffer )
 	{
+		if ( pRetBuffer->GetUsed() == 1 + sizeof( KLoginAccountInfoCurrent ) )
+		{
+			KLoginAccountInfoCurrent login;
+			memcpy( &login, pRetBuffer->GetBuffer() + 1, sizeof( login ) );
+			m_bCurrentLogin = true;
+			m_wLoginProtocolVersion = login.ProtocolVersion;
+			char md5[33] = { 0 };
+			bool valid = login.Size == sizeof( login ) &&
+				login.Param == ( LOGIN_A_LOGIN | LOGIN_R_REQUEST ) &&
+				memchr( login.Account, 0, sizeof( login.Account ) ) != NULL &&
+				login.Account[0] != 0 &&
+				DecodeLoginPassword( login.Password, m_dwLoginCryptSign, md5 );
+			if ( valid )
+			{
+				m_sAccountName = login.Account;
+				m_sPassword = md5;
+				memcpy( m_LoginPassword, login.Password, sizeof( m_LoginPassword ) );
+				m_bUseSuperPassword = false;
+			}
+			else
+			{
+				_VerifyAccount_ToPlayer( LOGIN_A_LOGIN | LOGIN_R_ACCOUNT_OR_PASSWORD_ERROR, 0 );
+			}
+			OnlineGameLib::Win32::TraceNetworkData(
+				"stage=login_request slot=" + OnlineGameLib::Win32::ToString( m_lnIdentityID ) +
+				" valid=" + OnlineGameLib::Win32::ToString( valid ), NULL, 0 );
+			SecureZeroMemory( md5, sizeof( md5 ) );
+			SecureZeroMemory( &login, sizeof( login ) );
+			SAFE_RELEASE( pRetBuffer );
+			return valid ? enumToNextTask : enumError;
+		}
+		if ( pRetBuffer->GetUsed() != 1 + sizeof( KLoginAccountInfo ) )
+		{
+			SAFE_RELEASE( pRetBuffer );
+			m_pPlayerServer->ShutdownClient( m_lnIdentityID );
+			return enumError;
+		}
+		m_bCurrentLogin = false;
 		KLoginAccountInfo* pLAI = ( KLoginAccountInfo * )( pRetBuffer->GetBuffer() + 1/* size of a protocol byte */ );
+		if ( pLAI->Size != sizeof( *pLAI ) ||
+			pLAI->Param != ( LOGIN_A_LOGIN | LOGIN_R_REQUEST ) ||
+			!memchr( pLAI->Account, 0, sizeof( pLAI->Account ) ) ||
+			!memchr( pLAI->Password.szPassword, 0, sizeof( pLAI->Password.szPassword ) ) )
+		{
+			SAFE_RELEASE( pRetBuffer );
+			return enumError;
+		}
 
 		UINT nNextTask = enumError;
 
@@ -968,6 +1126,31 @@ UINT CGamePlayer::VerifyAccount()
 
 bool CGamePlayer::_VerifyAccount_ToPlayer( UINT nQueryResult, unsigned long nLeftTime)
 {
+	if ( m_bCurrentLogin )
+	{
+		BYTE packet[1 + sizeof( KLoginAccountInfoCurrent )];
+		ZeroMemory( packet, sizeof( packet ) );
+		packet[0] = s2c_login;
+		KLoginAccountInfoCurrent *pLogin =
+			reinterpret_cast< KLoginAccountInfoCurrent * >( packet + 1 );
+		pLogin->Size = sizeof( *pLogin );
+		pLogin->Param = nQueryResult;
+		memcpy( pLogin->Account, m_sAccountName.c_str(),
+			m_sAccountName.size() < sizeof( pLogin->Account ) ?
+			m_sAccountName.size() : sizeof( pLogin->Account ) - 1 );
+		memcpy( pLogin->Password, m_LoginPassword, sizeof( pLogin->Password ) );
+		pLogin->ProtocolVersion = m_wLoginProtocolVersion;
+		if ( ( nQueryResult & 0xffff ) == LOGIN_R_SUCCESS )
+		{
+			pLogin->nLeftTime = static_cast< DWORD >( time( NULL ) ) + nLeftTime;
+		}
+		HRESULT result = m_pPlayerServer->SendData( m_lnIdentityID, packet, sizeof( packet ) );
+		OnlineGameLib::Win32::TraceNetworkData(
+			"stage=login_result slot=" + OnlineGameLib::Win32::ToString( m_lnIdentityID ) +
+			" status=" + OnlineGameLib::Win32::ToString( nQueryResult & 0xffff ), NULL, 0 );
+		return SUCCEEDED( result );
+	}
+
 	KLoginAccountInfo lai;
 
 	ZeroMemory( &lai, sizeof( KLoginAccountInfo ) );
@@ -1070,11 +1253,68 @@ UINT CGamePlayer::ProcessRoleList()
 
 		if ( nRoleCount >= 0 )
 		{
-			m_theDataQueue[enumOwnerPlayer].Empty();
+			bool sent = false;
+			if ( m_bCurrentLogin )
+			{
+				size_t headerSize = sizeof( TProcessData ) - 1;
+				size_t expectedSize = headerSize + 1 +
+					nRoleCount * sizeof( S3DBI_RoleBaseInfo );
+				if ( nRoleCount <= s_nRoleListCount &&
+					pRetBuffer->GetUsed() == expectedSize &&
+					pPD->nDataLen == expectedSize - headerSize )
+				{
+					KLoginRoleInfoCurrent roles[3];
+					ZeroMemory( roles, sizeof( roles ) );
+					const S3DBI_RoleBaseInfo *pRoles =
+						reinterpret_cast< const S3DBI_RoleBaseInfo * >( pPD->pDataBuffer + 1 );
+					for ( int i = 0; i < nRoleCount; ++i )
+					{
+						memcpy( roles[i].Name, pRoles[i].szName, sizeof( roles[i].Name ) - 1 );
+						roles[i].Sex = pRoles[i].Sex;
+						roles[i].Series = pRoles[i].Series;
+						roles[i].Level = pRoles[i].Level;
+					}
 
-			m_pPlayerServer->SendData( m_lnIdentityID, pRetBuffer->GetBuffer(), pRetBuffer->GetUsed() );
+					BYTE packet[2048];
+					ZeroMemory( packet, sizeof( packet ) );
+					KLoginRoleListCurrent *pList =
+						reinterpret_cast< KLoginRoleListCurrent * >( packet );
+					pList->ProtocolType = s2c_roleserver_getrolelist_result;
+					pList->Identity = pPD->ulIdentity;
+					pList->RoleCount = nRoleCount;
 
-			nNextTask = enumSelAddDelRole;
+					KCodec *pCodec = NULL;
+					g_InitCodec( &pCodec, CODEC_LZO );
+					TCodeInfo info;
+					ZeroMemory( &info, sizeof( info ) );
+					info.lpData = reinterpret_cast< BYTE * >( roles );
+					info.dwDataLen = nRoleCount * sizeof( roles[0] );
+					info.lpPack = pList->Data;
+					if ( pCodec &&
+						pCodec->GetPackLen( info.dwDataLen ) <= sizeof( packet ) - sizeof( *pList ) + 1 &&
+						pCodec->Encode( &info ) &&
+						info.dwPackLen <= sizeof( packet ) - sizeof( *pList ) + 1 )
+					{
+						pList->DataLength = info.dwPackLen;
+						size_t packetSize = sizeof( *pList ) - 1 + info.dwPackLen;
+						sent = SUCCEEDED( m_pPlayerServer->SendData( m_lnIdentityID, packet, packetSize ) );
+						OnlineGameLib::Win32::TraceNetworkData(
+							"stage=login_rolelist slot=" + OnlineGameLib::Win32::ToString( m_lnIdentityID ) +
+							" count=" + OnlineGameLib::Win32::ToString( nRoleCount ), packet, packetSize );
+					}
+					g_FreeCodec( &pCodec, CODEC_LZO );
+				}
+			}
+			else
+			{
+				sent = SUCCEEDED( m_pPlayerServer->SendData( m_lnIdentityID,
+					pRetBuffer->GetBuffer(), pRetBuffer->GetUsed() ) );
+			}
+			if ( sent )
+			{
+				m_theDataQueue[enumOwnerPlayer].Empty();
+				nNextTask = enumSelAddDelRole;
+			}
 		}
 
 		SAFE_RELEASE( pRetBuffer );

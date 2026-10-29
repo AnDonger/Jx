@@ -101,6 +101,9 @@ extern "C" __declspec(dllexport)
 iCoreServerShell* CoreGetServerShell()
 {
 	g_InitCore();
+	DWORD dwMapID;
+	if (!g_CoreServerShell.GetGameData(SGDI_LOADEDMAP_ID, (unsigned int)&dwMapID, sizeof(dwMapID)))
+		return NULL;
 	return &g_CoreServerShell;
 }
 
@@ -290,22 +293,13 @@ int	CoreServerShell::GetGameData(unsigned int uDataId, unsigned int uParam, int 
 		}
 		break;
 	case SGDI_LOADEDMAP_ID:
-		if (uParam)
+		if (uParam && nParam > 0)
 		{
-			int i;
-			int nMax = nParam;
-			if(nMax < MAX_SUBWORLD) nMax = MAX_SUBWORLD;
-			for (i = 0; i < nMax; i++)
+			int nMax = nParam / sizeof(DWORD);
+			for (int i = 0; i < MAX_SUBWORLD && nRet < nMax; i++)
 			{
-				if (SubWorld[i].m_SubWorldID != -1)
-				{
-					((char *)uParam)[i] = (char)SubWorld[i].m_SubWorldID;
-				}
-				else
-				{
-					nRet = i;
-					break;
-				}
+				if (SubWorld[i].m_SubWorldID > 0)
+					((DWORD*)uParam)[nRet++] = SubWorld[i].m_SubWorldID;
 			}
 		}
 		break;

@@ -99,6 +99,122 @@ void Trace( const _tstring &progID, const _tstring &message )
 #endif
 }
 
+void TraceNetworkData( const _tstring &message, const BYTE *pData, size_t dataLength )
+{
+	static CCriticalSection criticalSection;
+	static DWORD dwLogDate = 0;
+	static unsigned uFileNumber = 0;
+
+	try
+	{
+		CCriticalSection::Owner lock( criticalSection );
+
+		SYSTEMTIME time;
+		::GetLocalTime( &time );
+		DWORD dwDate = time.wYear * 10000 + time.wMonth * 100 + time.wDay;
+		if ( dwDate != dwLogDate )
+		{
+			dwLogDate = dwDate;
+			uFileNumber = 0;
+		}
+
+		char szPath[MAX_PATH];
+		DWORD dwLength = ::GetModuleFileNameA( NULL, szPath, sizeof( szPath ) );
+		if ( dwLength == 0 || dwLength >= sizeof( szPath ) )
+		{
+			::OutputDebugStringA( "TraceNetworkData: executable path unavailable\n" );
+			return;
+		}
+
+		char *pName = strrchr( szPath, '\\' );
+		if ( !pName )
+		{
+			return;
+		}
+		std::string processName( pName + 1 );
+		*( pName + 1 ) = 0;
+		std::string directory( szPath );
+		directory += "logs";
+		if ( !::CreateDirectoryA( directory.c_str(), NULL ) && ::GetLastError() != ERROR_ALREADY_EXISTS )
+		{
+			::OutputDebugStringA( "TraceNetworkData: cannot create logs directory\n" );
+			return;
+		}
+		directory += "\\Network";
+		if ( !::CreateDirectoryA( directory.c_str(), NULL ) && ::GetLastError() != ERROR_ALREADY_EXISTS )
+		{
+			::OutputDebugStringA( "TraceNetworkData: cannot create Network directory\n" );
+			return;
+		}
+
+		char szHeader[160];
+		_snprintf_s( szHeader, sizeof( szHeader ), _TRUNCATE,
+			"%04u-%02u-%02u %02u:%02u:%02u.%03u pid=%lu tid=%lu ",
+			time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute,
+			time.wSecond, time.wMilliseconds, ::GetCurrentProcessId(), ::GetCurrentThreadId() );
+
+		USES_CONVERSION;
+		std::string record( szHeader );
+		record += T2A( const_cast< PTSTR >( message.c_str() ) );
+		record += " bytes=";
+		record += T2A( const_cast< PTSTR >( ToString( dataLength ).c_str() ) );
+		record += " hex=";
+		if ( pData && dataLength )
+		{
+			record += T2A( const_cast< PTSTR >( HexToString( pData, dataLength ).c_str() ) );
+		}
+		record += "\r\n";
+
+		HANDLE hFile = INVALID_HANDLE_VALUE;
+		for ( ;; )
+		{
+			char szName[MAX_PATH];
+			_snprintf_s( szName, sizeof( szName ), _TRUNCATE, "\\%s-%lu-%08lu-%03u.log",
+				processName.c_str(), ::GetCurrentProcessId(), dwDate, uFileNumber );
+			std::string fileName = directory + szName;
+			hFile = ::CreateFileA( fileName.c_str(), FILE_APPEND_DATA | FILE_READ_ATTRIBUTES,
+				FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+			if ( hFile == INVALID_HANDLE_VALUE )
+			{
+				::OutputDebugStringA( "TraceNetworkData: cannot open request log\n" );
+				return;
+			}
+
+			LARGE_INTEGER fileSize;
+			if ( !::GetFileSizeEx( hFile, &fileSize ) )
+			{
+				::CloseHandle( hFile );
+				::OutputDebugStringA( "TraceNetworkData: cannot query request log size\n" );
+				return;
+			}
+			if ( fileSize.QuadPart < 64 * 1024 * 1024 )
+			{
+				break;
+			}
+			::CloseHandle( hFile );
+			++uFileNumber;
+		}
+
+		size_t offset = 0;
+		while ( offset < record.size() )
+		{
+			DWORD dwWritten = 0;
+			if ( !::WriteFile( hFile, record.data() + offset,
+				static_cast< DWORD >( record.size() - offset ), &dwWritten, NULL ) || dwWritten == 0 )
+			{
+				::OutputDebugStringA( "TraceNetworkData: cannot write complete request log\n" );
+				break;
+			}
+			offset += dwWritten;
+		}
+		::CloseHandle( hFile );
+	}
+	catch( ... )
+	{
+		::OutputDebugStringA( "TraceNetworkData: unexpected logging exception\n" );
+	}
+}
+
 _tstring GetLastErrorMessage( DWORD last_error )
 {
 	TCHAR errmsg[512];

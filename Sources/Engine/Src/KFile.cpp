@@ -51,6 +51,18 @@ BOOL KFile::Open(LPSTR FileName)
 	if (m_hFile != NULL)
 		Close();
 
+	// 当前资源优先，原运行目录作为兼容来源；写文件仍使用原路径。
+	if (g_GetResourceFilePath(PathName, FileName))
+	{
+		m_hFile = fopen(PathName, "rb");
+		if (m_hFile != NULL)
+			return TRUE;
+#ifdef WIN32
+		if (GetFileAttributesA(PathName) != INVALID_FILE_ATTRIBUTES)
+			return FALSE;
+#endif
+	}
+
 	// get full path name
 	g_GetFullPath(PathName, FileName);
 /*#ifndef WIN32

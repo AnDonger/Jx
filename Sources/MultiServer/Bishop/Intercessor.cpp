@@ -656,9 +656,15 @@ bool CIntercessor::AnalyzePlayerRequire( size_t index, const void *pData, size_t
 	{
 	case c2s_login:
 		{
+			if ( datalength != 1 + sizeof( KLoginAccountInfo ) &&
+				datalength != 1 + sizeof( KLoginAccountInfoCurrent ) )
+			{
+				m_pPlayerServer->ShutdownClient( index );
+				return false;
+			}
 			const BYTE *pBuffer = ( const BYTE * )pData + 1;
 
-			KLoginAccountInfo *pLAI = ( KLoginAccountInfo * )pBuffer;
+			KLoginStructHead *pLAI = ( KLoginStructHead * )pBuffer;
 
 			ASSERT( pLAI );
 

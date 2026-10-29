@@ -113,6 +113,9 @@ protected:
 
 	void ProcessCommand( Socket *pSocket,
 				const OnlineGameLib::Win32::CIOBuffer *pBuffer);
+
+	void TraceRequest( Socket *pSocket, LPCTSTR pStage, const BYTE *pData,
+			size_t dataLength, size_t sequence, int protocol, LPCTSTR pDetail );
 	
 private:
 	

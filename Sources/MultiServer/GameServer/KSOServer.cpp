@@ -395,6 +395,7 @@ BOOL KSwordOnLineSever::Init()
 	/*
 	 * Init GameWorld
 	 */
+	g_SetResourcePath("\\..\\..\\Resources");
 	if (m_pCoreServerShell == NULL)
 		m_pCoreServerShell = ::CoreGetServerShell();
 
@@ -2286,28 +2287,21 @@ void KSwordOnLineSever::GatewaySmallPackProcess(const void *pData, size_t dataLe
 	{
 	case s2c_querymapinfo:
 		{
-			tagUpdateMapID *pUMI;
-			char	sMapID[80];
-			
-			int nMapCount = m_pCoreServerShell->GetGameData(SGDI_LOADEDMAP_ID, (unsigned int)&sMapID, sizeof(sMapID));
-			pUMI = ( tagUpdateMapID * )new BYTE[ nMapCount * sizeof(char) + sizeof( tagUpdateMapID ) ];
-			memset( pUMI, 0, nMapCount * sizeof(char) + sizeof( tagUpdateMapID ) );
-			
+			DWORD dwMapID[MAX_GAME_SERVER_MAPS];
+			int nMapCount = m_pCoreServerShell->GetGameData(SGDI_LOADEDMAP_ID,
+				(unsigned int)dwMapID, sizeof(dwMapID));
+			if (nMapCount <= 0 || nMapCount > MAX_GAME_SERVER_MAPS)
+				break;
+			size_t nSize = sizeof(tagUpdateMapID) + nMapCount * sizeof(DWORD);
+			BYTE* pBuffer = new BYTE[nSize];
+			memset(pBuffer, 0, nSize);
+			tagUpdateMapID* pUMI = (tagUpdateMapID*)pBuffer;
 			pUMI->cProtocol = c2s_updatemapinfo;
-			pUMI->cMapCount = nMapCount;
-			memcpy( pUMI->szMapID, sMapID, nMapCount * sizeof(char));
-			
-/*			printf("-----Send \ndatalen = %u, data = ", nMapCount * sizeof(char) + sizeof( tagUpdateMapID ));
-			for (int i = 0; i < 32; i++)
-				printf("[%02X] ", ((BYTE *)pUMI)[i]);
-			printf("\n");*/
-			m_pGatewayClient->SendPackToServer( ( const void * )pUMI, nMapCount * sizeof(char) + sizeof( tagUpdateMapID ) );
-			
-			if(pUMI)
-			{
-				delete pUMI;
-				pUMI = NULL;
-			}
+			pUMI->cReserve = MAP_ID_FORMAT_DWORD;
+			pUMI->cMapCount = (BYTE)nMapCount;
+			memcpy(pUMI->szMapID, dwMapID, nMapCount * sizeof(DWORD));
+			m_pGatewayClient->SendPackToServer(pBuffer, nSize);
+			delete [] pBuffer;
 		}
 		break;
 		

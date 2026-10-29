@@ -9,8 +9,8 @@ KSkillManager g_SkillManager;
 
 KSkillManager::KSkillManager()
 {
-
-
+	memset(m_SkillInfo, 0, sizeof(m_SkillInfo));
+	memset(m_pOrdinSkill, 0, sizeof(m_pOrdinSkill));
 }
 
 // Add By Freeway Chen in 2003.6.6
@@ -58,7 +58,11 @@ BOOL KSkillManager::Init()
 		g_OrdinSkillsSetting.GetInteger(i + 2, "SkillId", -1, &nSkillId);
 		g_OrdinSkillsSetting.GetInteger(i + 2, "SkillStyle", -1, &nSkillStyle);
 		g_OrdinSkillsSetting.GetInteger(i + 2, "MaxLevel", 20, &nSkillMaxLevel);
-		_ASSERT(nSkillMaxLevel >= 0);
+		if (nSkillId <= 0 || nSkillId > MAX_SKILL || nSkillMaxLevel < 0)
+		{
+			printf("[Skills] Invalid skill ID %d at row %d (limit %d).\n", nSkillId, i + 2, MAX_SKILL);
+			continue;
+		}
 		
 		if (nSkillId > 0 && nSkillStyle >= 0)
 		{
@@ -78,7 +82,8 @@ BOOL KSkillManager::Init()
 	{
 		int nSkillId = 0;
 		ThiefSkillTab.GetInteger(2, "SkillId", 400, &nSkillId);
-		_ASSERT(nSkillId > 0);
+		if (nSkillId <= 0 || nSkillId > MAX_SKILL)
+			return FALSE;
 		m_SkillInfo[nSkillId - 1].m_nSkillStyle = SKILL_SS_Thief;
 		m_SkillInfo[nSkillId - 1].m_nTabFileRowId = 2;
 		m_SkillInfo[nSkillId - 1].m_ulMaxSkillLevel = 1;

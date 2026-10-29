@@ -23,6 +23,7 @@
 using OnlineGameLib::Win32::CPackager;
 
 static const char szBishopClassName[] = "BishopClass";
+static bool g_bHeadless = false;
 //static const DWORD g_dwServerIdentify = 0xAEFC07B5;
 
 HINSTANCE		CBishopApp::m_hInst = NULL;
@@ -139,7 +140,29 @@ int CBishopApp::Run()
 	/*
 	 * To affirm account that it is used to check the application
 	 */
-	if ( LoginSystem() )
+	g_bHeadless = strstr( GetCommandLineA(), "--headless" ) != NULL;
+	bool bLoggedIn = false;
+	if ( g_bHeadless )
+	{
+		char szAccount[32] = { 0 };
+		char szPassword[64] = { 0 };
+		DWORD dwAccountLength = GetEnvironmentVariableA( "JX_BISHOP_ACCOUNT", szAccount, sizeof( szAccount ) );
+		DWORD dwPasswordLength = GetEnvironmentVariableA( "JX_BISHOP_PASSWORD", szPassword, sizeof( szPassword ) );
+		if ( dwAccountLength > 0 && dwAccountLength < sizeof( szAccount ) &&
+			dwPasswordLength > 0 && dwPasswordLength < sizeof( szPassword ) )
+		{
+			g_theSmartClient.Open( m_theNetwork.GetAccSvrIP(), m_theNetwork.GetAccSvrPort(),
+				NULL, szAccount, szPassword, false );
+			bLoggedIn = g_theSmartClient.Valid();
+		}
+		SecureZeroMemory( szPassword, sizeof( szPassword ) );
+	}
+	else
+	{
+		bLoggedIn = LoginSystem();
+	}
+
+	if ( bLoggedIn )
 	{
 		m_pIntercessor = new CIntercessor( 500, m_theNetwork );
 
@@ -435,7 +458,7 @@ UINT CBishopApp::MainDialog()
 
 	ASSERT( hwndMain );
 
-	::ShowWindow( hwndMain, SW_SHOWNORMAL );
+	::ShowWindow( hwndMain, g_bHeadless ? SW_HIDE : SW_SHOWNORMAL );
 	::UpdateWindow( hwndMain );
 	
 	BOOL bRet;
@@ -481,6 +504,10 @@ BOOL CALLBACK CBishopApp::MainWndProc( HWND hwnd,
 		 * Initialize
 		 */
 		InitMainDlg( hwnd );
+		if ( g_bHeadless )
+		{
+			::PostMessage( hwnd, WM_COMMAND, IDOK, 0 );
+		}
 		
 		return TRUE;
 
@@ -488,7 +515,7 @@ BOOL CALLBACK CBishopApp::MainWndProc( HWND hwnd,
 
 	case WM_CLOSE:
 		
-		if ( IDYES == ::MessageBox( hwnd, "Are you sure quit?", "Info", MB_YESNO | MB_ICONQUESTION ) )
+		if ( g_bHeadless || IDYES == ::MessageBox( hwnd, "Are you sure quit?", "Info", MB_YESNO | MB_ICONQUESTION ) )
 		{
 			if ( g_nTimer )
 			{

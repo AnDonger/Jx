@@ -1,4 +1,5 @@
 #include "KCore.h"
+#include <errno.h>
 #include "KObjSet.h"
 #include "KNpcSet.h"
 #include "KSubWorld.h"
@@ -34,32 +35,82 @@ int KSubWorldSet::SearchWorld(DWORD dwID)
 
 BOOL KSubWorldSet::Load(LPSTR szFileName)
 {
-	KIniFile	IniFile;
-	char		szKeyName[32];
-	int			nWorldID;
-	int			nWorldCount = 0;
-	
-	IniFile.Load(szFileName);
-	IniFile.GetInteger("Init", "Count", 1, &nWorldCount);
-	if (nWorldCount > MAX_SUBWORLD)
+	if (SubWorld[0].m_SubWorldID != -1)
 		return FALSE;
+	KIniFile IniFile;
+	char szKeyName[256];
+	int nWorldID[MAX_SUBWORLD];
+	int nWorldCount = 0;
+	int nLoadedCount = 0;
+	BOOL bMapList = TRUE;
 
+	if (!IniFile.Load(szFileName))
+	{
+		// 新地图清单不存在时，才兼容旧版部署清单。
+		if (!IniFile.Load("\\maps\\WorldSet.ini"))
+		{
+			printf("[MapList] Cannot open %s or legacy WorldSet.ini.\n", szFileName);
+			return FALSE;
+		}
+		bMapList = FALSE;
+		printf("[MapList] Using legacy WorldSet.ini.\n");
+	}
+
+	int nLegacyCount = 0;
+	if (IniFile.GetInteger("Init", "Count", 0, &nLegacyCount))
+		bMapList = FALSE;
+
+	if (bMapList)
+	{
+		szKeyName[0] = 0;
+		while (IniFile.GetNextKey("List", szKeyName, szKeyName))
+		{
+			char* pEnd;
+			errno = 0;
+			long nId = strtol(szKeyName, &pEnd, 10);
+			if (errno == ERANGE)
+				return FALSE;
+			if (szKeyName[0] < '0' || szKeyName[0] > '9' || *pEnd || nId <= 0)
+				continue;
+			if (nWorldCount >= MAX_SUBWORLD)
+			{
+				printf("[MapList] Too many maps in %s (limit %d).\n", szFileName, MAX_SUBWORLD);
+				return FALSE;
+			}
+			nWorldID[nWorldCount++] = nId;
+		}
+	}
+	else
+	{
+		if (!IniFile.GetInteger("Init", "Count", 0, &nWorldCount) ||
+			nWorldCount <= 0 || nWorldCount > MAX_SUBWORLD)
+			return FALSE;
+		for (int i = 0; i < nWorldCount; i++)
+		{
+			sprintf(szKeyName, "World%02d", i);
+			if (!IniFile.GetInteger("World", szKeyName, 0, &nWorldID[i]) || nWorldID[i] <= 0)
+				return FALSE;
+		}
+	}
+
+#ifdef _SERVER
 	for (int i = 0; i < nWorldCount; i++)
 	{
-		sprintf((char*)szKeyName, "World%02d", i);
-		IniFile.GetInteger("World", szKeyName, 1000, &nWorldID);
-#ifdef _SERVER
-		SubWorld[i].m_nIndex = i;
-		if (!SubWorld[i].LoadMap(nWorldID))
-		{
-			printf("Load map[%s] fail\n",szKeyName);
-		}else
-		{
-			printf("Load map[%s] success\n",szKeyName);
-		}
-#endif
+		if (SearchWorld(nWorldID[i]) >= 0)
+			continue;
+		SubWorld[nLoadedCount].m_nIndex = nLoadedCount;
+		if (SubWorld[nLoadedCount].LoadMap(nWorldID[i]))
+			nLoadedCount++;
+		else
+			printf("[MapList] Map %d was not loaded.\n", nWorldID[i]);
 	}
-	return TRUE;
+	printf("[MapList] Loaded %d of %d maps from %s.\n", nLoadedCount, nWorldCount,
+		bMapList ? szFileName : "\\maps\\WorldSet.ini");
+	fflush(stdout);
+	return nLoadedCount > 0;
+#else
+	return nWorldCount > 0;
+#endif
 }
 
 int nActiveRegionCount;

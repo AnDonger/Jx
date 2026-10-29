@@ -109,8 +109,87 @@ BOOL KRegion::Load(int nX, int nY)
 //	功能：载入服务器端地图上本region 的 object数据（包括npc、trap、box等）
 //	注意：使用此函数之前必须保证当前路径是本地图路径
 //----------------------------------------------------------------------
+static BOOL ReadRegionSections(KPakFile* pFile, KCombinFileSection* pSections, DWORD* pHeadSize)
+{
+	DWORD dwCount;
+	DWORD dwSize = pFile->Size();
+	if (dwSize < sizeof(DWORD) || pFile->Read(&dwCount, sizeof(DWORD)) != sizeof(DWORD) ||
+		dwCount < REGION_ELEM_FILE_COUNT || dwCount > (dwSize - sizeof(DWORD)) / sizeof(KCombinFileSection))
+		return FALSE;
+	*pHeadSize = sizeof(DWORD) + dwCount * sizeof(KCombinFileSection);
+	if (pFile->Read(pSections, sizeof(KCombinFileSection) * REGION_ELEM_FILE_COUNT) !=
+		sizeof(KCombinFileSection) * REGION_ELEM_FILE_COUNT)
+		return FALSE;
+	for (int i = 0; i < REGION_ELEM_FILE_COUNT; i++)
+	{
+		if (pSections[i].uOffset > dwSize - *pHeadSize ||
+			pSections[i].uLength > dwSize - *pHeadSize - pSections[i].uOffset)
+			return FALSE;
+	}
+	return TRUE;
+}
+
 BOOL KRegion::LoadObject(int nSubWorld, int nX, int nY)
 {
+	char szPath[FILE_NAME_LENGTH];
+	char szFile[FILE_NAME_LENGTH];
+	g_GetFilePath(szPath);
+	sprintf(szFile, "\\%sv_%03d\\%03d_%s", szPath, nY, nX, REGION_COMBIN_FILE_NAME_CLIENT);
+	KPakFile Data;
+	if (!Data.Open(szFile))
+	{
+		if (LoadServerObject(nSubWorld, nX, nY))
+			return TRUE;
+		// 缺少区域数据时，不能把未知区域当作可通行地面。
+		for (int x = 0; x < REGION_GRID_WIDTH; x++)
+		{
+			for (int y = 0; y < REGION_GRID_HEIGHT; y++)
+				m_Obstacle[x][y] = Obstacle_Normal;
+		}
+		return FALSE;
+	}
+
+	DWORD dwHeadSize;
+	KCombinFileSection Sections[REGION_ELEM_FILE_COUNT];
+	if (!ReadRegionSections(&Data, Sections, &dwHeadSize) ||
+		(Sections[REGION_OBSTACLE_FILE_INDEX].uLength != 0 &&
+		 Sections[REGION_OBSTACLE_FILE_INDEX].uLength != sizeof(m_Obstacle)))
+	{
+		printf("[MapList] Invalid client region: %s.\n", szFile);
+		for (int x = 0; x < REGION_GRID_WIDTH; x++)
+		{
+			for (int y = 0; y < REGION_GRID_HEIGHT; y++)
+				m_Obstacle[x][y] = Obstacle_Normal;
+		}
+		return FALSE;
+	}
+
+	// 服务端专用 NPC、物件、触发点仍由原服务端资源补充。
+	LoadServerObject(nSubWorld, nX, nY);
+	DWORD dwLength = Sections[REGION_OBSTACLE_FILE_INDEX].uLength;
+	if (dwLength)
+	{
+		Data.Seek(dwHeadSize + Sections[REGION_OBSTACLE_FILE_INDEX].uOffset, FILE_BEGIN);
+		if (!LoadServerObstacle(&Data, dwLength))
+			return FALSE;
+	}
+	else
+	{
+		// 与场景读取规则一致：存在的区域中，空障碍段表示无静态障碍。
+		ZeroMemory(m_Obstacle, sizeof(m_Obstacle));
+	}
+	if (Sections[REGION_TRAP_FILE_INDEX].uLength)
+	{
+		Data.Seek(dwHeadSize + Sections[REGION_TRAP_FILE_INDEX].uOffset, FILE_BEGIN);
+		if (!LoadServerTrap(&Data, Sections[REGION_TRAP_FILE_INDEX].uLength))
+			return FALSE;
+	}
+	return TRUE;
+}
+
+BOOL KRegion::LoadServerObject(int nSubWorld, int nX, int nY)
+{
+	BOOL bLoaded = FALSE;
 	KPakFile	cData;
 	char		szFilePath[80];
 	char		szFile[80];
@@ -123,30 +202,17 @@ BOOL KRegion::LoadObject(int nSubWorld, int nX, int nY)
 	sprintf(szFile, "%s\\%03d_%s", szFilePath, nX, REGION_COMBIN_FILE_NAME_SERVER);
 	if (cData.Open(szFile))
 	{
-		DWORD	dwHeadSize;
-		DWORD	dwMaxElemFile = 0;
-		KCombinFileSection	sElemFile[REGION_ELEM_FILE_COUNT];
-
-		if (cData.Size() < sizeof(DWORD) + sizeof(KCombinFileSection) * REGION_ELEM_FILE_COUNT)
+		DWORD dwHeadSize;
+		KCombinFileSection sElemFile[REGION_ELEM_FILE_COUNT];
+		if (!ReadRegionSections(&cData, sElemFile, &dwHeadSize))
 		{
-			ZeroMemory(m_Obstacle, sizeof(m_Obstacle));
-			goto gotoCLOSE;
+			printf("[MapList] Invalid server region: %s.\n", szFile);
+			return FALSE;
 		}
-		cData.Read(&dwMaxElemFile, sizeof(DWORD));
-		if (dwMaxElemFile > REGION_ELEM_FILE_COUNT)
-		{
-			cData.Read(sElemFile, sizeof(sElemFile));
-			cData.Seek(sizeof(KCombinFileSection) * (dwMaxElemFile - REGION_ELEM_FILE_COUNT), FILE_CURRENT);
-		}
-		else
-		{
-			cData.Read(sElemFile, sizeof(sElemFile));
-		}
-		dwHeadSize = sizeof(DWORD) + sizeof(KCombinFileSection) * dwMaxElemFile;
 
 		// 载入障碍数据
 		cData.Seek(dwHeadSize + sElemFile[REGION_OBSTACLE_FILE_INDEX].uOffset, FILE_BEGIN);
-		LoadServerObstacle(&cData, sElemFile[REGION_OBSTACLE_FILE_INDEX].uLength);
+		bLoaded = LoadServerObstacle(&cData, sElemFile[REGION_OBSTACLE_FILE_INDEX].uLength);
 
 		// 载入trap信息
 		cData.Seek(dwHeadSize + sElemFile[REGION_TRAP_FILE_INDEX].uOffset, FILE_BEGIN);
@@ -160,7 +226,6 @@ BOOL KRegion::LoadObject(int nSubWorld, int nX, int nY)
 		cData.Seek(dwHeadSize + sElemFile[REGION_OBJ_FILE_INDEX].uOffset, FILE_BEGIN);
 		LoadServerObj(nSubWorld, &cData, sElemFile[REGION_OBJ_FILE_INDEX].uLength);
 
-gotoCLOSE:
 		cData.Close();
 	}
 	else
@@ -174,7 +239,9 @@ gotoCLOSE:
 			if (cObstacle.Size() != sizeof(m_Obstacle))
 				ZeroMemory(m_Obstacle, sizeof(m_Obstacle));
 			else
-				cObstacle.Read((LPVOID)m_Obstacle, sizeof(m_Obstacle));
+			{
+				bLoaded = cObstacle.Read((LPVOID)m_Obstacle, sizeof(m_Obstacle)) == sizeof(m_Obstacle);
+			}
 			cObstacle.Close();
 		}
 		else
@@ -248,7 +315,7 @@ NPC_CLOSE:
 		ObjSet.ServerLoadRegionObj(szFilePath, nX, nY, nSubWorld);
 	}
 
-	return TRUE;
+	return bLoaded;
 }
 #endif
 
@@ -373,9 +440,7 @@ BOOL	KRegion::LoadServerObstacle(KPakFile *pFile, DWORD dwDataSize)
 		memset(m_Obstacle, 0, sizeof(m_Obstacle));
 		return FALSE;
 	}
-	pFile->Read((LPVOID)m_Obstacle, sizeof(m_Obstacle));
-
-	return TRUE;
+	return pFile->Read((LPVOID)m_Obstacle, sizeof(m_Obstacle)) == sizeof(m_Obstacle);
 }
 #endif
 

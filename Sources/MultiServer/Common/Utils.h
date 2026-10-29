@@ -112,6 +112,8 @@ _tstring HexToString( const BYTE *pBuffer, size_t iBytes );
 
 void StringToHex( const _tstring &str, BYTE *pBuffer, size_t nBytes );
 
+void TraceNetworkData( const _tstring &message, const BYTE *pData, size_t dataLength );
+
 DWORD HexStringToDWORD( LPCTSTR lpString );
 
 DWORD HashStr2ID( const char * const pStr );

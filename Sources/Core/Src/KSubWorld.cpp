@@ -500,34 +500,37 @@ BOOL KSubWorld::LoadMap(int nId)
 	char		szFileName[FILE_NAME_LENGTH];
 	char		szKeyName[32];
 
-	m_SubWorldID = nId;
+	if (m_SubWorldID != -1 || m_Region)
+		return FALSE;
 	g_SetFilePath("\\settings");
-	IniFile.Load("MapList.ini");
+	if (!IniFile.Load("MapList.ini"))
+		return FALSE;
 	sprintf(szKeyName, "%d", nId);
-	IniFile.GetString("List", szKeyName, "", szPathName, sizeof(szPathName));
+	if (!IniFile.GetString("List", szKeyName, "", szPathName, sizeof(szPathName)) || !szPathName[0])
+		return FALSE;
 
 	g_SetFilePath("\\maps");
 	sprintf(szFileName, "%s.wor", szPathName);
 	if (!IniFile.Load(szFileName))
 		return FALSE;
-	
-	int nIsInDoor;
-	IniFile.GetInteger("MAIN", "IsInDoor", 0, &nIsInDoor);
-	if(!nIsInDoor)
-	{
-		m_pWeatherMgr = new KWeatherMgr;
-		m_pWeatherMgr->InitFromIni(IniFile);
-	}
 
 	m_nRegionWidth = 512 / 32;
 	m_nRegionHeight = 1024 / 32;
 
-	RECT	sRect;
-	IniFile.GetRect("MAIN", "rect", &sRect);
+	RECT	sRect = {0};
+	char szRect[128];
+	if (!IniFile.GetString("MAIN", "rect", "", szRect, sizeof(szRect)) ||
+		sscanf(szRect, "%ld,%ld,%ld,%ld", &sRect.left, &sRect.top, &sRect.right, &sRect.bottom) != 4 ||
+		sRect.left < 0 || sRect.top < 0 ||
+		sRect.right < sRect.left || sRect.bottom < sRect.top ||
+		sRect.right > 65535 || sRect.bottom > 65535)
+		return FALSE;
 	m_nRegionBeginX = sRect.left;
 	m_nRegionBeginY = sRect.top;
 	m_nWorldRegionWidth = sRect.right - sRect.left + 1;
 	m_nWorldRegionHeight = sRect.bottom - sRect.top + 1;
+	if (m_nWorldRegionWidth > 65536 / m_nWorldRegionHeight)
+		return FALSE;
 	m_nTotalRegion = m_nWorldRegionWidth * m_nWorldRegionHeight;
 	
 	m_nCellWidth = defLOGIC_CELL_WIDTH;
@@ -536,6 +539,15 @@ BOOL KSubWorld::LoadMap(int nId)
 	if (m_nTotalRegion <= 0 || m_nWorldRegionWidth <= 0 || m_nWorldRegionHeight <= 0)
 		return FALSE;
 
+	int nIsInDoor;
+	IniFile.GetInteger("MAIN", "IsInDoor", 0, &nIsInDoor);
+	if(!nIsInDoor)
+	{
+		m_pWeatherMgr = new KWeatherMgr;
+		m_pWeatherMgr->InitFromIni(IniFile);
+	}
+
+	m_SubWorldID = nId;
 	m_Region = new KRegion[m_nTotalRegion];
 
 	char	szPath[MAX_PATH];
@@ -572,16 +584,29 @@ BOOL KSubWorld::LoadMap(int nId)
 		}
 	}
 
+	int nLoadedRegions = 0;
 	sprintf(szPath, "\\maps\\%s", szPathName);
 	for (nY = 0; nY < m_nWorldRegionHeight; nY++)
 	{
 		for (nX = 0; nX < m_nWorldRegionWidth; nX++)
 		{
 			g_SetFilePath(szPath);
-			m_Region[nY * m_nWorldRegionWidth + nX].LoadObject(m_nIndex,nX + m_nRegionBeginX, nY + m_nRegionBeginY);
+			if (m_Region[nY * m_nWorldRegionWidth + nX].LoadObject(m_nIndex, nX + m_nRegionBeginX, nY + m_nRegionBeginY))
+				nLoadedRegions++;
 		}
 	}
 
+	printf("[MapList] Map %d (%s): %d/%d regions.\n", nId, szPathName, nLoadedRegions, m_nTotalRegion);
+	if (!nLoadedRegions)
+	{
+		Close();
+		delete [] m_Region;
+		m_Region = NULL;
+		delete m_pWeatherMgr;
+		m_pWeatherMgr = NULL;
+		m_nTotalRegion = 0;
+		return FALSE;
+	}
 	return TRUE;
 }
 #endif

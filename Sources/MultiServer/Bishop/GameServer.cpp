@@ -413,16 +413,35 @@ bool CGameServer::_QueryGameSvrInfo()
 
 bool CGameServer::_UpdateMapID( const void *pData, size_t datalength )
 {
-	tagUpdateMapID *pUMI = ( tagUpdateMapID * )pData;
+	if (!pData || datalength < sizeof(tagUpdateMapID))
+		return false;
+	const tagUpdateMapID* pUMI = (const tagUpdateMapID*)pData;
+	int nMapCount = pUMI->cMapCount;
+	size_t nMapSize;
+	if (pUMI->cReserve == MAP_ID_FORMAT_DWORD)
+		nMapSize = sizeof(DWORD);
+	else if (pUMI->cReserve == MAP_ID_FORMAT_BYTE)
+		nMapSize = sizeof(BYTE);
+	else
+		return false;
+	if (datalength != sizeof(tagUpdateMapID) + nMapCount * nMapSize)
+		return false;
 
-	int  nMapCount = pUMI->cMapCount;
-	BYTE *pMapID = pUMI->szMapID;
-
-	while ( --nMapCount >= 0 )
+	for (int i = 0; i < nMapCount; i++)
 	{
-		RegisterServer( pMapID[nMapCount], ( IGServer * )this );
+		DWORD dwMapID = 0;
+		memcpy(&dwMapID, pUMI->szMapID + i * nMapSize, nMapSize);
+		if (!dwMapID)
+			return false;
 	}
-
+	for (int i = 0; i < nMapCount; i++)
+	{
+		DWORD dwMapID = 0;
+		memcpy(&dwMapID, pUMI->szMapID + i * nMapSize, nMapSize);
+		RegisterServer(dwMapID, (IGServer*)this);
+	}
+	printf("[MapList] Registered %d maps (%u-byte IDs).\n", nMapCount, (unsigned)nMapSize);
+	fflush(stdout);
 	return true;
 }
 

@@ -237,7 +237,12 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 
 	ASSERT( hwndMain );
 
-	::ShowWindow( hwndMain, SW_SHOWNORMAL );
+	BOOL bHeadless = strstr( lpCmdLine, "--headless" ) != NULL;
+	::ShowWindow( hwndMain, bHeadless ? SW_HIDE : SW_SHOWNORMAL );
+	if ( bHeadless )
+	{
+		::PostMessage( hwndMain, WM_COMMAND, IDOK, 0 );
+	}
 	::UpdateWindow( hwndMain );
 	
 	hListOutput = ::GetDlgItem( hwndMain, IDC_OUTPUT );//Êä³ölist

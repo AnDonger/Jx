@@ -100,4 +100,47 @@ struct KLoginAccountInfo : KLoginStructHead
 };
 
 
+// Current client login body. The outer WORD frame and protocol byte are not included.
+struct KLoginAccountInfoCurrent : KLoginStructHead
+{
+	char Account[32];
+	BYTE Password[64];
+	DWORD nLeftTime;
+	WORD ProtocolVersion;
+	WORD nLeftTimeOfPoint;
+	BYTE unknown_1[454];
+};
+
+// Fields not present in the original role database remain zero until confirmed.
+struct KLoginRoleInfoCurrent
+{
+	char Name[32];
+	BYTE Sex;
+	BYTE Series;
+	BYTE Level;
+	BYTE Portrait;
+	BYTE unknown_1[46];
+};
+
+struct KLoginRoleListCurrent
+{
+	BYTE ProtocolType;
+	DWORD DataLength;
+	DWORD Identity;
+	BYTE Leave;
+	BYTE RoleCount;
+	BYTE Data[1];
+};
+
+typedef char KLoginRoleInfoCurrentSizeCheck[
+	sizeof( KLoginRoleInfoCurrent ) == 82 ? 1 : -1 ];
+
+typedef char KLoginRoleListCurrentSizeCheck[
+	sizeof( KLoginRoleListCurrent ) == 12 ? 1 : -1 ];
+
+#define LOGIN_A_INITIALIZE 0x100000
+
+typedef char KLoginAccountInfoCurrentSizeCheck[
+	sizeof( KLoginAccountInfoCurrent ) == 564 ? 1 : -1 ];
+
 #pragma pack(pop)

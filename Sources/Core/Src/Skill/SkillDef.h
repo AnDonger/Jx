@@ -1,7 +1,7 @@
 #ifndef __SKILLDEF_H__
 #define __SKILLDEF_H__
 
-#define MAX_SKILL  500
+#define MAX_SKILL  1024
 #define MAX_SKILLLEVEL 64
 #define MaxMissleDir	64
 #define MAXSKILLLEVELSETTINGNUM	10  //供填写技能升级时最大的相关数据种类

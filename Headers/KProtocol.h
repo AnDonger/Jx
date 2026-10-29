@@ -966,6 +966,13 @@ struct tagSearchWay : public tagProtoHeader
 /*
  * c2s_updatemapinfo
  */
+enum MAP_ID_FORMAT
+{
+	MAP_ID_FORMAT_BYTE = 0,
+	MAP_ID_FORMAT_DWORD = 1,
+	MAX_GAME_SERVER_MAPS = 255,
+};
+
 struct tagUpdateMapID : public tagProtoHeader
 {
 	/*

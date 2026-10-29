@@ -19,6 +19,8 @@
 //---------------------------------------------------------------------------
 ENGINE_API	void	g_SetRootPath(LPSTR lpPathName = NULL);
 ENGINE_API	void	g_GetRootPath(LPSTR lpPathName);
+ENGINE_API	void	g_SetResourcePath(LPSTR lpPathName);
+ENGINE_API	BOOL	g_GetResourceFilePath(LPSTR lpPathName, LPSTR lpFileName);
 ENGINE_API	void	g_SetFilePath(LPSTR lpPathName);
 ENGINE_API	void	g_GetFilePath(LPSTR lpPathName);
 ENGINE_API	void	g_GetFullPath(LPSTR lpPathName, LPSTR lpFileName);

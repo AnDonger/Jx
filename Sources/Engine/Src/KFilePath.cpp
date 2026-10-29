@@ -31,6 +31,8 @@ static char szRootPath[MAXPATH] = "/";		// 启动路径
 static char szCurrPath[MAXPATH] = "/";		// 当前路径
 #endif
 
+static char szResourcePath[MAXPATH] = "";
+
 int RemoveTwoPointPath(LPTSTR szPath, int nLength)
 {
 	int nRemove = 0;
@@ -125,6 +127,37 @@ ENGINE_API void g_SetRootPath(LPSTR lpPathName)
 ENGINE_API void g_GetRootPath(LPSTR lpPathName)
 {
 	g_StrCpy(lpPathName, szRootPath);
+}
+
+ENGINE_API void g_SetResourcePath(LPSTR lpPathName)
+{
+	szResourcePath[0] = 0;
+	if (!lpPathName || !lpPathName[0])
+		return;
+
+	g_GetFullPath(szResourcePath, lpPathName);
+	RemoveAllPointPath(szResourcePath, g_StrLen(szResourcePath));
+	g_DebugLog("ResourcePath = %s", szResourcePath);
+}
+
+ENGINE_API BOOL g_GetResourceFilePath(LPSTR lpPathName, LPSTR lpFileName)
+{
+	if (!szResourcePath[0] || !lpFileName || !lpFileName[0])
+		return FALSE;
+	if (lpFileName[1] == ':' ||
+		(lpFileName[0] != '\\' && lpFileName[0] != '/' && szCurrPath[1] == ':'))
+		return FALSE;
+
+	char szHalfPath[MAXPATH];
+	g_GetHalfPath(szHalfPath, lpFileName);
+	// 显式访问父目录的文件保留原路径，不参与资源覆盖。
+	if (strstr(szHalfPath, ".."))
+		return FALSE;
+	if (strlen(szResourcePath) + strlen(szHalfPath) >= MAXPATH)
+		return FALSE;
+	g_StrCpy(lpPathName, szResourcePath);
+	g_StrCat(lpPathName, szHalfPath);
+	return TRUE;
 }
 //---------------------------------------------------------------------------
 // 函数:	SetFilePath

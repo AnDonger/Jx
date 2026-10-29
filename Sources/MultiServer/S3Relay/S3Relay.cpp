@@ -114,7 +114,26 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 	try
 	{
 		//user input root login name & pswd
-		::DialogBox(hInstance, (LPCTSTR)IDD_DIALOG_ROOTLOGIN, NULL, (DLGPROC)Login);
+		if ( strstr( lpCmdLine, "--headless" ) != NULL )
+		{
+			char szAccount[32] = { 0 };
+			char szPassword[64] = { 0 };
+			DWORD dwAccountLength = GetEnvironmentVariableA( "JX_RELAY_ACCOUNT", szAccount, sizeof( szAccount ) );
+			DWORD dwPasswordLength = GetEnvironmentVariableA( "JX_RELAY_PASSWORD", szPassword, sizeof( szPassword ) );
+			if ( dwAccountLength == 0 || dwAccountLength >= sizeof( szAccount ) ||
+				dwPasswordLength == 0 || dwPasswordLength >= sizeof( szPassword ) )
+			{
+				return FALSE;
+			}
+			g_rootloginname = szAccount;
+			g_rootloginpswd = szPassword;
+			SecureZeroMemory( szPassword, sizeof( szPassword ) );
+			nCmdShow = SW_HIDE;
+		}
+		else
+		{
+			::DialogBox(hInstance, (LPCTSTR)IDD_DIALOG_ROOTLOGIN, NULL, (DLGPROC)Login);
+		}
 		if (g_interrupt)
 			return FALSE;
 

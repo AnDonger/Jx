@@ -22,6 +22,7 @@ using OnlineGameLib::Win32::DumpData;
 using OnlineGameLib::Win32::GetTimeStamp;
 using OnlineGameLib::Win32::ToString;
 using OnlineGameLib::Win32::Trace;
+using OnlineGameLib::Win32::TraceNetworkData;
 using OnlineGameLib::Win32::CSocketAddress;
 
 /*
@@ -56,12 +57,15 @@ STDAPI CreateInterface( REFIID	riid, void	**ppv )
 /*
  * Local per connection data
  */
+static LONG gs_lSessionID = 0;
+
 class CPerConnectionData
 {
 public:
       
 	explicit CPerConnectionData( const _tstring &address, WPARAM wParam, const LPARAM &lParam )
-         : m_address( address ), m_wParam( wParam ), m_lParam( lParam )
+         : m_address( address ), m_wParam( wParam ), m_lParam( lParam ),
+		   m_lSessionID( ::InterlockedIncrement( &gs_lSessionID ) ), m_lRequestSequence( 0 )
 	{
 	}
 
@@ -85,12 +89,24 @@ public:
          return m_address;
 	}
 
+	LONG GetSessionID() const
+	{
+		return m_lSessionID;
+	}
+
+	LONG NextRequestSequence()
+	{
+		return ::InterlockedIncrement( &m_lRequestSequence );
+	}
+
 private:
 
 	const _tstring	m_address;	
 	const LPARAM	m_lParam;
 
 	WPARAM			m_wParam;
+	const LONG		m_lSessionID;
+	LONG			m_lRequestSequence;
 
 	/*
 	 * No copies, do not implement
@@ -870,6 +886,7 @@ void CIOCPServer::OnConnectionClosed( Socket *pSocket )
 {	
 	if ( pSocket )
 	{
+		TraceRequest( pSocket, _T("disconnect"), NULL, 0, 0, -1, _T("connection_closed") );
 		pSocket->AddRef();
 
 		/*
@@ -883,14 +900,23 @@ void CIOCPServer::OnConnectionClosed( Socket *pSocket )
 
 void CIOCPServer::ReadCompleted( Socket *pSocket, OnlineGameLib::Win32::CIOBuffer *pBuffer )
 {
-	if (pSocket->GetMessageCallback())
-	{
-		ProcessMessage(pSocket, pBuffer);
-		return;
-	}
-
 	try
 	{
+		// SetupRead points WSABUF at the new bytes, after any retained partial frame.
+		const BYTE *pReceived = reinterpret_cast< const BYTE * >( pBuffer->GetWSABUF()->buf );
+		size_t previousSize = pReceived - pBuffer->GetBuffer();
+		if ( previousSize <= pBuffer->GetUsed() )
+		{
+			TraceRequest( pSocket, _T("receive"), pReceived, pBuffer->GetUsed() - previousSize,
+				pBuffer->GetSequenceNumber(), -1, _T("raw_fragment") );
+		}
+
+		if ( pSocket->GetMessageCallback() )
+		{
+			ProcessMessage( pSocket, pBuffer );
+			return;
+		}
+
 		const CPerConnectionData *pData = reinterpret_cast< const CPerConnectionData * >( pSocket->GetUserPtr() );
 
 		if ( pData )
@@ -906,7 +932,7 @@ void CIOCPServer::ReadCompleted( Socket *pSocket, OnlineGameLib::Win32::CIOBuffe
 				
 				pCN = ( LPCLIENT_NODE )( m_theClientManager[dwIndex] );
 				
-				if ( pCN )
+				if ( pCN && pCN->pSocket == pSocket )
 				{
 					CCriticalSection::Owner lock( pCN->csReadAction );
 					
@@ -922,12 +948,16 @@ void CIOCPServer::ReadCompleted( Socket *pSocket, OnlineGameLib::Win32::CIOBuffe
 	catch( const CException &e )
 	{
 		Output( _T("ReadCompleted - Exception - ") + e.GetWhere() + _T(" - ") + e.GetMessage() );
+		TraceRequest( pSocket, _T("reject"), pBuffer->GetBuffer(), pBuffer->GetUsed(),
+			0, -1, e.GetMessage().c_str() );
 
 		pSocket->Shutdown();
 	}
 	catch(...)
 	{
 		Output( _T("ReadCompleted - Unexpected exception") );
+		TraceRequest( pSocket, _T("reject"), pBuffer->GetBuffer(), pBuffer->GetUsed(),
+			0, -1, _T("receive_exception") );
 
 		pSocket->Shutdown();
 	}
@@ -937,32 +967,16 @@ CIOBuffer *CIOCPServer::ProcessDataStream( Socket *pSocket, CIOBuffer *pBuffer)
 {
 	const size_t used = pBuffer->GetUsed();
 	
-	if ( used >= GetMinimumMessageSize() )
+	if ( used >= sizeof( WORD ) )
 	{
 		const size_t messageSize = GetMessageSize( pBuffer );
 		
-		if ( messageSize == 0 )
+		if ( messageSize < GetMinimumMessageSize() || messageSize > pBuffer->GetSize() )
 		{
-			/*
-			 * havent got a complete message yet.		
-			 * we null terminate our messages in the buffer, so we need to reserve
-			 * a byte of the buffer for this purpose...
-			 */
-			
-			if ( used == ( pBuffer->GetSize() - 1 ) )
-			{
-				Output( _T("Too much data! found error and close this socket!") );
-				
-				/*
-				 * Shutdown the sending side of the socket.
-				 */
-				pSocket->Shutdown();
-				
-				/*
-				 * throw the rubbish away
-				 */
-				pBuffer->Empty();
-			}
+			TraceRequest( pSocket, _T("reject"), pBuffer->GetBuffer(), used,
+				0, -1, _T("invalid_frame_length") );
+			pBuffer->Empty();
+			pSocket->Shutdown();
 		}
 		else if ( used == messageSize )
 		{
@@ -1010,10 +1024,11 @@ size_t CIOCPServer::GetMinimumMessageSize()
 
 size_t CIOCPServer::GetMessageSize( const CIOBuffer *pBuffer )
 {
-	const BYTE *pData = pBuffer->GetBuffer();   
-	const size_t used = pBuffer->GetUsed();
-
-	WORD wHeadLen = ( WORD )( *( WORD * )( pData ) );
+	WORD wHeadLen = 0;
+	if ( pBuffer->GetUsed() >= sizeof( wHeadLen ) )
+	{
+		memcpy( &wHeadLen, pBuffer->GetBuffer(), sizeof( wHeadLen ) );
+	}
 
 	return ( size_t )( wHeadLen );
 }
@@ -1049,6 +1064,9 @@ void CIOCPServer::ProcessCommand( Socket *pSocket, const CIOBuffer *pBuffer )
             return;
 		}
 		
+		LONG sequence = const_cast< CPerConnectionData * >( pPCD )->NextRequestSequence();
+		TraceRequest( pSocket, _T("frame"), pData, used, sequence, -1, _T("wire_complete") );
+
         // Add by Freeway Chen
         _ASSERT(pCN->uKeyMode == 0);
 
@@ -1058,7 +1076,40 @@ void CIOCPServer::ProcessCommand( Socket *pSocket, const CIOBuffer *pBuffer )
             &(pCN->uClientKey)
         );
 
+		TraceRequest( pSocket, _T("request"), pData + s_len_protocol, used - s_len_protocol,
+			sequence, pData[s_len_protocol], _T("decoded_poll") );
 		pCN->pReadBuffer->AddData( ( const BYTE * )( pData + s_len_protocol ), used - s_len_protocol );
+	}
+}
+
+void CIOCPServer::TraceRequest( Socket *pSocket, LPCTSTR pStage, const BYTE *pData,
+		size_t dataLength, size_t sequence, int protocol, LPCTSTR pDetail )
+{
+	try
+	{
+		const CPerConnectionData *pConnection = reinterpret_cast< const CPerConnectionData * >( pSocket->GetUserPtr() );
+		_tstring message = _T("stage=") + _tstring( pStage ) + _T(" server=") + ToString( this );
+		if ( pConnection )
+		{
+			message += _T(" session=") + ToString( pConnection->GetSessionID() );
+			message += _T(" slot=") + ToString( pConnection->GetConnectionFirstParam() );
+			_tstring peer = pConnection->GetConnectionDetails();
+			size_t position = peer.find( _T(' ') );
+			while ( position != _tstring::npos )
+			{
+				peer.erase( position, 1 );
+				position = peer.find( _T(' ') );
+			}
+			message += _T(" peer=") + peer;
+		}
+		message += _T(" sequence=") + ToString( sequence );
+		message += _T(" protocol=") + ToString( protocol );
+		message += _T(" detail=") + _tstring( pDetail );
+		TraceNetworkData( message, pData, dataLength );
+	}
+	catch( ... )
+	{
+		::OutputDebugString( _T("CIOCPServer::TraceRequest: logging failed\n") );
 	}
 }
 
@@ -1301,6 +1352,8 @@ bool CIOCPServer::_HelperAddClient()
 			}
 
             pSocket->Write((BYTE *)&SendAccountBegin, sizeof(SendAccountBegin));
+			TraceRequest( pSocket, _T("handshake"), reinterpret_cast< const BYTE * >( &SendAccountBegin ),
+				sizeof( SendAccountBegin ), 0, CIPHER_PROTOCOL_TYPE, _T("account_begin") );
 
 			/*
 			 Output( GetTimeStamp() + _T("Add a client [ID:") + 
@@ -1441,66 +1494,76 @@ STDMETHODIMP CIOCPServer::RegisterMsgFilter( const unsigned long ulnClientID,
 void CIOCPServer::ProcessMessage( Socket *pSocket, CIOBuffer *pBuffer )
 {
 	const size_t used = pBuffer->GetUsed();
-	static size_t minMessageSize = sizeof( WORD ) + sizeof( BYTE );
-	
-	if ( used >= minMessageSize )
+	CPerConnectionData *pPCD = reinterpret_cast< CPerConnectionData * >( pSocket->GetUserPtr() );
+	if ( !pPCD )
 	{
-		const CPerConnectionData *pPCD = reinterpret_cast< const CPerConnectionData * >( pSocket->GetUserPtr() );
+		pSocket->Shutdown();
+		return;
+	}
 
-		if ( !pPCD )
+	DWORD dwIndex = pPCD->GetConnectionFirstParam();
+	{
+		CCriticalSection::Owner locker( m_csCM );
+		LPCLIENT_NODE pCN = ( LPCLIENT_NODE )( m_theClientManager[dwIndex] );
+		if ( !pCN || pCN->pSocket != pSocket )
 		{
+			pSocket->Shutdown();
 			return;
 		}
 
-		DWORD dwIndex = pPCD->GetConnectionFirstParam();
-		LPCLIENT_NODE pCN;
+		_ASSERT( pCN->uKeyMode == 0 );
+		size_t processedSize = 0;
+		while ( used - processedSize >= sizeof( WORD ) )
 		{
-			CCriticalSection::Owner	locker( m_csCM );
-
-			if ( NULL == ( pCN = ( LPCLIENT_NODE )( m_theClientManager[dwIndex] ) ) )
+			const BYTE *pData = pBuffer->GetBuffer() + processedSize;
+			WORD messageSize = 0;
+			memcpy( &messageSize, pData, sizeof( messageSize ) );
+			if ( messageSize < GetMinimumMessageSize() || messageSize > pBuffer->GetSize() )
 			{
+				TraceRequest( pSocket, _T("reject"), pData, used - processedSize,
+					0, -1, _T("invalid_frame_length") );
+				pBuffer->Empty();
+				pSocket->Shutdown();
 				return;
 			}
-			
-			// Add by Freeway Chen
-			_ASSERT(pCN->uKeyMode == 0);
-
-			const BYTE* pData = pBuffer->GetBuffer();
-			WORD processedSize = 0;
-			WORD messageSize = ( WORD )( *( WORD * )( pData ) );
-
-			while ( used >= processedSize + messageSize )
+			if ( messageSize > used - processedSize )
 			{
-				KSG_DecodeBuf(
-					messageSize - sizeof(WORD),
-					const_cast<unsigned char *>(pData + sizeof( WORD )),
-					&(pCN->uClientKey)
-					);
-
-				pSocket->GetMessageCallback()->OnMessage((VOID*)(pData+sizeof( WORD )), 
-						messageSize - sizeof(WORD));
-
-				pData += messageSize;
-
-				processedSize += messageSize;
-
-				if ( used < processedSize + sizeof(WORD))
-				{
-					// no more complete message
-					break;
-				}
-				
-				messageSize = ( WORD )( *( WORD * )( pData ) );
+				break;
 			}
 
-			if ( used > processedSize )
+			LONG sequence = pPCD->NextRequestSequence();
+			TraceRequest( pSocket, _T("frame"), pData, messageSize, sequence, -1, _T("wire_complete") );
+			KSG_DecodeBuf( messageSize - sizeof( WORD ),
+				const_cast< unsigned char * >( pData + sizeof( WORD ) ), &( pCN->uClientKey ) );
+			TraceRequest( pSocket, _T("request"), pData + sizeof( WORD ), messageSize - sizeof( WORD ),
+				sequence, pData[sizeof( WORD )], _T("decoded_callback") );
+
+			IMessageProcess *pCallback = pSocket->GetMessageCallback();
+			if ( !pCallback )
 			{
-				pBuffer->RemoveBuffer( processedSize );
-			}
-			else
-			{
+				TraceRequest( pSocket, _T("reject"), NULL, 0, sequence, pData[sizeof( WORD )],
+					_T("callback_removed") );
 				pBuffer->Empty();
+				pSocket->Shutdown();
+				return;
 			}
+			HRESULT hr = pCallback->OnMessage( ( VOID * )( pData + sizeof( WORD ) ),
+				messageSize - sizeof( WORD ) );
+			if ( FAILED( hr ) )
+			{
+				TraceRequest( pSocket, _T("reject"), NULL, 0, sequence, pData[sizeof( WORD )],
+					_T("callback_failed") );
+			}
+			processedSize += messageSize;
+		}
+
+		if ( processedSize == used )
+		{
+			pBuffer->Empty();
+		}
+		else if ( processedSize )
+		{
+			pBuffer->RemoveBuffer( processedSize );
 		}
 	}
 

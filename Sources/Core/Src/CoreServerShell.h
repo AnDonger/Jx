@@ -43,6 +43,7 @@ enum GAMEDATA_INDEX
 	//nParam = Client index
 	//Return = bIsExistCharacter
 	SGDI_LOADEDMAP_ID,
+	// uParam = DWORD* map IDs; nParam = buffer size in bytes; return = written count.
 	SGDI_CHARACTER_ACCOUNT,
 	SGDI_CHARACTER_ID,
 	SGDI_CHARACTER_NETID,
