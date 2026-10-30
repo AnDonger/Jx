@@ -220,7 +220,7 @@ BOOL KRegion::LoadServerObject(int nSubWorld, int nX, int nY)
 
 		// 载入npc数据
 		cData.Seek(dwHeadSize + sElemFile[REGION_NPC_FILE_INDEX].uOffset, FILE_BEGIN);
-		LoadServerNpc(nSubWorld, &cData, sElemFile[REGION_NPC_FILE_INDEX].uLength);
+		LoadServerNpc(nSubWorld, &cData, sElemFile[REGION_NPC_FILE_INDEX].uLength, szFile);
 
 		// 载入obj数据
 		cData.Seek(dwHeadSize + sElemFile[REGION_OBJ_FILE_INDEX].uOffset, FILE_BEGIN);
@@ -281,35 +281,12 @@ TRAP_CLOSE:
 		cTrapData.Close();
 
 		// 载入npc数据
-		KNpcFileHead	sNpcFileHead;
-		KSPNpc			sNpcCell;
-
-//		g_SetFilePath(szFilePath);
 		sprintf(szFile, "%s\\%03d_%s", szFilePath, nX, REGION_NPC_FILE_SERVER);
-		if (!cNpcData.Open(szFile))
-			goto NPC_CLOSE;
-		if (cNpcData.Size() < sizeof(KNpcFileHead))
-			goto NPC_CLOSE;
-		cNpcData.Read(&sNpcFileHead, sizeof(KNpcFileHead));
-		for (i = 0; i < sNpcFileHead.uNumNpc; i++)
+		if (cNpcData.Open(szFile))
 		{
-			cNpcData.Read(&sNpcCell, sizeof(KSPNpc) - sizeof(sNpcCell.szScript));
-			if (sNpcCell.nScriptNameLen < sizeof(sNpcCell.szScript))
-			{
-				cNpcData.Read(sNpcCell.szScript, sNpcCell.nScriptNameLen);
-				sNpcCell.szScript[sNpcCell.nScriptNameLen] = 0;
-			}
-			else
-			{
-				sNpcCell.szScript[0] = 0;
-			}
-			
-			NpcSet.Add(nSubWorld, &sNpcCell);
+			LoadServerNpc(nSubWorld, &cNpcData, cNpcData.Size(), szFile);
+			cNpcData.Close();
 		}
-		g_DebugLog("[TEST]Region%x have %d npc", m_RegionID, sNpcFileHead.uNumNpc);
-		
-NPC_CLOSE:
-		cNpcData.Close();
 
 		// 载入obj数据
 		ObjSet.ServerLoadRegionObj(szFilePath, nX, nY, nSubWorld);
@@ -480,34 +457,74 @@ BOOL	KRegion::LoadServerTrap(KPakFile *pFile, DWORD dwDataSize)
 //----------------------------------------------------------------------
 //	功能：载入服务器端地图上本 region 的 npc 数据
 //----------------------------------------------------------------------
-BOOL	KRegion::LoadServerNpc(int nSubWorld, KPakFile *pFile, DWORD dwDataSize)
+BOOL KRegion::LoadServerNpc(int nSubWorld, KPakFile *pFile, DWORD dwDataSize, const char *pszSource)
 {
-	if (!pFile || dwDataSize < sizeof(KNpcFileHead))
+	if (!dwDataSize)
+		return TRUE;
+	if (!pFile || nSubWorld < 0 || nSubWorld >= MAX_SUBWORLD ||
+		dwDataSize < sizeof(KNpcFileHead) || pFile->Tell() > pFile->Size() ||
+		dwDataSize > pFile->Size() - pFile->Tell() ||
+		dwDataSize > sizeof(KNpcFileHead) + MAX_NPC * sizeof(KSPNpc))
 		return FALSE;
 
-	KNpcFileHead	sNpcFileHead;
-	KSPNpc			sNpcCell;
+	KMemClass Data;
+	BYTE *pData = (BYTE *)Data.Alloc(dwDataSize);
+	if (!pData || pFile->Read(pData, dwDataSize) != dwDataSize)
+		return FALSE;
 
-	pFile->Read(&sNpcFileHead, sizeof(KNpcFileHead));
-
-	for (int i = 0; i < sNpcFileHead.uNumNpc; i++)
+	KNpcFileHead Head;
+	memcpy(&Head, pData, sizeof(Head));
+	DWORD dwFixedSize = sizeof(KSPNpc) - sizeof(((KSPNpc *)0)->szScript);
+	if (Head.uNumNpc > MAX_NPC || Head.uNumNpc > (dwDataSize - sizeof(Head)) / dwFixedSize)
 	{
-		pFile->Read(&sNpcCell, sizeof(KSPNpc) - sizeof(sNpcCell.szScript));
-		if (sNpcCell.nScriptNameLen < sizeof(sNpcCell.szScript))
-		{
-			pFile->Read(sNpcCell.szScript, sNpcCell.nScriptNameLen);
-			sNpcCell.szScript[sNpcCell.nScriptNameLen] = 0;
-		}
-		else
-		{
-			sNpcCell.szScript[0] = 0;
-			pFile->Seek(sNpcCell.nScriptNameLen, FILE_CURRENT);
-		}
-
-		NpcSet.Add(nSubWorld, &sNpcCell);
+		printf("[Npc] Invalid record count: %s.\n", pszSource ? pszSource : "region");
+		return FALSE;
 	}
 
-	return TRUE;
+	// 先校验整段数据，损坏的变长记录不能产生半份 NPC 列表。
+	DWORD dwOffset = sizeof(Head);
+	for (DWORD i = 0; i < Head.uNumNpc; i++)
+	{
+		KSPNpc Cell;
+		if (dwOffset > dwDataSize || dwFixedSize > dwDataSize - dwOffset)
+			return FALSE;
+		memset(&Cell, 0, sizeof(Cell));
+		memcpy(&Cell, pData + dwOffset, dwFixedSize);
+		dwOffset += dwFixedSize;
+		if (Cell.nScriptNameLen >= sizeof(Cell.szScript) ||
+			Cell.nScriptNameLen > dwDataSize - dwOffset ||
+			Cell.nTemplateID < 0 || Cell.nTemplateID >= MAX_NPCSTYLE ||
+			Cell.nTemplateID >= g_NpcSetting.GetHeight() - 1 ||
+			Cell.nLevel < 1 || Cell.nLevel >= MAX_NPC_LEVEL ||
+			Cell.nPositionX < m_nRegionX || Cell.nPositionX >= m_nRegionX + 512 ||
+			Cell.nPositionY < m_nRegionY || Cell.nPositionY >= m_nRegionY + 1024)
+		{
+			printf("[Npc] Invalid record %lu: %s.\n", i, pszSource ? pszSource : "region");
+			return FALSE;
+		}
+		dwOffset += Cell.nScriptNameLen;
+	}
+
+	int nLoaded = 0;
+	dwOffset = sizeof(Head);
+	for (DWORD i = 0; i < Head.uNumNpc; i++)
+	{
+		KSPNpc Cell;
+		memset(&Cell, 0, sizeof(Cell));
+		memcpy(&Cell, pData + dwOffset, dwFixedSize);
+		dwOffset += dwFixedSize;
+		Cell.szName[sizeof(Cell.szName) - 1] = 0;
+		memcpy(Cell.szScript, pData + dwOffset, Cell.nScriptNameLen);
+		Cell.szScript[Cell.nScriptNameLen] = 0;
+		dwOffset += Cell.nScriptNameLen;
+		if (NpcSet.Add(nSubWorld, &Cell))
+			nLoaded++;
+	}
+	if (Head.uNumNpc)
+		printf("[Npc] Map %d region %d,%d: %d/%lu loaded from %s.\n",
+			SubWorld[nSubWorld].m_SubWorldID, m_nRegionX / 512, m_nRegionY / 1024,
+			nLoaded, Head.uNumNpc, pszSource ? pszSource : "region");
+	return nLoaded == Head.uNumNpc;
 }
 #endif
 

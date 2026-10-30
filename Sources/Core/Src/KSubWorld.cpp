@@ -596,7 +596,11 @@ BOOL KSubWorld::LoadMap(int nId)
 		}
 	}
 
-	printf("[MapList] Map %d (%s): %d/%d regions.\n", nId, szPathName, nLoadedRegions, m_nTotalRegion);
+	int nLoadedNpcs = 0;
+	for (nIdx = 0; nIdx < m_nTotalRegion; nIdx++)
+		nLoadedNpcs += m_Region[nIdx].m_NpcList.GetNodeCount();
+	printf("[MapList] Map %d (%s): %d/%d regions, %d NPCs.\n",
+		nId, szPathName, nLoadedRegions, m_nTotalRegion, nLoadedNpcs);
 	if (!nLoadedRegions)
 	{
 		Close();

@@ -65,7 +65,7 @@ public:
 	// 载入服务器端地图上本 region 的 trap 数据
 	BOOL		LoadServerTrap(KPakFile *pFile, DWORD dwDataSize);
 	// 载入服务器端地图上本 region 的 npc 数据
-	BOOL		LoadServerNpc(int nSubWorld, KPakFile *pFile, DWORD dwDataSize);
+	BOOL		LoadServerNpc(int nSubWorld, KPakFile *pFile, DWORD dwDataSize, const char *pszSource = NULL);
 	// 载入服务器端地图上本 region 的 obj 数据
 	BOOL		LoadServerObj(int nSubWorld, KPakFile *pFile, DWORD dwDataSize);
 #endif
