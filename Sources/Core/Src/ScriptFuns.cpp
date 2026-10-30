@@ -298,9 +298,11 @@ int LuaSelectUI(Lua_State * L)
 		if (nOptionNum > nParamNum - 2) nOptionNum = nParamNum - 2;
 	}
 	
+	if (nOptionNum < 0) return 0;
 	if (nOptionNum > MAX_ANSWERNUM) nOptionNum = MAX_ANSWERNUM;
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_SELECTDIALOG;
 	UiInfo.m_bParam1 = nDataType;//主信息的类型，字符串(0)或数字(1)
 	UiInfo.m_bOptionNum = nOptionNum;
@@ -310,7 +312,7 @@ int LuaSelectUI(Lua_State * L)
 	if (nDataType == 0)
 	{
 		if (strMain)
-			sprintf(UiInfo.m_pContent, "%s", strMain);
+			g_StrCpyLen(UiInfo.m_pContent, strMain, sizeof(UiInfo.m_pContent));
 		pContent = UiInfo.m_pContent;
 	}
 	else if (nDataType == 1) //主信息为数字标识
@@ -353,13 +355,21 @@ int LuaSelectUI(Lua_State * L)
 		{
 			g_StrCpyLen(Player[nPlayerIndex].m_szTaskAnswerFun[i], pFunName + 1, sizeof(Player[nPlayerIndex].m_szTaskAnswerFun[0]));
 			*pFunName = 0;
-			sprintf(pContent, "%s|%s", pContent, pAnswer);
 		}
-		else 
+		else
 		{
 			strcpy(Player[nPlayerIndex].m_szTaskAnswerFun[i], "main");
-			sprintf(pContent, "%s|%s", pContent, pAnswer);
 		}
+		size_t nContentLen = strlen(pContent);
+		size_t nAnswerLen = strlen(pAnswer);
+		size_t nPrefixLen = pContent - UiInfo.m_pContent;
+		if (nPrefixLen + nContentLen + nAnswerLen + 2 > sizeof(UiInfo.m_pContent))
+		{
+			Player[nPlayerIndex].m_nAvailableAnswerNum = 0;
+			return 0;
+		}
+		pContent[nContentLen] = '|';
+		memcpy(pContent + nContentLen + 1, pAnswer, nAnswerLen + 1);
 	}
 	
 	if (nDataType == 0)
@@ -397,6 +407,7 @@ int LuaSendMessageInfo(Lua_State * L)
 	if (nPlayerIndex < 0) return 0;
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_MSGINFO;
 	UiInfo.m_bOptionNum = 1;
 	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
@@ -434,6 +445,7 @@ int LuaAddGlobalNews(Lua_State * L)
 		return 0;
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_NEWSINFO;
 	UiInfo.m_bOptionNum = NEWSMESSAGE_NORMAL;
 	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
@@ -476,6 +488,7 @@ int LuaAddLocalNews(Lua_State * L)
 		return 0;
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_NEWSINFO;
 	UiInfo.m_bOptionNum = NEWSMESSAGE_NORMAL;
 	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
@@ -518,6 +531,7 @@ int LuaAddGlobalCountNews(Lua_State * L)
 		return 0;
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_NEWSINFO;
 	UiInfo.m_bOptionNum = NEWSMESSAGE_COUNTING;
 	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
@@ -568,6 +582,7 @@ int LuaAddLocalCountNews(Lua_State * L)
 		return 0;
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_NEWSINFO;
 	UiInfo.m_bOptionNum = NEWSMESSAGE_COUNTING;
 	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
@@ -618,6 +633,7 @@ int LuaAddGlobalTimeNews(Lua_State * L)
 		return 0;
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_NEWSINFO;
 	UiInfo.m_bOptionNum = NEWSMESSAGE_TIMEEND;
 	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
@@ -681,6 +697,7 @@ int LuaAddLocalTimeNews(Lua_State * L)
 		return 0;
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_NEWSINFO;
 	UiInfo.m_bOptionNum = NEWSMESSAGE_TIMEEND;
 	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
@@ -774,6 +791,7 @@ int LuaAddNote(Lua_State * L)
 	}
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_NOTEINFO;
 	UiInfo.m_bParam1 = nDataType;//主信息的类型，字符串(0)或数字(1)
 #ifndef _SERVER
@@ -860,6 +878,7 @@ int LuaTalkUI(Lua_State * L)
 		nOptionNum = nParamNum - 2;
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_TALKDIALOG;
 	UiInfo.m_bParam1 = nDataType;//主信息的类型，字符串(0)或数字(1)
 	UiInfo.m_bOptionNum = nOptionNum;
@@ -913,6 +932,24 @@ int LuaTalkUI(Lua_State * L)
 	Player[nPlayerIndex].DoScriptAction(&UiInfo);
 	return 0;
 	
+}
+
+// 当前客户端使用 UI action 15 关闭脚本对话框。
+int LuaCloseDialog(Lua_State *L)
+{
+	int nPlayerIndex = GetPlayerIndex(L);
+	if (nPlayerIndex <= 0)
+		return 0;
+	Player[nPlayerIndex].m_bWaitingPlayerFeedBack = false;
+	Player[nPlayerIndex].m_nAvailableAnswerNum = 0;
+	Player[nPlayerIndex].m_dwScriptDialogScriptID = 0;
+	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
+	UiInfo.m_bUIId = UI_CLOSEDIALOG;
+	UiInfo.m_bParam2 = 1;
+	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
+	Player[nPlayerIndex].DoScriptAction(&UiInfo);
+	return 0;
 }
 
 int LuaIncludeFile(Lua_State * L)
@@ -2233,6 +2270,7 @@ int LuaOpenTong(Lua_State * L)
 	if (nPlayerIndex < 0) return 0;
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_OPENTONGUI;
 	UiInfo.m_bOptionNum = 0;
 	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
@@ -4916,6 +4954,7 @@ int LuaPlayMusic(Lua_State * L)//PlayMusic(musicname,loop=1, vol );
 	if (nPlayerIndex < 0) return 0;
 	
 	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
 	UiInfo.m_bUIId = UI_PLAYMUSIC;
 	UiInfo.m_bOptionNum = 1;
 	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
@@ -5014,6 +5053,7 @@ TLua_Funcs GameScriptFuns[] =
 	{"GetPos",			LuaGetPos},			//GetPos() return x,y,subworldindex
 	{"GetWorldPos",		LuaGetNewWorldPos},	//W,X,Y = GetWorldPos()返回于NewWorld配陪的坐标
 	{"NewWorld",		LuaEnterNewWorld},
+	{"CloseDialog",		LuaCloseDialog},
 	{"DropItem",		LuaDropItem},		//DropItem(NpcId, 物品id或物品名)
 	{"AddItem",			LuaAddItem},		//AddItem(nItemClass, nDetailType, nParticualrType, nLevel, nSeries, nLuck, nItemLevel..6)
 	{"AddEventItem",	LuaAddEventItem	},	//AddEventItem(事件物品ID)

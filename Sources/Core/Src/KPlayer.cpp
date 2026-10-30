@@ -140,6 +140,10 @@ void	KPlayer::Release()
 	m_nPeapleIdx = 0;
 	m_nObjectIdx = 0;
 	m_bWaitingPlayerFeedBack = false;
+	m_dwScriptDialogToken = 0;
+	m_dwScriptDialogScriptID = 0;
+	m_nScriptDialogWorld = -1;
+	m_nAvailableAnswerNum = 0;
 	m_btTryExecuteScriptTimes = 0;	//
 	
 	
@@ -4795,9 +4799,47 @@ void	KPlayer::DoScriptAction(PLAYER_SCRIPTACTION_SYNC * pUIInfo) //要求显示某个U
 	if (pUIInfo->m_bParam2 == 1)
 	{
 #ifdef _SERVER
-		pUIInfo->ProtocolType = (BYTE)s2c_scriptaction;
-		pUIInfo->m_wProtocolLong = sizeof(PLAYER_SCRIPTACTION_SYNC) - MAX_SCIRPTACTION_BUFFERNUM + pUIInfo->m_nBufferLen - 1;
-		g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)pUIInfo, pUIInfo->m_wProtocolLong + 1 );
+		if (pUIInfo->m_nBufferLen < 0 || pUIInfo->m_nBufferLen > MAX_SCIRPTACTION_BUFFERNUM ||
+			m_nIndex <= 0 || m_nIndex >= MAX_NPC)
+			return;
+
+		GAME_SCRIPT_ACTION_SYNC Info;
+		ZeroMemory(&Info, sizeof(Info));
+		Info.ProtocolType = s2c_scriptaction;
+		Info.Length = sizeof(Info) - sizeof(Info.Content) + pUIInfo->m_nBufferLen - 1;
+		Info.Operation = pUIInfo->m_nOperateType;
+		Info.OptionNum = pUIInfo->m_bOptionNum;
+		Info.Selector = pUIInfo->m_bParam1;
+		Info.Feedback = pUIInfo->m_bParam2;
+		Info.Value = pUIInfo->m_nParam;
+		Info.DataLength = pUIInfo->m_nBufferLen;
+		memcpy(Info.Content, pUIInfo->m_pContent, Info.DataLength);
+		switch (pUIInfo->m_bUIId)
+		{
+		case UI_SELECTDIALOG: Info.UIAction = 0; break;
+		case UI_TALKDIALOG: Info.UIAction = 2; break;
+		case UI_NOTEINFO: Info.UIAction = 3; break;
+		case UI_MSGINFO: Info.UIAction = 4; break;
+		case UI_NEWSINFO: Info.UIAction = 5; break;
+		case UI_PLAYMUSIC: Info.UIAction = 6; break;
+		case UI_OPENTONGUI: Info.UIAction = 7; break;
+		case UI_CLOSEDIALOG: Info.UIAction = 15; break;
+		default:
+			g_DebugLog("[ScriptUI] Unsupported UI %u for player=%d", pUIInfo->m_bUIId, m_nPlayerIndex);
+			return;
+		}
+		if (pUIInfo->m_bUIId == UI_SELECTDIALOG || pUIInfo->m_bUIId == UI_TALKDIALOG)
+		{
+			// 客户端原样回传 token，用于匹配当前菜单，拒绝旧菜单的重复反馈。
+			static DWORD dwNextDialogToken = 0;
+			if (++dwNextDialogToken == 0)
+				++dwNextDialogToken;
+			m_dwScriptDialogToken = dwNextDialogToken;
+			m_dwScriptDialogScriptID = Npc[m_nIndex].m_ActionScriptID;
+			m_nScriptDialogWorld = Npc[m_nIndex].m_SubWorldIndex;
+			Info.SourceToken = m_dwScriptDialogToken;
+		}
+		g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&Info, Info.Length + 1);
 #else
 	}
 	else //客户端脚本要求显示脚本 直接运行
@@ -4811,20 +4853,28 @@ void	KPlayer::DoScriptAction(PLAYER_SCRIPTACTION_SYNC * pUIInfo) //要求显示某个U
 //服务器端获知玩家选择了某项后，处理~~
 void	KPlayer::ProcessPlayerSelectFromUI(BYTE* pProtocol)			// 处理当玩家从选择菜单选择某项时的操作	
 {
-	PLAYER_SELECTUI_COMMAND * pSelUI = (PLAYER_SELECTUI_COMMAND*) pProtocol;
+	if (!pProtocol || !m_bWaitingPlayerFeedBack)
+		return;
+	PLAYER_SELECTUI_COMMAND *pSelUI = (PLAYER_SELECTUI_COMMAND*)pProtocol;
+	int nSelectIndex = pSelUI->nSelectIndex;
+	int nAnswerNum = m_nAvailableAnswerNum;
+	DWORD dwScriptID = m_dwScriptDialogScriptID;
+	int nDialogWorld = m_nScriptDialogWorld;
 	m_bWaitingPlayerFeedBack = false;
-	//如果返回负数，表示退出该脚本执行环境
-	if (pSelUI->nSelectIndex < 0) m_nAvailableAnswerNum = 0;
-	if (m_nAvailableAnswerNum > pSelUI->nSelectIndex)
+	m_nAvailableAnswerNum = 0;
+	m_dwScriptDialogScriptID = 0;
+	if (nSelectIndex < 0 || nSelectIndex >= nAnswerNum || nSelectIndex >= MAX_ANSWERNUM ||
+		m_nIndex <= 0 || m_nIndex >= MAX_NPC ||
+		Npc[m_nIndex].m_SubWorldIndex != nDialogWorld || !dwScriptID)
+		return;
+
+	char szFunction[sizeof(m_szTaskAnswerFun[0])];
+	g_StrCpyLen(szFunction, m_szTaskAnswerFun[nSelectIndex], sizeof(szFunction));
+	if (szFunction[0])
 	{
-		if (m_szTaskAnswerFun[pSelUI->nSelectIndex][0])
-		{
-			//			g_SetFilePath("\\script");
-			if (m_nIndex)
-			{
-				ExecuteScript(Npc[m_nIndex].m_ActionScriptID, m_szTaskAnswerFun[pSelUI->nSelectIndex], pSelUI->nSelectIndex);
-			}
-		}
+		g_DebugLog("[ScriptUI] player=%d token=%lu select=%d script=%lu function=%s",
+			m_nPlayerIndex, m_dwScriptDialogToken, nSelectIndex, dwScriptID, szFunction);
+		ExecuteScript(dwScriptID, szFunction, nSelectIndex);
 	}
 }
 

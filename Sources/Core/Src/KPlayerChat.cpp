@@ -1779,7 +1779,7 @@ BOOL	KPlayerChat::CheckTalkChannel(int nChannel)
 #ifdef _SERVER
 void	KPlayerChat::SendSystemInfo(int nType, int nTargetIdx, char *lpszSendName, char *lpszSentence, int nSentenceLength)
 {
-	if (!lpszSendName || !lpszSentence)
+	if (!lpszSendName || !lpszSentence || nSentenceLength <= 0)
 		return;
 	if (nSentenceLength >= MAX_SENTENCE_LENGTH)
 		nSentenceLength = MAX_SENTENCE_LENGTH;
@@ -1788,7 +1788,7 @@ void	KPlayerChat::SendSystemInfo(int nType, int nTargetIdx, char *lpszSendName, 
 	BOOL bAll = nType == 0;
 
 
-	size_t chatsize = sizeof(CHAT_CHANNELCHAT_SYNC) + nSentenceLength;
+	size_t chatsize = sizeof(GAME_CHANNELCHAT_SYNC) + nSentenceLength;
 	size_t pckgsize = sizeof(tagExtendProtoHeader) + chatsize;
 
 #ifdef WIN32
@@ -1796,10 +1796,11 @@ void	KPlayerChat::SendSystemInfo(int nType, int nTargetIdx, char *lpszSendName, 
 #else
 	tagExtendProtoHeader* pExHeader = (tagExtendProtoHeader*)(new char[pckgsize]);
 #endif
+	memset(pExHeader, 0, pckgsize);
 	pExHeader->ProtocolType = s2c_extendchat;
 	pExHeader->wLength = pckgsize - 1;
 
-	CHAT_CHANNELCHAT_SYNC* pCccSync= (CHAT_CHANNELCHAT_SYNC*)(pExHeader + 1);
+	GAME_CHANNELCHAT_SYNC* pCccSync= (GAME_CHANNELCHAT_SYNC*)(pExHeader + 1);
 	pCccSync->ProtocolType = chat_channelchat;
 	pCccSync->wSize = chatsize - 1;
 	pCccSync->packageID = -1;
@@ -1915,12 +1916,12 @@ void	KPlayerChat::SendSystemInfo(int nType, int nTargetIdx, char *lpszSendName, 
 #ifdef _SERVER
 void KPlayerChat::SendGlobalSystemInfo(char *lpszSendName, char *lpszSentence, int nSentenceLength)
 {
-	if (!lpszSendName || !lpszSentence)
+	if (!lpszSendName || !lpszSentence || nSentenceLength <= 0)
 		return;
 	if (nSentenceLength >= MAX_SENTENCE_LENGTH)
 		nSentenceLength = MAX_SENTENCE_LENGTH;
 
-	size_t chatsize = sizeof(CHAT_CHANNELCHAT_SYNC) + nSentenceLength;
+	size_t chatsize = sizeof(GAME_CHANNELCHAT_SYNC) + nSentenceLength;
 	size_t pckgsize = sizeof(tagExtendProtoHeader) + chatsize;
 
 #ifdef WIN32

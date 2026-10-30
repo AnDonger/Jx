@@ -3335,8 +3335,106 @@ void KProtocolProcess::CurrentRunCommand(int nIndex, BYTE* pProtocol)
 		nIndex, pCommand->SimulationFrame, pCommand->ElapsedMovementFrames, nTargetX, nTargetY);
 }
 
+// B8/45 使用 MessagePack 八元素数组，整数按网络字节序编码。
+// 只接收当前菜单实际使用的反馈字段，所有读取均受本包长度约束。
+static BOOL ReadScriptFeedbackInteger(const BYTE *&pData, const BYTE *pEnd, __int64 &nValue)
+{
+	if (pData >= pEnd)
+		return FALSE;
+	BYTE bType = *pData++;
+	if (bType <= 0x7F)
+	{
+		nValue = bType;
+		return TRUE;
+	}
+	if (bType >= 0xE0)
+	{
+		nValue = (signed char)bType;
+		return TRUE;
+	}
+	int nBytes = 0;
+	switch (bType)
+	{
+	case 0xCC: case 0xD0: nBytes = 1; break;
+	case 0xCD: case 0xD1: nBytes = 2; break;
+	case 0xCE: case 0xD2: nBytes = 4; break;
+	default: return FALSE;
+	}
+	if (pEnd - pData < nBytes)
+		return FALSE;
+	DWORD dwValue = 0;
+	for (int i = 0; i < nBytes; i++)
+		dwValue = (dwValue << 8) | *pData++;
+	nValue = dwValue;
+	if (bType >= 0xD0 && (dwValue & (1UL << (nBytes * 8 - 1))))
+		nValue -= (__int64)1 << (nBytes * 8);
+	return TRUE;
+}
+
+static BOOL ReadScriptFeedbackEmptyString(const BYTE *&pData, const BYTE *pEnd)
+{
+	if (pData >= pEnd)
+		return FALSE;
+	BYTE bType = *pData++;
+	if (bType == 0xA0)
+		return TRUE;
+	int nBytes = bType == 0xD9 ? 1 : bType == 0xDA ? 2 : bType == 0xDB ? 4 : 0;
+	if (!nBytes || pEnd - pData < nBytes)
+		return FALSE;
+	for (int i = 0; i < nBytes; i++)
+	{
+		if (*pData++ != 0)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+static BOOL ReadScriptFeedback(const BYTE *pData, const BYTE *pEnd, DWORD &dwToken, int &nSelectIndex)
+{
+	if (pData >= pEnd || *pData++ != 0x98)
+		return FALSE;
+	__int64 nToken, nIndex, unknown_1, unknown_2, unknown_3, unknown_4;
+	if (!ReadScriptFeedbackInteger(pData, pEnd, nToken) || nToken < 0 || nToken > 0xFFFFFFFFLL ||
+		!ReadScriptFeedbackInteger(pData, pEnd, nIndex) || nIndex < -1 || nIndex >= MAX_ANSWERNUM ||
+		!ReadScriptFeedbackInteger(pData, pEnd, unknown_1) || unknown_1 != 0 ||
+		!ReadScriptFeedbackInteger(pData, pEnd, unknown_2) || unknown_2 != 0 ||
+		!ReadScriptFeedbackInteger(pData, pEnd, unknown_3) || unknown_3 != 0 ||
+		!ReadScriptFeedbackEmptyString(pData, pEnd) ||
+		!ReadScriptFeedbackInteger(pData, pEnd, unknown_4) || unknown_4 != 0 ||
+		pData >= pEnd || *pData++ != 0x90 || pData != pEnd)
+		return FALSE;
+	dwToken = (DWORD)nToken;
+	nSelectIndex = (int)nIndex;
+	return TRUE;
+}
+
 void KProtocolProcess::CurrentExtensionCommand(int nIndex, BYTE* pProtocol)
 {
+	WORD wLength;
+	memcpy(&wLength, pProtocol + 1, sizeof(wLength));
+	if (wLength < 3)
+		return;
+	if (pProtocol[3] == 0x45)
+	{
+		DWORD dwToken = 0;
+		int nSelectIndex = -1;
+		if (wLength > 1024 || !ReadScriptFeedback(pProtocol + 4, pProtocol + wLength + 1, dwToken, nSelectIndex))
+		{
+			g_DebugLog("[ScriptUI] Invalid B8/45 feedback: player=%d length=%u", nIndex, wLength);
+			return;
+		}
+		KPlayer &aPlayer = Player[nIndex];
+		if (!aPlayer.m_bWaitingPlayerFeedBack || !dwToken || dwToken != aPlayer.m_dwScriptDialogToken)
+		{
+			g_DebugLog("[ScriptUI] Stale feedback: player=%d token=%lu", nIndex, dwToken);
+			return;
+		}
+		PLAYER_SELECTUI_COMMAND Command;
+		ZeroMemory(&Command, sizeof(Command));
+		Command.nSelectIndex = nSelectIndex;
+		aPlayer.ProcessPlayerSelectFromUI((BYTE*)&Command);
+		return;
+	}
 	if (pProtocol[3] != 0x1E)
 		return;
 	const GAME_STOP_COMMAND *pCommand = (const GAME_STOP_COMMAND*)pProtocol;

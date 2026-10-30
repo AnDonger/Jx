@@ -252,33 +252,14 @@ BOOL KRegion::LoadServerObject(int nSubWorld, int nX, int nY)
 		KPakFile	cTrapData, cNpcData;
 
 		// 载入trap信息
-		KTrapFileHead	sTrapFileHead;
-		KSPTrap			sTrapCell;
-		int				i, j;
-
-//		g_SetFilePath(szFilePath);
 		sprintf(szFile, "%s\\%03d_%s", szFilePath, nX, REGION_TRAP_FILE);
-		memset(this->m_dwTrap, 0, sizeof(m_dwTrap));
-		if (!cTrapData.Open(szFile))
-			goto TRAP_CLOSE;
-		if (cTrapData.Size() < sizeof(KTrapFileHead))
-			goto TRAP_CLOSE;
-		cTrapData.Read(&sTrapFileHead, sizeof(KTrapFileHead));
-		if (sTrapFileHead.uNumTrap * sizeof(KSPTrap) + sizeof(KTrapFileHead) != cTrapData.Size())
-			goto TRAP_CLOSE;
-		for (i = 0; i < sTrapFileHead.uNumTrap; i++)
+		memset(m_dwTrap, 0, sizeof(m_dwTrap));
+		if (cTrapData.Open(szFile))
 		{
-			cTrapData.Read(&sTrapCell, sizeof(KSPTrap));
-			if (sTrapCell.cY >= REGION_GRID_HEIGHT || sTrapCell.cX + sTrapCell.cNumCell - 1 >= REGION_GRID_WIDTH)
-				continue;
-			for (j = 0; j < sTrapCell.cNumCell; j++)
-			{
-				m_dwTrap[sTrapCell.cX + j][sTrapCell.cY] = sTrapCell.uTrapId;
-			}
+			if (!LoadServerTrap(&cTrapData, cTrapData.Size()))
+				g_DebugLog("[Trap] Invalid region data: %s", szFile);
+			cTrapData.Close();
 		}
-
-TRAP_CLOSE:
-		cTrapData.Close();
 
 		// 载入npc数据
 		sprintf(szFile, "%s\\%03d_%s", szFilePath, nX, REGION_NPC_FILE_SERVER);
@@ -428,27 +409,33 @@ BOOL	KRegion::LoadServerObstacle(KPakFile *pFile, DWORD dwDataSize)
 BOOL	KRegion::LoadServerTrap(KPakFile *pFile, DWORD dwDataSize)
 {
 	memset(m_dwTrap, 0, sizeof(m_dwTrap));
-	if (!pFile || dwDataSize < sizeof(KTrapFileHead))
+	if (!dwDataSize)
+		return TRUE;
+	if (!pFile || dwDataSize < sizeof(KTrapFileHead) || pFile->Tell() > pFile->Size() ||
+		dwDataSize > pFile->Size() - pFile->Tell() ||
+		dwDataSize > sizeof(KTrapFileHead) + REGION_GRID_WIDTH * REGION_GRID_HEIGHT * sizeof(KSPTrap))
 		return FALSE;
-
-	KTrapFileHead	sTrapFileHead;
-	KSPTrap			sTrapCell;
-	int				i, j;
-
-	pFile->Read(&sTrapFileHead, sizeof(KTrapFileHead));
-	if (sTrapFileHead.uNumTrap * sizeof(KSPTrap) + sizeof(KTrapFileHead) != dwDataSize)
+	KMemClass Data;
+	BYTE *pData = (BYTE*)Data.Alloc(dwDataSize);
+	if (!pData || pFile->Read(pData, dwDataSize) != dwDataSize)
 		return FALSE;
-	for (i = 0; i < sTrapFileHead.uNumTrap; i++)
+	KTrapFileHead Head;
+	memcpy(&Head, pData, sizeof(Head));
+	if (Head.uNumTrap != (dwDataSize - sizeof(Head)) / sizeof(KSPTrap) ||
+		(dwDataSize - sizeof(Head)) % sizeof(KSPTrap))
+		return FALSE;
+	KSPTrap *pCells = (KSPTrap*)(pData + sizeof(Head));
+	for (DWORD i = 0; i < Head.uNumTrap; i++)
 	{
-		pFile->Read(&sTrapCell, sizeof(KSPTrap));
-		if (sTrapCell.cY >= REGION_GRID_HEIGHT || sTrapCell.cX + sTrapCell.cNumCell - 1 >= REGION_GRID_WIDTH)
-			continue;
-		for (j = 0; j < sTrapCell.cNumCell; j++)
-		{
-			m_dwTrap[sTrapCell.cX + j][sTrapCell.cY] = sTrapCell.uTrapId;
-		}
+		if (!pCells[i].cNumCell || pCells[i].cY >= REGION_GRID_HEIGHT ||
+			pCells[i].cX >= REGION_GRID_WIDTH || pCells[i].cNumCell > REGION_GRID_WIDTH - pCells[i].cX)
+			return FALSE;
 	}
-
+	for (DWORD i = 0; i < Head.uNumTrap; i++)
+	{
+		for (int j = 0; j < pCells[i].cNumCell; j++)
+			m_dwTrap[pCells[i].cX + j][pCells[i].cY] = pCells[i].uTrapId;
+	}
 	return TRUE;
 }
 #endif

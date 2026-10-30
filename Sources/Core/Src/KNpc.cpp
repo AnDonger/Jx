@@ -411,6 +411,11 @@ void KNpc::Activate()
 
 	ProcCommand(m_ProcessAI);
 	ProcStatus();
+#ifdef _SERVER
+	// 按服务器实际步进后的格子检测，移动动作期间也必须触发地面传送。
+	if (!m_bExchangeServer)
+		CheckTrap();
+#endif
 
 #ifdef _SERVER
 	this->m_cDeathCalcExp.Active();
@@ -5576,9 +5581,13 @@ int KNpc::SetPos(int nX, int nY)
 	}
 	SubWorld[m_SubWorldIndex].m_Region[nRegion].AddRef(m_MapX, m_MapY, obj_npc);
 
+	SendCommand(do_none);
+	m_DesX = nX;
+	m_DesY = nY;
 	DoStand();
 	m_ProcessAI = 1;
 	m_ProcessState = 1;
+	m_TrapScriptID = SubWorld[m_SubWorldIndex].m_Region[m_RegionIndex].GetTrap(m_MapX, m_MapY);
 	return 1;
 }
 #endif
@@ -5642,9 +5651,14 @@ int KNpc::ChangeWorld(DWORD dwSubWorldID, int nX, int nY)
 	m_OffY = nOffY;
 	SubWorld[nTargetSubWorld].m_Region[nRegion].AddNpc(m_Index);// m_WorldMessage.Send(GWM_NPC_ADD, nRegion, m_Index);	
 	SubWorld[nTargetSubWorld].m_Region[nRegion].AddRef(m_MapX, m_MapY, obj_npc);
+	SendCommand(do_none);
+	m_DesX = nX;
+	m_DesY = nY;
 	DoStand();
 	m_ProcessAI = 1;
+	m_TrapScriptID = SubWorld[nTargetSubWorld].m_Region[nRegion].GetTrap(m_MapX, m_MapY);
 
+	g_DebugLog("[Portal] player=%d map=%lu position=(%d,%d)", m_nPlayerIdx, dwSubWorldID, nX, nY);
 	if (IsPlayer())
 	{
 		SubWorld[nTargetSubWorld].SendSyncData(m_Index, Player[m_nPlayerIdx].m_nNetConnectIdx);
@@ -5758,7 +5772,12 @@ void KNpc::CheckTrap()
 		return;
 	}
 
-	Player[m_nPlayerIdx].ExecuteScript(m_TrapScriptID, "main", 0);
+	if (m_nPlayerIdx <= 0 || m_nPlayerIdx >= MAX_PLAYER)
+		return;
+	g_DebugLog("[Trap] player=%d map=%d region=%d cell=(%d,%d) script=%lu",
+		m_nPlayerIdx, SubWorld[m_SubWorldIndex].m_SubWorldID, m_RegionIndex, m_MapX, m_MapY, m_TrapScriptID);
+	if (!Player[m_nPlayerIdx].ExecuteScript(m_TrapScriptID, "main", 0))
+		g_DebugLog("[Trap] Script failed: player=%d script=%lu", m_nPlayerIdx, dwTrap);
 }
 
 void KNpc::SetFightMode(BOOL bFightMode)

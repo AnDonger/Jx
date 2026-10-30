@@ -922,6 +922,24 @@ typedef struct
 	char	m_pContent[MAX_SCIRPTACTION_BUFFERNUM];				//带控制符
 } PLAYER_SCRIPTACTION_SYNC;
 
+// 当前客户端脚本界面：固定前缀 22 字节，后接原资源的 GBK 内容。
+typedef struct
+{
+	BYTE	ProtocolType;
+	WORD	Length;
+	DWORD	SourceToken;
+	BYTE	Operation;
+	BYTE	UIAction;
+	BYTE	OptionNum;
+	BYTE	Selector;
+	BYTE	Feedback;
+	BYTE	unknown_1;
+	BYTE	unknown_2;
+	int		Value;
+	DWORD	DataLength;
+	char	Content[MAX_SCIRPTACTION_BUFFERNUM];
+} GAME_SCRIPT_ACTION_SYNC;
+
 typedef struct
 {
 	WORD	SkillId;
@@ -1877,6 +1895,18 @@ typedef struct
 	DWORD	channelid;
 	BYTE	sentlen;
 } CHAT_CHANNELCHAT_SYNC;
+
+// 当前客户端 FB/21：文本长度为 WORD，外层头后共 45 字节。
+// 旧聊天中继结构继续用于内部通信，在客户端发送边界使用此结构。
+typedef struct
+{
+	BYTE	ProtocolType;
+	WORD	wSize;
+	DWORD	packageID;
+	char	someone[_NAME_LEN];
+	DWORD	channelid;
+	WORD	sentlen;
+} GAME_CHANNELCHAT_SYNC;
 
 enum {codeSucc, codeFail, codeStore};
 typedef struct

@@ -621,7 +621,6 @@ void KNpcAI::ProcessPlayer()
 {
 #ifdef _SERVER
 	TriggerObjectTrap();
-	TriggerMapTrap();
 #else
 	int i = Npc[m_nIndex].m_nPeopleIdx;
 	if (i > 0)
