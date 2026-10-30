@@ -1478,11 +1478,20 @@ void KNpc::DoRun()
 
 #ifdef _SERVER
 
-	NPC_RUN_SYNC	NetCommand;
+	GAME_NPC_MOVE_SYNC NetCommand;
+	memset(&NetCommand, 0, sizeof(NetCommand));
 	NetCommand.ProtocolType = (BYTE)s2c_npcrun;
 	NetCommand.ID = m_dwID;
-	NetCommand.nMpsX = m_DesX;
-	NetCommand.nMpsY = m_DesY;
+	int nMpsX, nMpsY;
+	GetMpsPos(&nMpsX, &nMpsY);
+	NetCommand.MapX = (WORD)nMpsX;
+	NetCommand.MapY = (WORD)nMpsY;
+	NetCommand.MapHigh = (BYTE)(((nMpsX >> 16) & 15) | ((nMpsY >> 12) & 240));
+	NetCommand.OffX = (WORD)m_OffX;
+	NetCommand.OffY = (WORD)m_OffY;
+	NetCommand.TargetX = (WORD)m_DesX;
+	NetCommand.TargetY = (WORD)m_DesY;
+	NetCommand.TargetHigh = (BYTE)(((m_DesX >> 16) & 15) | ((m_DesY >> 12) & 240));
 
 	POINT	POff[8] = 
 	{
@@ -1999,11 +2008,20 @@ void KNpc::DoWalk()
 		m_Frames.nTotalFrame = m_WalkFrame;
 	
 #ifdef _SERVER		// Server端的代码
-	NPC_WALK_SYNC	NetCommand;
+	GAME_NPC_MOVE_SYNC NetCommand;
+	memset(&NetCommand, 0, sizeof(NetCommand));
 	NetCommand.ProtocolType = (BYTE)s2c_npcwalk;
 	NetCommand.ID = m_dwID;
-	NetCommand.nMpsX = m_DesX;
-	NetCommand.nMpsY = m_DesY;
+	int nMpsX, nMpsY;
+	GetMpsPos(&nMpsX, &nMpsY);
+	NetCommand.MapX = (WORD)nMpsX;
+	NetCommand.MapY = (WORD)nMpsY;
+	NetCommand.MapHigh = (BYTE)(((nMpsX >> 16) & 15) | ((nMpsY >> 12) & 240));
+	NetCommand.OffX = (WORD)m_OffX;
+	NetCommand.OffY = (WORD)m_OffY;
+	NetCommand.TargetX = (WORD)m_DesX;
+	NetCommand.TargetY = (WORD)m_DesY;
+	NetCommand.TargetHigh = (BYTE)(((m_DesX >> 16) & 15) | ((m_DesY >> 12) & 240));
 
 	POINT	POff[8] = 
 	{
@@ -2873,6 +2891,20 @@ void KNpc::SendCommand(NPCCMD cmd,int x,int y, int z)
 	m_Command.Param_Z = z;
 }
 
+#ifdef _SERVER
+BOOL KNpc::StopMovement()
+{
+	if (m_Command.CmdKind != do_none && m_Command.CmdKind != do_walk && m_Command.CmdKind != do_run)
+		return FALSE;
+	if (m_Doing != do_walk && m_Doing != do_run &&
+		m_Command.CmdKind != do_walk && m_Command.CmdKind != do_run)
+		return FALSE;
+
+	SendCommand(do_stand);
+	return TRUE;
+}
+#endif
+
 BOOL KNpc::NewPath(int nMpsX, int nMpsY)
 {
 	m_DesX = nMpsX;
@@ -3117,7 +3149,7 @@ void KNpc::Load(int nNpcSettingIdx, int nLevel)
 #ifndef _SERVER
 	char	szNpcTypeName[32];
 #endif
-	if (nNpcSettingIdx == PLAYER_MALE_NPCTEMPLATEID || nNpcSettingIdx == PLAYER_FEMALE_NPCTEMPLATEID)
+	if (nNpcSettingIdx <= -1 && nNpcSettingIdx >= -6)
 	{
 		m_NpcSettingIdx = nNpcSettingIdx;
 		m_Level = nLevel;
@@ -3286,13 +3318,15 @@ BOOL KNpc::SetPlayerIdx(int nIdx)
 BOOL KNpc::SendSyncData(int nClient)
 {
 	BOOL	bRet = FALSE;
-	NPC_SYNC	NpcSync;
+	GAME_NPC_SYNC	NpcSync;
+	memset(&NpcSync, 0, sizeof(NpcSync));
 
 	NpcSync.ProtocolType		= (BYTE)s2c_syncnpc;
 	NpcSync.m_btKind			= (BYTE)m_Kind;
 	NpcSync.Camp				= (BYTE)m_Camp;
 	NpcSync.CurrentCamp			= (BYTE)m_CurrentCamp;
 	NpcSync.m_bySeries			= (BYTE)m_Series;
+	NpcSync.Series				= m_Series;
 	NpcSync.m_Doing				= (BYTE)m_Doing;
 	if (m_CurrentLifeMax > 0)
 		NpcSync.LifePerCent		= (BYTE)((m_CurrentLife << 7) / m_CurrentLifeMax);//Question只改了这部分，其它的也需要spe修改
@@ -3302,15 +3336,25 @@ BOOL KNpc::SendSyncData(int nClient)
 		NpcSync.m_btMenuState	= (BYTE)Player[this->m_nPlayerIdx].m_cMenuState.m_nState;
 	else
 		NpcSync.m_btMenuState	= 0;
-	GetMpsPos((int *)&NpcSync.MapX, (int *)&NpcSync.MapY);
+	int nMpsX, nMpsY;
+	GetMpsPos(&nMpsX, &nMpsY);
+	NpcSync.MapX = (WORD)nMpsX;
+	NpcSync.MapY = (WORD)nMpsY;
+	NpcSync.MapHigh = (BYTE)(((nMpsX >> 16) & 15) | ((nMpsY >> 12) & 240));
+	NpcSync.OffX = (WORD)m_OffX;
+	NpcSync.OffY = (WORD)m_OffY;
+	NpcSync.TargetX = NpcSync.SnapshotX = NpcSync.MapX;
+	NpcSync.TargetY = NpcSync.SnapshotY = NpcSync.MapY;
+	NpcSync.TargetHigh = NpcSync.SnapshotHigh = NpcSync.MapHigh;
+	NpcSync.LifeMax = m_CurrentLifeMax;
 	NpcSync.ID					= m_dwID;
 	NpcSync.NpcSettingIdx		= MAKELONG(m_Level, m_NpcSettingIdx);
 
 //	NpcSync.NpcEnchant			= (WORD)m_NpcEnchant;
-	NpcSync.NpcEnchant			= (WORD)this->m_cGold.GetGoldType();
+	// Gold/state extension is not part of the current fixed entity prefix.
 
-	strcpy(NpcSync.m_szName, Name);
-	NpcSync.m_wLength			= sizeof(NPC_SYNC) - 1 - sizeof(NpcSync.m_szName) + strlen(NpcSync.m_szName);
+	strncpy(NpcSync.m_szName, Name, 31);
+	NpcSync.m_wLength			= sizeof(GAME_NPC_SYNC) - 1 - sizeof(NpcSync.m_szName) + strlen(NpcSync.m_szName) + 3;
 
 	if (SUCCEEDED(g_pServer->PackDataToClient(nClient, (BYTE*)&NpcSync, NpcSync.m_wLength + 1)))
 	{
@@ -3326,28 +3370,33 @@ BOOL KNpc::SendSyncData(int nClient)
 
 	if (IsPlayer())
 	{
-		PLAYER_SYNC	PlayerSync;
+		GAME_PLAYER_SYNC	PlayerSync;
+		memset(&PlayerSync, 0, sizeof(PlayerSync));
+		PlayerSync.m_wLength = sizeof(PlayerSync) - 1;
 
 		PlayerSync.ProtocolType		= (BYTE)s2c_syncplayer;
 		PlayerSync.ID				= m_dwID;
-		PlayerSync.ArmorType		= (BYTE)m_ArmorType;
-		PlayerSync.AttackSpeed		= (BYTE)m_CurrentAttackSpeed;
-		PlayerSync.CastSpeed		= (BYTE)m_CurrentCastSpeed;
-		PlayerSync.HelmType			= (BYTE)m_HelmType;
-		PlayerSync.HorseType		= (BYTE)m_HorseType;
+		PlayerSync.Portrait			= Player[m_nPlayerIdx].m_btPortrait;
+		PlayerSync.ArmorType		= (BYTE)((m_ArmorType & 31) << 3);
+		PlayerSync.AttackSpeed		= (SHORT)m_CurrentAttackSpeed;
+		PlayerSync.CastSpeed		= (SHORT)m_CurrentCastSpeed;
+		PlayerSync.HelmType			= (BYTE)((m_HelmType & 31) << 3);
+		PlayerSync.HorseType		= (BYTE)((m_HorseType & 31) << 3);
 		PlayerSync.RunSpeed			= (BYTE)m_CurrentRunSpeed;
 		PlayerSync.WalkSpeed		= (BYTE)m_CurrentWalkSpeed;
-		PlayerSync.WeaponType		= (BYTE)m_WeaponType;
+		PlayerSync.WeaponType		= (WORD)((m_WeaponType & 1023) << 6);
 		PlayerSync.RankID			= (BYTE)m_btRankId;
-		PlayerSync.m_btSomeFlag		= 0;
-		if (Player[m_nPlayerIdx].m_cPK.GetNormalPKState())
-			PlayerSync.m_btSomeFlag |= 0x01;
-		if (Npc[Player[m_nPlayerIdx].m_nIndex].m_FightMode)
-			PlayerSync.m_btSomeFlag |= 0x02;
-		if (Player[m_nPlayerIdx].m_bSleepMode)
+		PlayerSync.m_btSomeFlag = (BYTE)(Player[m_nPlayerIdx].m_cPK.GetNormalPKState() & 3);
+		if (m_FightMode)
 			PlayerSync.m_btSomeFlag |= 0x04;
+		if (Player[m_nPlayerIdx].m_bSleepMode)
+			PlayerSync.m_btSomeFlag |= 0x08;
+		if (Player[m_nPlayerIdx].m_cTong.GetOpenFlag())
+			PlayerSync.m_btSomeFlag |= 0x10;
+		if (m_bRideHorse)
+			PlayerSync.m_btSomeFlag |= 0x20;
 
-		if (SUCCEEDED(g_pServer->PackDataToClient(nClient, (BYTE*)&PlayerSync, sizeof(PLAYER_SYNC))))
+		if (SUCCEEDED(g_pServer->PackDataToClient(nClient, (BYTE*)&PlayerSync, sizeof(GAME_PLAYER_SYNC))))
 		{
 			//printf("Packing player sync data ok...\n");
 			bRet = TRUE;
@@ -3367,31 +3416,29 @@ void KNpc::NormalSync()
 	if (m_Doing == do_revive || m_Doing == do_death || !m_Index || m_RegionIndex < 0)
 		return;
 
-	NPC_NORMAL_SYNC NpcSync;
+	GAME_NPC_NORMAL_SYNC NpcSync;
+	memset(&NpcSync, 0, sizeof(NpcSync));
+	// 当前客户端 0x4D 的 +1 为国战状态，普通场景保持关闭。
+	NpcSync.WarState = 0;
+	NpcSync.LifeMax = m_CurrentLifeMax;
 	int	nMpsX, nMpsY;
 
 	GetMpsPos(&nMpsX, &nMpsY);
 
 	NpcSync.ProtocolType = (BYTE)s2c_syncnpcmin;
 	NpcSync.ID = m_dwID;
-	if (m_CurrentLife > 0)
-		NpcSync.LifePerCent = (BYTE)((m_CurrentLife << 7) / m_CurrentLifeMax);
+	if (m_CurrentLife > 0 && m_CurrentLifeMax > 0)
+	{
+		NpcSync.LifePerCent = (BYTE)((m_CurrentLife * 2047LL) / m_CurrentLifeMax);
+		NpcSync.Camp = (BYTE)(((m_CurrentLife * 2047LL / m_CurrentLifeMax) >> 3) & 0xE0);
+	}
 	else
 		NpcSync.LifePerCent = 0;
 
 	NpcSync.MapX = nMpsX;
 	NpcSync.MapY = nMpsY;
 
-	NpcSync.Camp = (BYTE)m_CurrentCamp;
-	NpcSync.State = 0;
-	if (m_FreezeState.nTime > 0)
-		NpcSync.State |= STATE_FREEZE;
-	if (m_PoisonState.nTime > 0)
-		NpcSync.State |= STATE_POISON;
-	if (m_ConfuseState.nTime > 0)
-		NpcSync.State |= STATE_CONFUSE;
-	if (m_StunState.nTime > 0)
-		NpcSync.State |= STATE_STUN;
+	NpcSync.Camp |= (BYTE)(m_CurrentCamp & 15);
 	NpcSync.Doing = (BYTE)m_Doing;
 
 	// 由于同步数据每次同步的很少，所以上限就是MAX_PLAYER
@@ -3407,7 +3454,7 @@ void KNpc::NormalSync()
 		{16, 32},
 	};
 	int nMaxCount = MAX_PLAYER;//MAX_BROADCAST_COUNT;
-	CURREGION.BroadCast(&NpcSync, sizeof(NPC_NORMAL_SYNC), nMaxCount, m_MapX, m_MapY);
+	CURREGION.BroadCast(&NpcSync, sizeof(GAME_NPC_NORMAL_SYNC), nMaxCount, m_MapX, m_MapY);
 	int j;
 	for (j = 0; j < 8; j++)
 	{
@@ -3415,59 +3462,59 @@ void KNpc::NormalSync()
 		if (nConRegion == -1)
 			continue;
 		_ASSERT(m_SubWorldIndex >= 0 && nConRegion >= 0);
-		SubWorld[m_SubWorldIndex].m_Region[nConRegion].BroadCast((BYTE*)&NpcSync, sizeof(NPC_NORMAL_SYNC), nMaxCount, m_MapX - POff[j].x, m_MapY - POff[j].y);
+		SubWorld[m_SubWorldIndex].m_Region[nConRegion].BroadCast((BYTE*)&NpcSync, sizeof(GAME_NPC_NORMAL_SYNC), nMaxCount, m_MapX - POff[j].x, m_MapY - POff[j].y);
 	}
 
 	if (IsPlayer())
 	{
-		PLAYER_NORMAL_SYNC PlayerSync;
+		GAME_PLAYER_NORMAL_SYNC PlayerSync;
+		memset(&PlayerSync, 0, sizeof(PlayerSync));
 
 		PlayerSync.ProtocolType	= (BYTE)s2c_syncplayermin;
 		PlayerSync.ID			= m_dwID;
-		PlayerSync.AttackSpeed	= (BYTE)m_CurrentAttackSpeed;
-		PlayerSync.CastSpeed	= (BYTE)m_CurrentCastSpeed;
+		PlayerSync.AttackSpeed	= (SHORT)m_CurrentAttackSpeed;
+		PlayerSync.CastSpeed	= (SHORT)m_CurrentCastSpeed;
 		PlayerSync.RunSpeed		= (BYTE)m_CurrentRunSpeed;
-		PlayerSync.WalkSpeed	= (BYTE)m_CurrentWalkSpeed;
-		PlayerSync.HelmType		= (BYTE)m_HelmType;
-		PlayerSync.ArmorType	= (BYTE)m_ArmorType;
-		PlayerSync.WeaponType	= (BYTE)m_WeaponType;
-		PlayerSync.HorseType	= (BYTE)m_HorseType;
+		PlayerSync.HelmType		= (BYTE)((m_HelmType & 31) << 3);
+		PlayerSync.ArmorType	= (BYTE)((m_ArmorType & 31) << 3);
+		PlayerSync.WeaponType	= (WORD)((m_WeaponType & 1023) << 6);
+		PlayerSync.HorseType	= (BYTE)((m_HorseType & 31) << 3);
 		PlayerSync.RankID		= (BYTE)m_btRankId;
 
-		PlayerSync.m_btSomeFlag	= 0;
-		if (Player[m_nPlayerIdx].m_cPK.GetNormalPKState())
-			PlayerSync.m_btSomeFlag |= 0x01;
+		// Current client 0x4B: two PK bits, then fight, sleep, guild and ride flags.
+		PlayerSync.m_btSomeFlag = (BYTE)(Player[m_nPlayerIdx].m_cPK.GetNormalPKState() & 3);
 		if (m_FightMode)
-			PlayerSync.m_btSomeFlag |= 0x02;
-		if (Player[m_nPlayerIdx].m_bSleepMode)
 			PlayerSync.m_btSomeFlag |= 0x04;
-		if (Player[m_nPlayerIdx].m_cTong.GetOpenFlag())
+		if (Player[m_nPlayerIdx].m_bSleepMode)
 			PlayerSync.m_btSomeFlag |= 0x08;
+		if (Player[m_nPlayerIdx].m_cTong.GetOpenFlag())
+			PlayerSync.m_btSomeFlag |= 0x10;
+		if (m_bRideHorse)
+			PlayerSync.m_btSomeFlag |= 0x20;
+
+		// 当前客户端将 0x7FFF 解释为 -1，恢复角色本身形象。
+		// 不能使用零值占位，否则会选中 NPC 资源的第 0 号形象。
+		PlayerSync.AppearanceFlags = 0x08;
+		PlayerSync.AppearanceType = 0x7FFF;
 
 		int nMaxCount = MAX_PLAYER;//MAX_BROADCAST_COUNT;
-		CURREGION.BroadCast(&PlayerSync, sizeof(PLAYER_NORMAL_SYNC), nMaxCount, m_MapX, m_MapY);
+		CURREGION.BroadCast(&PlayerSync, sizeof(GAME_PLAYER_NORMAL_SYNC), nMaxCount, m_MapX, m_MapY);
 		for (j = 0; j < 8; j++)
 		{
 			int nConRegion = CURREGION.m_nConnectRegion[j];
 			if (nConRegion == -1)
 				continue;
-			SubWorld[m_SubWorldIndex].m_Region[nConRegion].BroadCast((BYTE*)&PlayerSync, sizeof(PLAYER_NORMAL_SYNC), nMaxCount, m_MapX - POff[j].x, m_MapY - POff[j].y);
+			SubWorld[m_SubWorldIndex].m_Region[nConRegion].BroadCast((BYTE*)&PlayerSync, sizeof(GAME_PLAYER_NORMAL_SYNC), nMaxCount, m_MapX - POff[j].x, m_MapY - POff[j].y);
 		}
 
-		NPC_PLAYER_TYPE_NORMAL_SYNC	sSync;
+		GAME_NPC_PLAYER_NORMAL_SYNC	sSync;
+		memset(&sSync, 0, sizeof(sSync));
 		sSync.ProtocolType = s2c_syncnpcminplayer;
 		sSync.m_dwNpcID = m_dwID;
-		if (m_CurrentLife > 0 && m_CurrentLifeMax > 0)
-			sSync.m_btLifePerCent = (BYTE)((m_CurrentLife << 7) / m_CurrentLifeMax);
-		else
-			sSync.m_btLifePerCent = 0;
-//		sSync.m_nRegionID = SubWorld[m_SubWorldIndex].m_Region[m_RegionIndex].m_RegionID;
-		sSync.m_btCamp = (BYTE)m_CurrentCamp;
 		sSync.m_dwMapX = nMpsX;
 		sSync.m_dwMapY = nMpsY;
 		sSync.m_wOffX = m_OffX;
 		sSync.m_wOffY = m_OffY;
-		sSync.m_byDoing = this->m_Doing;
 		g_pServer->PackDataToClient(Player[m_nPlayerIdx].m_nNetConnectIdx, (BYTE*)&sSync, sizeof(sSync));
 	}
 }

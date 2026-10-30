@@ -27,6 +27,8 @@ ZDBTable::ZDBTable(const char *path, const char *name) {
 #endif
 	
 		if(!db_env_create(&dbenv, 0)) {
+			// Returned DBT buffers must use the same runtime as their caller.
+			dbenv->set_alloc( dbenv, malloc, realloc, free );
 			dbenv->set_errpfx(dbenv, "index_db");
             dbenv->set_lg_regionmax(dbenv, 512 * 1024);
             dbenv->set_lg_max(dbenv, 16 * 1024 * 1024);
@@ -146,9 +148,10 @@ ZCursor *ZDBTable::_search(bool bKey, const char *key_ptr, int key_size, int ind
 	pkey.flags = DB_DBT_MALLOC;
 	key.data = (void *)key_ptr;
 	key.size = key_size;
-	DBC *dbcp;
+	DBC *dbcp = NULL;
 	if(!key_ptr || !key_size) {							//没有设定索引值，要求遍历数据库
-		if(index_db[index]->cursor(index_db[index], NULL, &dbcp, 0)) {
+		DB *table = index == -1 ? primary_db : index_db[index];
+		if(table->cursor(table, NULL, &dbcp, 0)) {
 			return NULL;
 		}
 		if(dbcp->c_get(dbcp, &key, &data, DB_FIRST)) {

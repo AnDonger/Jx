@@ -129,6 +129,8 @@ public:
 	void	ObjRequestCommand(int nIndex, BYTE* pProtocol);
 	void	NpcWalkCommand(int nIndex, BYTE* pProtocol);
 	void	NpcRunCommand(int nIndex, BYTE* pProtocol);
+	void	CurrentRunCommand(int nIndex, BYTE* pProtocol);
+	void	CurrentExtensionCommand(int nIndex, BYTE* pProtocol);
 	void	NpcSkillCommand(int nIndex, BYTE* pProtocol);
 	void	NpcJumpCommand(int nIndex, BYTE* pProtocol);
 	void	NpcTalkCommand(int nIndex, BYTE* pProtocol);

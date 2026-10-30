@@ -64,6 +64,7 @@ static size_t g_nMaxRoleCount = 3;
 
 static unsigned short g_nServerPort = 5001;
 static IServer *g_pServer = NULL;
+static BOOL g_bHeadless = FALSE;
 
 static HANDLE g_hThread = NULL;
 
@@ -220,6 +221,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
                      LPSTR     lpCmdLine,
                      int       nCmdShow)
 {
+	OnlineGameLib::Win32::TraceNetworkData( "stage=role_service_start", NULL, 0 );
 	//role name filter
 	if (!g_libFilterText.Initialize()
 		|| !g_fltRoleName.Initialize())
@@ -237,9 +239,9 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 
 	ASSERT( hwndMain );
 
-	BOOL bHeadless = strstr( lpCmdLine, "--headless" ) != NULL;
-	::ShowWindow( hwndMain, bHeadless ? SW_HIDE : SW_SHOWNORMAL );
-	if ( bHeadless )
+	g_bHeadless = strstr( lpCmdLine, "--headless" ) != NULL;
+	::ShowWindow( hwndMain, g_bHeadless ? SW_HIDE : SW_SHOWNORMAL );
+	if ( g_bHeadless )
 	{
 		::PostMessage( hwndMain, WM_COMMAND, IDOK, 0 );
 	}
@@ -361,7 +363,7 @@ BOOL CALLBACK MainWndProc( HWND hwnd,
 
 	case WM_CLOSE:
 		{
-			if ( IDYES == ::MessageBox( hwnd, "Are you sure quit?", "Info", MB_YESNO | MB_ICONQUESTION ) )
+			if ( g_bHeadless || IDYES == ::MessageBox( hwnd, "Are you sure quit?", "Info", MB_YESNO | MB_ICONQUESTION ) )
 			{
 				
 				DestroyDatabaseEngine();
@@ -537,9 +539,10 @@ bool CreateDatabaseEngine( HWND hwnd )
 		return false;
 	}
 	
-	StartBackupTimer(g_BackupSleepTime); //开始运行备份线程
-	::SetWindowText(GetDlgItem( hwnd, IDC_LAB_BACKUP_STATUS ),
-								"Backup thread status: Running");
+	bool bBackupRunning = StartBackupTimer( g_BackupSleepTime );
+	::SetWindowText( GetDlgItem( hwnd, IDC_LAB_BACKUP_STATUS ),
+		bBackupRunning ? "Backup thread status: Running" : "SQL Server backup managed separately" );
+
 	/*
 	 * Open this server to client
 	 */

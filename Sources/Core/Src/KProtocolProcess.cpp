@@ -162,6 +162,8 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[c2s_npctalk] = &KProtocolProcess::NpcTalkCommand;
 	ProcessFunc[c2s_npchurt] = NULL;
 	ProcessFunc[c2s_npcdeath] = NULL;
+	ProcessFunc[0x50] = &KProtocolProcess::CurrentRunCommand;
+	ProcessFunc[0xB8] = &KProtocolProcess::CurrentExtensionCommand;
 	ProcessFunc[c2s_playertalk] = &KProtocolProcess::PlayerTalkCommand;
 	ProcessFunc[c2s_teamapplyinfo] = &KProtocolProcess::PlayerApplyTeamInfo;
 	ProcessFunc[c2s_teamapplycreate] = &KProtocolProcess::PlayerApplyCreateTeam;
@@ -3303,6 +3305,56 @@ void KProtocolProcess::NpcRunCommand(int nIndex, BYTE* pProtocol)
 	Npc[Player[nIndex].m_nIndex].SendCommand(do_run, ParamX, ParamY);
 }
 
+
+void KProtocolProcess::CurrentRunCommand(int nIndex, BYTE* pProtocol)
+{
+	const GAME_RUN_COMMAND_PREFIX *pCommand = (const GAME_RUN_COMMAND_PREFIX*)pProtocol;
+	if (pCommand->Length != sizeof(GAME_RUN_COMMAND_PREFIX) - 1 + pCommand->MovementRecordCount * 8)
+		return;
+
+	int nNpcIndex = Player[nIndex].m_nIndex;
+	if (nNpcIndex <= 0 || nNpcIndex >= MAX_NPC)
+		return;
+	KNpc &Npc = ::Npc[nNpcIndex];
+	if (Npc.m_SubWorldIndex < 0 || Npc.m_RegionIndex < 0 || Npc.m_bExchangeServer ||
+		Npc.m_Doing == do_death || Npc.m_Doing == do_revive)
+		return;
+
+	int nTargetX = pCommand->TargetX | ((pCommand->TargetHigh & 15) << 16);
+	int nTargetY = pCommand->TargetY | ((pCommand->TargetHigh & 240) << 12);
+	int nRegion, nMapX, nMapY, nOffX, nOffY;
+	SubWorld[Npc.m_SubWorldIndex].Mps2Map(nTargetX, nTargetY,
+		&nRegion, &nMapX, &nMapY, &nOffX, &nOffY);
+	if (nRegion < 0)
+		return;
+
+	// 仅将目标位置交给原有移动流程，不直接采用客户端上报的当前位置。
+	// 沿用原有指令队列、寻路、碰撞和逐帧移动。
+	Npc.SendCommand(do_run, nTargetX, nTargetY);
+	g_DebugLog("[Move] player=%d frame=%lu steps=%u target=(%d,%d)",
+		nIndex, pCommand->SimulationFrame, pCommand->ElapsedMovementFrames, nTargetX, nTargetY);
+}
+
+void KProtocolProcess::CurrentExtensionCommand(int nIndex, BYTE* pProtocol)
+{
+	if (pProtocol[3] != 0x1E)
+		return;
+	const GAME_STOP_COMMAND *pCommand = (const GAME_STOP_COMMAND*)pProtocol;
+	if (pCommand->Length != sizeof(GAME_STOP_COMMAND) - 1)
+		return;
+
+	int nNpcIndex = Player[nIndex].m_nIndex;
+	if (nNpcIndex <= 0 || nNpcIndex >= MAX_NPC)
+		return;
+	KNpc &Npc = ::Npc[nNpcIndex];
+	if (Npc.m_SubWorldIndex < 0 || Npc.m_RegionIndex < 0 || Npc.m_bExchangeServer)
+		return;
+	if (Npc.StopMovement())
+	{
+		g_DebugLog("[Move] player=%d stop frame=%lu steps=%u",
+			nIndex, pCommand->SimulationFrame, pCommand->ElapsedFrames);
+	}
+}
 
 void KProtocolProcess::NpcSkillCommand(int nIndex, BYTE* pProtocol)
 {

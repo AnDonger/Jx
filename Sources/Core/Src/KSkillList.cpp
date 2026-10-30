@@ -202,6 +202,7 @@ int KSkillList::Add(int nSkillID, int nLevel, int nMaxTimes, int RemainTimes)
 	if (i)
 	{
 		m_Skills[i].SkillId = nSkillID;
+		m_Skills[i].SkillStatus = 1;
 		m_Skills[i].SkillLevel = nLevel;
 		m_Skills[i].CurrentSkillLevel = nLevel;
 		m_Skills[i].MaxTimes = 0;
@@ -550,6 +551,109 @@ int KSkillList::GetSkillPosition(int nSkillId)//获得技能在技能界面的位置
 #endif
 
 #ifdef _SERVER
+// Restore player skills without invoking the legacy passive-skill executor.
+int KSkillList::LoadPlayerSkill(int nSkillID, int nLevel)
+{
+	if (nSkillID <= 0 || nSkillID >= MAX_SKILL)
+		return 0;
+	if (nLevel < 0 || nLevel >= MAX_SKILLLEVEL)
+		return 0;
+
+	int nIndex = FindSame(nSkillID);
+	if (!nIndex)
+	{
+		nIndex = FindFree();
+		if (!nIndex)
+			return 0;
+		memset(&m_Skills[nIndex], 0, sizeof(m_Skills[nIndex]));
+	}
+
+	m_Skills[nIndex].SkillId = nSkillID;
+	m_Skills[nIndex].SkillLevel = nLevel;
+	m_Skills[nIndex].CurrentSkillLevel = nLevel;
+	m_Skills[nIndex].SkillStatus = 1;
+	return nIndex;
+}
+
+BOOL KSkillList::LoadPlayerInitialSkills(int nSeries)
+{
+	static const char *szSections[] = { "Knight", "Enchanter", "Monstrous" };
+	if (nSeries < 0 || nSeries >= 3)
+		return FALSE;
+
+	KIniFile IniFile;
+	char szInitialSkills[2048];
+	if (!IniFile.Load("\\settings\\playerskills.ini") ||
+		!IniFile.GetString(szSections[nSeries], "InitSkills", "", szInitialSkills, sizeof(szInitialSkills)))
+	{
+		printf("[Skills] Cannot load InitSkills for profession %d.\n", nSeries);
+		return FALSE;
+	}
+
+	char *pEnd = NULL;
+	long nCount = strtol(szInitialSkills, &pEnd, 10);
+	if (nCount <= 0 || nCount >= MAX_NPCSKILL || !pEnd || *pEnd != ':')
+		return FALSE;
+
+	int nSkillIds[MAX_NPCSKILL];
+	int nSkillLevels[MAX_NPCSKILL];
+	char *pCurrent = pEnd + 1;
+	int i;
+	for (i = 0; i < nCount; i++)
+	{
+		long nSkillID = strtol(pCurrent, &pEnd, 10);
+		if (pEnd == pCurrent || nSkillID <= 0 || nSkillID >= MAX_SKILL || *pEnd != '&')
+			return FALSE;
+		pCurrent = pEnd + 1;
+		long nLevel = strtol(pCurrent, &pEnd, 10);
+		if (pEnd == pCurrent || nLevel < 0 || nLevel >= MAX_SKILLLEVEL)
+			return FALSE;
+		if ((i + 1 < nCount && *pEnd != ',') || (i + 1 == nCount && *pEnd != 0))
+			return FALSE;
+		for (int j = 0; j < i; j++)
+		{
+			if (nSkillIds[j] == nSkillID)
+				return FALSE;
+		}
+		nSkillIds[i] = nSkillID;
+		nSkillLevels[i] = nLevel;
+		pCurrent = pEnd + 1;
+	}
+
+	for (i = 0; i < nCount; i++)
+	{
+		int nIndex = FindSame(nSkillIds[i]);
+		if (!nIndex)
+			nIndex = LoadPlayerSkill(nSkillIds[i], nSkillLevels[i]);
+		if (!nIndex)
+		{
+			printf("[Skills] Initial skill list is full for profession %d.\n", nSeries);
+			return FALSE;
+		}
+
+		BYTE btStatus = 1;
+		if (i == 0)
+			btStatus = 3;
+		else
+		{
+			switch (nSkillIds[i])
+			{
+			case 553:
+			case 554:
+			case 558:
+			case 559:
+			case 561:
+			case 562:
+			case 564:
+				btStatus = 2;
+				break;
+			}
+		}
+		m_Skills[nIndex].SkillStatus = btStatus;
+	}
+	return TRUE;
+}
+
 int	KSkillList::UpdateDBSkillList(BYTE * pSkillBuffer)
 {
 	if (!pSkillBuffer)

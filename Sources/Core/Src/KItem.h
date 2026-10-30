@@ -129,7 +129,7 @@ public:
 // 以下是核心成员变量
 private:
 	KItemCommonAttrib	m_CommonAttrib;			// 各种道具的共同属性
-	KItemNormalAttrib	m_aryBaseAttrib[7];		// 道具的基础属性
+	KItemNormalAttrib	m_aryBaseAttrib[10];		// 道具的基础属性
 	KItemNormalAttrib	m_aryRequireAttrib[6];	// 道具的需求属性
 	KItemNormalAttrib	m_aryMagicAttrib[6];	// 道具的魔法属性
 

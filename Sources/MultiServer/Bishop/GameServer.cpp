@@ -1,4 +1,5 @@
 #include "Stdafx.h"
+#include "S3DBInterface.h"
 #include "GameServer.h"
 #include "IPlayer.h"
 #include "GamePlayer.h"
@@ -505,11 +506,12 @@ bool CGameServer::_NotifyPlayerLogin( const void *pData, size_t datalength )
 	if ( pPlayer )
 	{
 		tagNotifyPlayerLogin npl;
+		ZeroMemory( &npl, sizeof( npl ) );
 		
 		npl.cProtocol = s2c_notifyplayerlogin;
 		
 		int nMinLen = strlen( ( const char * )pPPL->szRoleName );
-		nMinLen = nMinLen > sizeof( npl.szRoleName ) ? sizeof( npl.szRoleName ) : nMinLen;
+		nMinLen = nMinLen >= sizeof( npl.szRoleName ) ? sizeof( npl.szRoleName ) - 1 : nMinLen;
 		memcpy( ( char * )npl.szRoleName, ( const char * )pPPL->szRoleName, nMinLen );
 		npl.szRoleName[nMinLen] = '\0';
 
@@ -789,10 +791,17 @@ bool CGameServer::_SyncRoleInfo( const void *pData, size_t datalength, WORD nDat
 	ginfo.nExtPoint = nData;
 	ginfo.nChangePoint = 0;
 	
-	ginfo.datalength = datalength;
+	const TRoleData *pRole = ( const TRoleData * )pData;
+	if ( datalength < sizeof( TRoleData ) + sizeof( BYTE ) ||
+		pRole->dwDataLen != datalength - sizeof( BYTE ) )
+	{
+		return false;
+	}
+	ginfo.btPortrait = ( ( const BYTE * )pData )[pRole->dwDataLen];
+	ginfo.datalength = pRole->dwDataLen;
 
 	m_thePackager.AddData( s2c_syncgamesvr_roleinfo_cipher, ( const char * )&ginfo, sizeof( tagGuidableInfo ) );
-	m_thePackager.AddData( s2c_syncgamesvr_roleinfo_cipher, ( const char * )pData, datalength );
+	m_thePackager.AddData( s2c_syncgamesvr_roleinfo_cipher, ( const char * )pData, ginfo.datalength );
 
 	/*
 	 * Begin to split this buffer

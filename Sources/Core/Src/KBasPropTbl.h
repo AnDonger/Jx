@@ -164,7 +164,7 @@ typedef struct
 	int			m_nPrice;					// 价格
 	int			m_nLevel;					// 等级
 	BOOL		m_bStack;					// 是否可叠放
-	KEQCP_BASIC	m_aryPropBasic[7];			// 基础属性
+	KEQCP_BASIC	m_aryPropBasic[10];			// 基础属性
 	KEQCP_REQ	m_aryPropReq[6];			// 需求属性
 } KBASICPROP_EQUIPMENT;
 
@@ -251,7 +251,7 @@ protected:
 
 // 以下是对外接口
 public:
-	virtual BOOL Load();					// 从tabfile中读出初始属性值, 填入属性表
+	virtual BOOL Load(int nVersion = -1);					// 从tabfile中读出初始属性值, 填入属性表
 	int NumOfEntries() const { return m_nNumOfEntries; }
 
 // 以下是辅助函数
@@ -511,7 +511,7 @@ protected:
 
 // 以下是对外接口
 public:
-	BOOL Init();
+	BOOL Init(int nVersion = -1);
 
 	const KMAGICATTRIB_TABFILE* GetMARecord(IN int) const;
 	const int					GetMARecordNumber() const;
@@ -523,6 +523,7 @@ public:
 	// Add by flying on 2003.6.2
 	const KBASICPROP_EQUIPMENT_GOLD*	GetGoldItemRecord(IN int nIndex) const;
 	const int							GetGoldItemNumber() const;
+	const KBASICPROP_EQUIPMENT*	FindEquipment(IN int, IN int, IN int) const;
 	const KBASICPROP_EQUIPMENT*	GetMeleeWeaponRecord(IN int) const;
 	const int					GetMeleeWeaponRecordNumber() const;
 	const KBASICPROP_EQUIPMENT*	GetRangeWeaponRecord(IN int) const;

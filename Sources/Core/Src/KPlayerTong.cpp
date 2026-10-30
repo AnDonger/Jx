@@ -817,7 +817,8 @@ BOOL	KPlayerTong::CanGetMemberInfo(DWORD dwTongNameID)
 //-------------------------------------------------------------------------
 void	KPlayerTong::SendSelfInfo()
 {
-	TONG_SELF_INFO_SYNC	sInfo;
+	GAME_TONG_SELF_INFO_SYNC	sInfo;
+	memset(&sInfo, 0, sizeof(sInfo));
 	sInfo.ProtocolType = s2c_extendtong;
 	sInfo.m_wLength = sizeof(sInfo) - 1;
 	sInfo.m_btMsgId = enumTONG_SYNC_ID_SELF_INFO;

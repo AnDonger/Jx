@@ -46,6 +46,7 @@
 #pragma pack(push, 1)
 
 #include "KProtocol.h"
+#include "S3DBInterface.h"
 
 #define	LOGIN_ACCOUNT_MIN_LEN	6
 #define LOGIN_ACCOUNT_MAX_LEN	16
@@ -111,16 +112,26 @@ struct KLoginAccountInfoCurrent : KLoginStructHead
 	BYTE unknown_1[454];
 };
 
-// Fields not present in the original role database remain zero until confirmed.
-struct KLoginRoleInfoCurrent
+typedef S3DBI_RoleBaseInfoCurrent KLoginRoleInfoCurrent;
+
+struct KNewPlayerCurrent
 {
-	char Name[32];
 	BYTE Sex;
 	BYTE Series;
-	BYTE Level;
+	WORD NativePlace;
 	BYTE Portrait;
-	BYTE unknown_1[46];
+	char Name[32];
 };
+
+struct KDeletePlayerCurrent : tagProtoHeader
+{
+	char Account[32];
+	KSG_PASSWORD Password;
+	char Name[32];
+};
+
+typedef char KDeletePlayerCurrentSizeCheck[
+	sizeof( KDeletePlayerCurrent ) == 129 ? 1 : -1 ];
 
 struct KLoginRoleListCurrent
 {

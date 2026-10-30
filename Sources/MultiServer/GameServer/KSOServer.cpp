@@ -370,6 +370,22 @@ BOOL KSwordOnLineSever::Init()
 		return FALSE;
 	}
 
+#ifndef _STANDALONE
+	IGameClientProtocol *pGameClientProtocol = NULL;
+	if ( FAILED( m_pServer->QueryInterface( IID_IGameClientProtocol,
+		reinterpret_cast< void ** >( &pGameClientProtocol ) ) ) )
+	{
+		cout << "Heaven does not support the current game client protocol" << endl;
+		return FALSE;
+	}
+	HRESULT hGameProtocol = pGameClientProtocol->EnableGameClientProtocol();
+	pGameClientProtocol->Release();
+	if ( FAILED( hGameProtocol ) )
+	{
+		return FALSE;
+	}
+#endif
+
 	m_pServer->Startup();
 
 	m_pServer->RegisterMsgFilter( reinterpret_cast< void * >( m_pServer ), ServerEventNotify );
@@ -383,6 +399,19 @@ BOOL KSwordOnLineSever::Init()
 	{
 		cout << "Can't get server ip" << endl;
 		return FALSE;
+	}
+	char szGameServerIP[64];
+	iniFile.GetString( "GameServer", "Ip", "", szGameServerIP, sizeof( szGameServerIP ) );
+	if ( szGameServerIP[0] )
+	{
+		DWORD dwConfiguredIP = inet_addr( szGameServerIP );
+		if ( dwConfiguredIP == INADDR_NONE || dwConfiguredIP == INADDR_ANY )
+		{
+			cout << "Invalid GameServer.Ip in ServerCfg.ini" << endl;
+			return FALSE;
+		}
+		m_dwInternetIp = dwConfiguredIP;
+		m_dwIntranetIp = dwConfiguredIP;
 	}
 	cout << m_dwIntranetIp << " : " << m_dwInternetIp << endl;
 
@@ -1671,7 +1700,7 @@ void KSwordOnLineSever::TransferLargePackProcess(const void *pData, size_t dataL
 					int nIdx = 0;
 					if (bCRC)
 					{
-						nIdx = m_pCoreServerShell->AddCharacter(pGI->nExtPoint, pGI->nChangePoint, (void *)pRoleData, &guid);
+						nIdx = m_pCoreServerShell->AddCharacter(pGI->nExtPoint, pGI->nChangePoint, (void *)pRoleData, &guid, pGI->btPortrait);
 					}
 					else
 					{
@@ -1897,6 +1926,7 @@ void KSwordOnLineSever::TransferSmallPackProcess(const void *pData, size_t dataL
 			
 			gi.nExtPoint = m_pCoreServerShell->GetGameData(SGDI_CHARACTER_EXTPOINT, nIndex, 0);
 			gi.nChangePoint = m_pCoreServerShell->GetGameData(SGDI_CHARACTER_EXTPOINTCHANGED, nIndex, 0);
+			gi.btPortrait = (BYTE)m_pCoreServerShell->GetGameData(SGDI_CHARACTER_PORTRAIT, nIndex, 0);
 
 			pData->dwDataLen += 4;
 			gi.datalength = pData->dwDataLen;
@@ -2035,7 +2065,16 @@ void KSwordOnLineSever::PlayerMessageProcess(const unsigned long lnID, const cha
 		}
 		return;
 	}
-	if (!m_pCoreServerShell->CheckProtocolSize(pData, dataLength))
+	BOOL bGameLogin = nGameStatus == enumPlayerBegin && protocoltype == c2s_logiclogin;
+	if ( bGameLogin )
+	{
+		if ( dataLength != sizeof( tagGameLogicLogin ) )
+		{
+			g_DebugLog("[LOGIN] invalid size: client=%lu size=%u", lnID, (unsigned)dataLength);
+			return;
+		}
+	}
+	else if (!m_pCoreServerShell->CheckProtocolSize(pData, dataLength))
 		return;
 
 	//printf("player msg arrived...%d\n", nGameStatus); //[wxb 2003-7-28]
@@ -2044,7 +2083,7 @@ void KSwordOnLineSever::PlayerMessageProcess(const unsigned long lnID, const cha
 	case enumPlayerPlaying:
 		if (nIndex)
 		{
-			if (*(BYTE*)pData == c2s_ping)
+			if (*(BYTE*)pData == 0x7A)
 			{
 				ProcessPingReply(lnID, pData, dataLength);
 			}
@@ -2236,7 +2275,7 @@ void KSwordOnLineSever::GatewayLargePackProcess(const void *pData, size_t dataLe
 					
 					if (Info.nNumPlayer < m_nMaxPlayer && bCRCCheck )	// 去掉注释CRC错的用户就无法进入游戏了
 					{
-						int nIdx = m_pCoreServerShell->AddCharacter(pGI->nExtPoint, pGI->nChangePoint, (void *)pRoleData, &guid);
+						int nIdx = m_pCoreServerShell->AddCharacter(pGI->nExtPoint, pGI->nChangePoint, (void *)pRoleData, &guid, pGI->btPortrait);
 						
 						if (nIdx > 0)
 						{
@@ -2448,27 +2487,25 @@ void KSwordOnLineSever::ProcessPingReply(const unsigned long lnID, const char* p
 	_ASSERT(lnID < m_nMaxPlayer);
 	_ASSERT(m_pGameStatus[lnID].nPlayerIndex > 0 && m_pGameStatus[lnID].nPlayerIndex <= m_nMaxPlayer);
 
-	//printf("receive ping from client...\n");
-	if (dataLength != sizeof(PING_CLIENTREPLY_COMMAND))
+	if (dataLength != sizeof(GAME_CHALLENGE_REPLY_COMMAND))
 	{
 		printf("ping cmd size not correct, may be Non-offical Client...\n");
 		m_pServer->ShutdownClient(lnID);
 		return;
 	}
 	
-	PING_CLIENTREPLY_COMMAND*	pPC = (PING_CLIENTREPLY_COMMAND *)pData;
-	if (pPC->m_dwReplyServerTime != m_pGameStatus[lnID].nSendPingTime)
+	const GAME_CHALLENGE_REPLY_COMMAND* pPC = (const GAME_CHALLENGE_REPLY_COMMAND*)pData;
+	if (pPC->ChallengeValue != (DWORD)m_pGameStatus[lnID].nSendPingTime)
 	{
 		printf("wrong time in ping cmd content, kill it...\n");
 		m_pServer->ShutdownClient(lnID);
 		return;
 	}
 	m_pGameStatus[lnID].nReplyPingTime = m_nGameLoop;
-	// reply client ping to client to announce ping interval;
-	PING_COMMAND	pc;
-	pc.ProtocolType = s2c_replyclientping;
-	pc.m_dwTime = pPC->m_dwClientTime;
-	m_pServer->PackDataToClient(lnID, &pc, sizeof(PING_COMMAND));
+	// 当前 0x7A 后两项为挑战运算结果和未知本地标识，不是客户端时间。
+	// 收到匹配挑战即完成保活，不发送旧版的客户端时钟回包。
+	g_DebugLog("[PING] client=%lu challenge=%lu response=%lu unknown_1=%lu",
+		lnID, pPC->ChallengeValue, pPC->ResponseValue, pPC->unknown_1);
 }
 
 // 保持连接的玩家自动存盘
@@ -2520,7 +2557,7 @@ BOOL KSwordOnLineSever::SavePlayerData(int nIndex, bool bUnLock)
 	TRoleData* pData = (TRoleData *)m_pCoreServerShell->SavePlayerDataAtOnce(nIndex);
 	if (pData && pData->dwDataLen)
 	{
-		sProcessData.nDataLen = pData->dwDataLen + sizeof(TProcessData) - 1;
+		sProcessData.nDataLen = pData->dwDataLen + sizeof(DWORD);
 		pData->dwDataLen += 4;
 		// CRC
 		DWORD	dwCRC = 0;
@@ -2801,6 +2838,7 @@ int KSwordOnLineSever::ProcessLoginProtocol(const unsigned long lnID, const char
 //		cout << "A client try to login..." << endl;
 		
 		int nIdx = m_pCoreServerShell->AttachPlayer(lnID, &pLL->guid);
+		g_DebugLog("[LOGIN] attach: client=%lu player=%d size=%u", lnID, nIdx, (unsigned)dataLength);
 		if (nIdx)
 		{
 //			cout << "Found player " << nIdx << " is logging in system!" << endl;

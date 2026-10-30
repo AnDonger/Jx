@@ -45,6 +45,7 @@ int KPlayer::LoadDBPlayerInfo(BYTE *pPlayerInfo, int &nStep, unsigned int &nPara
 	switch(nStep)
 	{
 	case STEP_BASE_INFO:
+		m_bFinishLoading = FALSE;
 		//数据库中玩家基本信息表
 		m_pCurStatusOffset = pPlayerInfo;
 		
@@ -85,10 +86,11 @@ int KPlayer::LoadDBPlayerInfo(BYTE *pPlayerInfo, int &nStep, unsigned int &nPara
 				nParam = 0;
 				return 0;
 			}
-//			else
-//			{
-//				nRetValue = SendSyncData(nStep, nParam);
-//			}
+			else
+			{
+				// Continue a partial database batch; synchronize after the full list is loaded.
+				nRetValue = 1;
+			}
 		}
 		break;
 	case STEP_LIFE_SKILL_LIST:
@@ -181,6 +183,7 @@ int KPlayer::LoadDBPlayerInfo(BYTE *pPlayerInfo, int &nStep, unsigned int &nPara
 		// 玩家的装备列表
 		if ((nRet = LoadPlayerItemList(pPlayerInfo, m_pCurStatusOffset, nParam)) == 1)
 		{
+			m_bFinishLoading = TRUE;
 			nRetValue = SendSyncData(nStep, nParam);
 			nStep++;
 			nParam = 0;
@@ -189,8 +192,8 @@ int KPlayer::LoadDBPlayerInfo(BYTE *pPlayerInfo, int &nStep, unsigned int &nPara
 		{
 			if (nRet == -1)
 			{
-				nStep ++;
-				nParam = 0;
+				m_bFinishLoading = FALSE;
+				g_DebugLog("[Item] Role item loading failed; saving remains disabled: %s", m_PlayerName);
 				return 0;
 			}
 			else
@@ -208,6 +211,9 @@ int KPlayer::LoadDBPlayerInfo(BYTE *pPlayerInfo, int &nStep, unsigned int &nPara
 
 int KPlayer::UpdateDBPlayerInfo(BYTE* pPlayerInfo)
 {
+	if (!m_bFinishLoading)
+		return -1;
+
 	//注意，存档取档都必须按照P顺序
 	if (!pPlayerInfo)
 		return -1;
@@ -247,16 +253,26 @@ int	KPlayer::LoadPlayerBaseInfo(BYTE  * pRoleBuffer, BYTE * &pCurData, unsigned 
 	
 	int		nSex;
 	int		nLevel;	
-#define PLAYER_MALE_NPCTEMPLATEID		-1
-#define PLAYER_FEMALE_NPCTEMPLATEID		-2
 
+
+	KIniFile playerTemplate;
+	char szPlayerTemplate[128];
+	sprintf(szPlayerTemplate, "\\settings\\npc\\player\\newplayerini%02d.ini",
+		pRoleData->BaseInfo.ifiveprop * 2 + (pRoleData->BaseInfo.bSex ? 1 : 0));
+	if (playerTemplate.Load(szPlayerTemplate))
+	{
+		playerTemplate.GetInteger("ROLE", "iweightmax", 0, &m_nWeightMax);
+	}
 
 	nLevel = pRoleData->BaseInfo.ifightlevel;
-	nSex = pRoleData->BaseInfo.bSex;
-	if (nSex)
-		nSex = MAKELONG(nLevel, PLAYER_FEMALE_NPCTEMPLATEID);
-	else
-		nSex = MAKELONG(nLevel, PLAYER_MALE_NPCTEMPLATEID);
+	int nSeries = pRoleData->BaseInfo.ifiveprop;
+	if (nSeries < 0 || nSeries > 2)
+	{
+		return -1;
+	}
+	// The current client orders male classes first, then female classes.
+	nSex = -1 - nSeries - (pRoleData->BaseInfo.bSex ? 3 : 0);
+	nSex = MAKELONG(nLevel, nSex);
 
 	//登入点
 	m_sLoginRevivalPos.m_nSubWorldID = pRoleData->BaseInfo.irevivalid;
@@ -436,6 +452,20 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 			return -1;
 	}
 
+	if (nParam == 0)
+	{
+		const TDBItemData* pCheck = pItemData;
+		for (int n = 0; n < nItemCount; n++)
+		{
+			if (pCheck[n].ilocal == pos_equip &&
+				KItemList::ClientEquipmentSlotToPart(pCheck[n].ix) < 0)
+			{
+				g_DebugLog("[Item] Unsupported saved equipment slot: role=%s, slot=%d", m_PlayerName, pCheck[n].ix);
+				return -1;
+			}
+		}
+	}
+
 	char szSection[100];
 	char szSubSection[100];
 	char szKey[100];
@@ -475,6 +505,8 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 		nItemX			= pItemData->ix;
 		nItemY			= pItemData->iy;
 		nLocal			= pItemData->ilocal;
+		if (nLocal == pos_equip)
+			nItemX = KItemList::ClientEquipmentSlotToPart(nItemX);
 
 		//增加物件至世界的ItemSet中,以及增加到玩家物品列表中**************************************************************
 		//NewItem.SetID(dwItemID);
@@ -536,20 +568,36 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 			break;
 		}
 
+		if (!bGetEquiptResult)
+		{
+			g_DebugLog("[Item] Cannot generate saved item: role=%s, item=%d, class=%d, detail=%d, particular=%d, level=%d, version=%d", m_PlayerName, i, nItemClass, NewItem.m_CommonAttrib.nDetailType, NewItem.m_CommonAttrib.nParticularType, NewItem.m_CommonAttrib.nLevel, NewItem.m_GeneratorParam.nVersion);
+			return -1;
+		}
 		// 把生成的装备的耐久度调整为数据库中存储的。
-		if (pItemData->idurability != 0)
+		if (pItemData->idurability != DB_ITEM_DURABILITY_INITIAL)
+		{
 			NewItem.SetDurability(pItemData->idurability);
+		}
+		else if (nItemClass == item_equip)
+		{
+			NewItem.SetDurability(NewItem.GetMaxDurability());
+		}
 
 		pItemData ++;
 		
 		int nIndex = ItemSet.Add(&NewItem);
 		
-		if (nIndex <= 0) 
+		if (nIndex <= 0)
 		{
-			KASSERT(0);
-			continue ;
+			g_DebugLog("[Item] Cannot allocate saved item: role=%s, item=%d, class=%d, detail=%d, particular=%d, level=%d", m_PlayerName, i, nItemClass, NewItem.m_CommonAttrib.nDetailType, NewItem.m_CommonAttrib.nParticularType, NewItem.m_CommonAttrib.nLevel);
+			return -1;
 		}
-		m_ItemList.Add(nIndex, nLocal, nItemX, nItemY);
+		if (m_ItemList.Add(nIndex, nLocal, nItemX, nItemY) <= 0)
+		{
+			ItemSet.Remove(nIndex);
+			g_DebugLog("[Item] Cannot restore saved item: role=%s, place=%d, x=%d, y=%d", m_PlayerName, nLocal, nItemX, nItemY);
+			return -1;
+		}
 		
 	}
 
@@ -565,39 +613,45 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 int	KPlayer::LoadPlayerFightSkillList(BYTE * pRoleBuffer, BYTE * &pFightBuffer, unsigned int& nParam)
 {
 	KASSERT(pRoleBuffer);
-	int nSkillCount = 0;
-	char szSkillId[100];
-	char szSkillLevel[100];
-	nSkillCount = ((TRoleData*)(pRoleBuffer))->nFightSkillCount;
-	
-	if (nSkillCount == 0)	
-		return 1;
-	
-	if (nParam >= nSkillCount )	
+	if (!pRoleBuffer)
 		return -1;
-	
-	int nBegin	= nParam;
-	int nEnd	= nBegin + DBLOADPERTIME_SKILL;
-	if (nEnd > nSkillCount) 	nEnd = nSkillCount;
-	nParam = nEnd;
-	TDBSkillData * pSkillData = NULL;
-	if (nBegin == 0)
-		pSkillData = (TDBSkillData *)((BYTE*)pRoleBuffer + ((TRoleData*)pRoleBuffer)->dwFSkillOffset);
-	else
-		pSkillData = (TDBSkillData*)pFightBuffer;
-	for (int i = nBegin ; i < nEnd; i ++, pSkillData ++ )
-	{
-		int nSkillId = 0;
-		int nSkillLevel = 0;
-		nSkillId = pSkillData->m_nSkillId;
-		nSkillLevel = pSkillData->m_nSkillLevel;
-		Npc[m_nIndex].m_SkillList.Add(nSkillId, nSkillLevel);
-	}
-	pFightBuffer = (BYTE*) pSkillData;
 
-	if (nParam >= nSkillCount) return 1;
-	else 
-		return 0;
+	int nSkillCount = ((TRoleData*)pRoleBuffer)->nFightSkillCount;
+	if (nSkillCount < 0 || nSkillCount >= MAX_NPCSKILL)
+		return -1;
+
+	if (nSkillCount > 0)
+	{
+		if (nParam >= nSkillCount)
+			return -1;
+
+		int nBegin = nParam;
+		int nEnd = nBegin + DBLOADPERTIME_SKILL;
+		if (nEnd > nSkillCount)
+			nEnd = nSkillCount;
+
+		TDBSkillData *pSkillData = NULL;
+		if (nBegin == 0)
+			pSkillData = (TDBSkillData*)(pRoleBuffer + ((TRoleData*)pRoleBuffer)->dwFSkillOffset);
+		else
+			pSkillData = (TDBSkillData*)pFightBuffer;
+
+		for (int i = nBegin; i < nEnd; i++, pSkillData++)
+		{
+			if (!Npc[m_nIndex].m_SkillList.LoadPlayerSkill(pSkillData->m_nSkillId, pSkillData->m_nSkillLevel))
+				return -1;
+		}
+		pFightBuffer = (BYTE*)pSkillData;
+		nParam = nEnd;
+		if (nParam < nSkillCount)
+			return 0;
+	}
+
+	// Current character templates leave FSKILLS empty; use the shared client resource.
+	// For existing roles, add missing initial skills without changing learned levels.
+	if (!Npc[m_nIndex].m_SkillList.LoadPlayerInitialSkills(Npc[m_nIndex].m_Series))
+		return -1;
+	return 1;
 }
 
 int	KPlayer::LoadPlayerLifeSkilllList(BYTE * pRoleBuffer, BYTE * &pFriendBuffer, unsigned int& nParam)
@@ -848,7 +902,9 @@ int	KPlayer::SavePlayerItemList(BYTE * pRoleBuffer)
 		pItemData->ilevel =  Item[nItemIndex].m_CommonAttrib.nLevel;
 		pItemData->iseries =  Item[nItemIndex].m_CommonAttrib.nSeries;
 		pItemData->ilocal =  m_ItemList.m_Items[nIdx].nPlace;
-		pItemData->ix =  m_ItemList.m_Items[nIdx].nX;
+		pItemData->ix = m_ItemList.m_Items[nIdx].nPlace == pos_equip ?
+			KItemList::EquipmentPartToClientSlot(m_ItemList.m_Items[nIdx].nX) :
+			m_ItemList.m_Items[nIdx].nX;
 		pItemData->iy =  m_ItemList.m_Items[nIdx].nY;
 		pItemData->iequipversion = Item[nItemIndex].GetItemParam()->nVersion;
 		pItemData->irandseed = Item[nItemIndex].GetItemParam()->uRandomSeed;

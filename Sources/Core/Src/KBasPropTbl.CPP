@@ -10,8 +10,10 @@
 
 #include "KCore.h"
 #include "KTabFile.h"
+#include "KIniFile.h"
 #include "MyAssert.H"
 #include "KBasPropTbl.h"
+#include "KItem.h"
 
 #define		TABFILE_PATH				"\\settings\\item"
 #define		TABFILE_MINE				"minebase.txt"
@@ -119,7 +121,7 @@ KLibOfBPT::~KLibOfBPT()
 	功能：	总控，从tab file中读入道具,魔法等原始数据
 	出口:	相关数据存在m_BPTWeapon,m_BPTWeaponDirty等成员变量中
 ******************************************************************************/
-BOOL KLibOfBPT::Init()
+BOOL KLibOfBPT::Init(int nVersion)
 {
 	// 初始化
 	KBasicPropertyTable*	paryBPT[] = {	
@@ -148,16 +150,25 @@ BOOL KLibOfBPT::Init()
 			KBPT_Equipment* pTemp = (KBPT_Equipment *)paryBPT[i];
 			pTemp->Init(i);
 		}
-		if (FALSE == paryBPT[i]->Load())
-			{ _ASSERT(FALSE); return FALSE; }
+		if (FALSE == paryBPT[i]->Load(nVersion))
+		{
+			if (i < 11)
+			{
+				g_DebugLog("[Item] Required equipment table failed: %s", TABFILE_EQUIPMENT[i]);
+				return FALSE;
+			}
+			g_DebugLog("[Item] Optional item table is unavailable, table index=%d", i);
+		}
 	}
 
 	// 构造魔法属性表
-	InitMALib();
+	if (m_BPTMagicAttrib.NumOfEntries() > 0)
+		InitMALib();
     
     // 构造魔法属性索引表
     // add by Freeway Chen in 2003.5.30
-    InitMAIT();
+	if (m_BPTMagicAttrib.NumOfEntries() > 0)
+		InitMAIT();
 
 	return TRUE;
 }
@@ -389,6 +400,51 @@ const KMAGICATTRIB_TABFILE* KLibOfBPT::GetMARecord(IN int i) const
 const int KLibOfBPT::GetMARecordNumber() const
 {
 	return m_BPTMagicAttrib.NumOfEntries();
+}
+
+const KBASICPROP_EQUIPMENT* KLibOfBPT::FindEquipment(int nDetailType,
+	int nParticularType, int nLevel) const
+{
+	const KBPT_Equipment* pTable = NULL;
+	switch (nDetailType)
+	{
+	case equip_meleeweapon:
+		pTable = &m_BPTMeleeWeapon;
+		break;
+	case equip_rangeweapon:
+		pTable = &m_BPTRangeWeapon;
+		break;
+	case equip_armor:
+		pTable = &m_BPTArmor;
+		break;
+	case equip_ring:
+		pTable = &m_BPTRing;
+		break;
+	case equip_amulet:
+		pTable = &m_BPTAmulet;
+		break;
+	case equip_boots:
+		pTable = &m_BPTBoot;
+		break;
+	case equip_belt:
+		pTable = &m_BPTBelt;
+		break;
+	case equip_helm:
+		pTable = &m_BPTHelm;
+		break;
+	case equip_cuff:
+		pTable = &m_BPTCuff;
+		break;
+	case equip_pendant:
+		pTable = &m_BPTPendant;
+		break;
+	case equip_horse:
+		pTable = &m_BPTHorse;
+		break;
+	default:
+		return NULL;
+	}
+	return pTable->FindRecord(nDetailType, nParticularType, nLevel);
 }
 
 const KBASICPROP_EQUIPMENT* KLibOfBPT::GetMeleeWeaponRecord(IN int i) const
@@ -645,7 +701,7 @@ void KBasicPropertyTable::ReleaseMemory()
 				m_nNumOfEntries 给出共读入多少项数据
 			失败时返回零
 ******************************************************************************/
-BOOL KBasicPropertyTable::Load()
+BOOL KBasicPropertyTable::Load(int nVersion)
 {
 	BOOL bEC = FALSE;
 	KTabFile	theLoader;
@@ -655,9 +711,25 @@ BOOL KBasicPropertyTable::Load()
 
 //	::g_SetFilePath(TABFILE_PATH);
 	char	szFileName[FILE_NAME_LENGTH];
-	g_UnitePathAndName(TABFILE_PATH, m_szTabFile, szFileName);
-	if (FALSE == theLoader.Load(szFileName))
-		{ _ASSERT(FALSE); return bEC; }
+	if (nVersion == -1)
+	{
+		KIniFile itemVersion;
+		nVersion = 1;
+		if (itemVersion.Load("\\settings\\item\\itemversion.ini"))
+			itemVersion.GetInteger("ItemVersion", "Version", 1, &nVersion);
+	}
+	if (nVersion < 0 || nVersion > 999)
+		return FALSE;
+
+	char szVersionPath[FILE_NAME_LENGTH];
+	sprintf(szVersionPath, "%s\\%03d", TABFILE_PATH, nVersion);
+	g_UnitePathAndName(szVersionPath, m_szTabFile, szFileName);
+	if (!theLoader.Load(szFileName))
+	{
+		g_UnitePathAndName(TABFILE_PATH, m_szTabFile, szFileName);
+		if (!theLoader.Load(szFileName))
+			return FALSE;
+	}
 
 	// 确定file内给出了多少项记录
 	const int cbItems = theLoader.GetHeight() - 1;	// 第一行给出各列名称,
@@ -1045,6 +1117,47 @@ BOOL KBPT_Equipment::LoadRecord(int i, KTabFile* pTF)
 	// 初始化
 	KBASICPROP_EQUIPMENT* pBuf = (KBASICPROP_EQUIPMENT*)m_pBuf;
 	pBuf = pBuf + i;	// 读入的属性记在 pBuf 所指结构中
+	ZeroMemory(pBuf, sizeof(*pBuf));
+
+	// Current item resources contain ten basic attributes and an optional weight column.
+	// Locate the attribute columns by their existing headings, so old tables remain readable.
+	if (pTF->FindColumn("基础属性1类型") > 0)
+	{
+		int nRow = i + 2;
+		pTF->GetString(nRow, 1, "", pBuf->m_szName, sizeof(pBuf->m_szName));
+		pTF->GetInteger(nRow, 2, 0, &pBuf->m_nItemGenre);
+		pTF->GetInteger(nRow, 3, 0, &pBuf->m_nDetailType);
+		pTF->GetInteger(nRow, 4, 0, &pBuf->m_nParticularType);
+		pTF->GetString(nRow, 5, "", pBuf->m_szImageName, sizeof(pBuf->m_szImageName));
+		pTF->GetInteger(nRow, 6, 0, &pBuf->m_nObjIdx);
+		pTF->GetInteger(nRow, 7, 1, &pBuf->m_nWidth);
+		pTF->GetInteger(nRow, 8, 1, &pBuf->m_nHeight);
+		pTF->GetString(nRow, 9, "", pBuf->m_szIntro, sizeof(pBuf->m_szIntro));
+		pTF->GetInteger(nRow, 10, 0, &pBuf->m_nSeries);
+		pTF->GetInteger(nRow, 11, 0, &pBuf->m_nPrice);
+		pTF->GetInteger(nRow, 12, 1, &pBuf->m_nLevel);
+		pTF->GetInteger(nRow, 13, 0, &pBuf->m_bStack);
+
+		for (int n = 0; n < sizeof(pBuf->m_aryPropBasic) / sizeof(pBuf->m_aryPropBasic[0]); n++)
+		{
+			char szColumn[64];
+			sprintf(szColumn, "基础属性%d类型", n + 1);
+			pTF->GetInteger(nRow, szColumn, 0, &pBuf->m_aryPropBasic[n].nType);
+			sprintf(szColumn, "基础属性%d最小值", n + 1);
+			pTF->GetInteger(nRow, szColumn, 0, &pBuf->m_aryPropBasic[n].sRange.nMin);
+			sprintf(szColumn, "基础属性%d最大值", n + 1);
+			pTF->GetInteger(nRow, szColumn, 0, &pBuf->m_aryPropBasic[n].sRange.nMax);
+		}
+		for (int n = 0; n < sizeof(pBuf->m_aryPropReq) / sizeof(pBuf->m_aryPropReq[0]); n++)
+		{
+			char szColumn[64];
+			sprintf(szColumn, "需求属性%d类型", n + 1);
+			pTF->GetInteger(nRow, szColumn, 0, &pBuf->m_aryPropReq[n].nType);
+			sprintf(szColumn, "需求属性%d数值", n + 1);
+			pTF->GetInteger(nRow, szColumn, 0, &pBuf->m_aryPropReq[n].nPara);
+		}
+		return TRUE;
+	}
 	const PROPINFO	aryPI[] =
 	{
 		{ PI_VARTYPE_CHAR,			pBuf->m_szName, sizeof(pBuf->m_szName)},

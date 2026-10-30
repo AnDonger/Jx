@@ -48,6 +48,7 @@ public:
 
 	void closeCursor(ZCursor *cursor) {
 		if(!cursor) return;
+		if(cursor->dbcp) cursor->dbcp->c_close(cursor->dbcp);
 		if(cursor->bTravel) {
 			free(cursor->key);
 		}

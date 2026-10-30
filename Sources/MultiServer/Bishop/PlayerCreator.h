@@ -14,7 +14,7 @@ class CPlayerCreator
 {
 public:
 	
-#define	MAX_PLAYERTYPE_VALUE	10
+#define	MAX_PLAYERTYPE_VALUE	6
 #define	MAX_NEWPLAYER_BUFFER	5000
 #define	PLAYERCREATOR_FILE		"settings\\player\\newplayerini%02d.ini"
 #define REVIVALID_FILENAME		"settings\\player\\revivalid.ini"
@@ -50,6 +50,7 @@ public:
 	
 	const TRoleData*	GetRoleData( unsigned int &uDataLength, LPROLEPARAM lpParam );
 	unsigned			GetRevivalID( size_t nMapID, UINT nType = enumRandom );
+	bool				IsNativePlace( unsigned short nMapID );
 	
 private:
 

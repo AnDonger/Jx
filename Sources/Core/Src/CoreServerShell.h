@@ -124,6 +124,9 @@ enum GAMEDATA_INDEX
 	// 通知core发送某玩家的帮会信息
 	// nParam : player index
 	SGDI_TONG_SEND_SELF_INFO,
+
+	// uParam: player index; return: selected portrait from the role database.
+	SGDI_CHARACTER_PORTRAIT,
 };
 
 #ifdef _STANDALONE
@@ -164,7 +167,7 @@ struct iCoreServerShell
 	virtual void PreparePlayerForLoginFailed(int nIndex) = 0;
 	virtual void RemovePlayerForExchange(int nIndex) = 0;
 	virtual void RecoverPlayerExchange(int nIndex) = 0;
-	virtual int  AddCharacter(int nExtPoint, int nChangeExtPoint, void* pBuffer, GUID* pGuid) = 0;
+	virtual int  AddCharacter(int nExtPoint, int nChangeExtPoint, void* pBuffer, GUID* pGuid, BYTE btPortrait) = 0;
 	virtual int	 AddTempTaskValue(int nIndex, const char* pData) = 0;
 	//向游戏发送操作
 	virtual int	 OperationRequest(unsigned int uOper, unsigned int uParam, int nParam) = 0;

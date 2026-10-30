@@ -464,6 +464,8 @@ bool CGamePlayer::Inactive()
     m_bUseSuperPassword = false;
 
 	m_sRoleName		= "";
+	m_sPendingRoleName = "";
+	m_RoleNames.clear();
 
 	::InterlockedExchangeAdd( &m_lnWorkingCounts, -1 );
 
@@ -1216,6 +1218,7 @@ UINT CGamePlayer::QueryRoleList()
 	pPlayerList->nProtoId = c2s_roleserver_getrolelist;
 	pPlayerList->nDataLen = lenAN + 1;
 	pPlayerList->ulIdentity = m_lnIdentityID;
+	pPlayerList->bLeave = m_bCurrentLogin ? 1 : 0;
 
 	pPlayerList->pDataBuffer[0] = s_nRoleListCount;
 
@@ -1233,431 +1236,358 @@ UINT CGamePlayer::QueryRoleList()
 
 UINT CGamePlayer::ProcessRoleList()
 {
-#ifdef	CONSOLE_DEBUG
-	_cprintf( "CGamePlayer::ProcessRoleList...\n" );
-#endif
-
-	CBuffer *pRetBuffer = m_theDataQueue[enumOwnerRoleSvr].Attach( s2c_roleserver_getrolelist_result );
-
-	if ( pRetBuffer )
+	CBuffer *pBuffer = m_theDataQueue[enumOwnerRoleSvr].Attach( s2c_roleserver_getrolelist_result );
+	if ( !pBuffer )
 	{
-		UINT nNextTask = enumError;
-
-		const TProcessData *pPD = ( const TProcessData * )pRetBuffer->GetBuffer();
-
-		int nRoleCount = CPackager::Peek( ( const char * )pPD->pDataBuffer );
-
-#ifdef	CONSOLE_DEBUG
-	_cprintf( "CGamePlayer::ProcessRoleList find %d role in list\n", nRoleCount );
-#endif
-
-		if ( nRoleCount >= 0 )
+		return enumRepeat;
+	}
+	UINT next = enumError;
+	size_t header = sizeof( TProcessData ) - 1;
+	if ( pBuffer->GetUsed() >= header + 1 )
+	{
+		const TProcessData *data = reinterpret_cast< const TProcessData * >( pBuffer->GetBuffer() );
+		int count = static_cast< signed char >( data->pDataBuffer[0] );
+		size_t recordSize = m_bCurrentLogin ? sizeof( S3DBI_RoleBaseInfoCurrent ) : sizeof( S3DBI_RoleBaseInfo );
+		if ( count >= 0 && count <= s_nRoleListCount && data->ulIdentity == m_lnIdentityID &&
+			data->nDataLen == 1 + count * recordSize && pBuffer->GetUsed() == header + data->nDataLen )
 		{
 			bool sent = false;
+			m_RoleNames.clear();
+			for ( int i = 0; i < count; ++i )
+			{
+				const char *name = reinterpret_cast< const char * >( data->pDataBuffer + 1 + i * recordSize );
+				if ( !memchr( name, 0, 32 ) || !name[0] )
+				{
+					m_pPlayerServer->ShutdownClient( m_lnIdentityID );
+					SAFE_RELEASE( pBuffer );
+					return enumError;
+				}
+				m_RoleNames.push_back( name );
+			}
 			if ( m_bCurrentLogin )
 			{
-				size_t headerSize = sizeof( TProcessData ) - 1;
-				size_t expectedSize = headerSize + 1 +
-					nRoleCount * sizeof( S3DBI_RoleBaseInfo );
-				if ( nRoleCount <= s_nRoleListCount &&
-					pRetBuffer->GetUsed() == expectedSize &&
-					pPD->nDataLen == expectedSize - headerSize )
+				BYTE packet[2048];
+				ZeroMemory( packet, sizeof( packet ) );
+				KLoginRoleListCurrent *list = reinterpret_cast< KLoginRoleListCurrent * >( packet );
+				list->ProtocolType = s2c_roleserver_getrolelist_result;
+				list->Identity = data->ulIdentity;
+				list->RoleCount = count;
+				KCodec *codec = NULL;
+				g_InitCodec( &codec, CODEC_LZO );
+				TCodeInfo info;
+				ZeroMemory( &info, sizeof( info ) );
+				info.lpData = ( BYTE * )( data->pDataBuffer + 1 );
+				info.dwDataLen = count * recordSize;
+				info.lpPack = list->Data;
+				if ( codec && codec->GetPackLen( info.dwDataLen ) <= sizeof( packet ) - sizeof( *list ) + 1 &&
+					codec->Encode( &info ) && info.dwPackLen <= sizeof( packet ) - sizeof( *list ) + 1 )
 				{
-					KLoginRoleInfoCurrent roles[3];
-					ZeroMemory( roles, sizeof( roles ) );
-					const S3DBI_RoleBaseInfo *pRoles =
-						reinterpret_cast< const S3DBI_RoleBaseInfo * >( pPD->pDataBuffer + 1 );
-					for ( int i = 0; i < nRoleCount; ++i )
-					{
-						memcpy( roles[i].Name, pRoles[i].szName, sizeof( roles[i].Name ) - 1 );
-						roles[i].Sex = pRoles[i].Sex;
-						roles[i].Series = pRoles[i].Series;
-						roles[i].Level = pRoles[i].Level;
-					}
-
-					BYTE packet[2048];
-					ZeroMemory( packet, sizeof( packet ) );
-					KLoginRoleListCurrent *pList =
-						reinterpret_cast< KLoginRoleListCurrent * >( packet );
-					pList->ProtocolType = s2c_roleserver_getrolelist_result;
-					pList->Identity = pPD->ulIdentity;
-					pList->RoleCount = nRoleCount;
-
-					KCodec *pCodec = NULL;
-					g_InitCodec( &pCodec, CODEC_LZO );
-					TCodeInfo info;
-					ZeroMemory( &info, sizeof( info ) );
-					info.lpData = reinterpret_cast< BYTE * >( roles );
-					info.dwDataLen = nRoleCount * sizeof( roles[0] );
-					info.lpPack = pList->Data;
-					if ( pCodec &&
-						pCodec->GetPackLen( info.dwDataLen ) <= sizeof( packet ) - sizeof( *pList ) + 1 &&
-						pCodec->Encode( &info ) &&
-						info.dwPackLen <= sizeof( packet ) - sizeof( *pList ) + 1 )
-					{
-						pList->DataLength = info.dwPackLen;
-						size_t packetSize = sizeof( *pList ) - 1 + info.dwPackLen;
-						sent = SUCCEEDED( m_pPlayerServer->SendData( m_lnIdentityID, packet, packetSize ) );
-						OnlineGameLib::Win32::TraceNetworkData(
-							"stage=login_rolelist slot=" + OnlineGameLib::Win32::ToString( m_lnIdentityID ) +
-							" count=" + OnlineGameLib::Win32::ToString( nRoleCount ), packet, packetSize );
-					}
-					g_FreeCodec( &pCodec, CODEC_LZO );
+					list->DataLength = info.dwPackLen;
+					size_t length = sizeof( *list ) - 1 + info.dwPackLen;
+					sent = SUCCEEDED( m_pPlayerServer->SendData( m_lnIdentityID, packet, length ) );
+					OnlineGameLib::Win32::TraceNetworkData( "stage=login_rolelist slot=" +
+						ToString( m_lnIdentityID ) + " count=" + ToString( count ), packet, length );
 				}
+				g_FreeCodec( &codec, CODEC_LZO );
 			}
 			else
 			{
 				sent = SUCCEEDED( m_pPlayerServer->SendData( m_lnIdentityID,
-					pRetBuffer->GetBuffer(), pRetBuffer->GetUsed() ) );
+					pBuffer->GetBuffer(), pBuffer->GetUsed() ) );
 			}
 			if ( sent )
 			{
-				m_theDataQueue[enumOwnerPlayer].Empty();
-				nNextTask = enumSelAddDelRole;
+				next = enumSelAddDelRole;
 			}
 		}
-
-		SAFE_RELEASE( pRetBuffer );
-		m_theDataQueue[enumOwnerRoleSvr].Detach( s2c_roleserver_getrolelist_result );
-
-		return nNextTask;
 	}
+	SAFE_RELEASE( pBuffer );
+	m_theDataQueue[enumOwnerRoleSvr].Detach( s2c_roleserver_getrolelist_result );
+	if ( next == enumError )
+	{
+		m_pPlayerServer->ShutdownClient( m_lnIdentityID );
+	}
+	return next;
+}
 
-	return enumRepeat;
+
+static bool IsRoleNameValid( const char *name )
+{
+	if ( !name || !memchr( name, 0, 32 ) || !name[0] )
+	{
+		return false;
+	}
+	for ( const unsigned char *p = ( const unsigned char * )name; *p; ++p )
+	{
+		if ( *p >= 0x81 && *p <= 0xfe )
+		{
+			++p;
+			if ( *p < 0x40 || *p > 0xfe || *p == 0x7f )
+			{
+				return false;
+			}
+		}
+		else if ( !( *p >= '0' && *p <= '9' ) && !( *p >= 'a' && *p <= 'z' ) &&
+			!( *p >= 'A' && *p <= 'Z' ) && *p != '_' )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool CGamePlayer::_OwnsRole( const char *pRoleName )
+{
+	if ( !IsRoleNameValid( pRoleName ) )
+	{
+		return false;
+	}
+	for ( size_t i = 0; i < m_RoleNames.size(); ++i )
+	{
+		if ( m_RoleNames[i] == pRoleName )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void CGamePlayer::_SendRoleResult( bool bSuccess, BYTE nReason )
+{
+	tagNewDelRoleResponse result;
+	ZeroMemory( &result, sizeof( result ) );
+	result.cProtocol = s2c_rolenewdelresponse;
+	result.bSucceeded = bSuccess;
+	if ( bSuccess )
+	{
+		strncpy( result.szRoleName, m_sPendingRoleName.c_str(), sizeof( result.szRoleName ) - 1 );
+	}
+	else
+	{
+		result.szRoleName[0] = nReason;
+	}
+	m_pPlayerServer->SendData( m_lnIdentityID, &result, sizeof( result ) );
+	OnlineGameLib::Win32::TraceNetworkData( "stage=role_result slot=" +
+		ToString( m_lnIdentityID ) + " role=" + m_sPendingRoleName +
+		" success=" + ToString( bSuccess ? 1 : 0 ) + " reason=" + ToString( ( int )nReason ),
+		( const BYTE * )&result, sizeof( result ) );
 }
 
 UINT CGamePlayer::SelAddDelRole()
 {
-	CBuffer *pRetBuffer = NULL;
-
-#ifdef	CONSOLE_DEBUG
-	_cprintf( "CGamePlayer::SelAddDelRole...\n" );
-#endif
-
-	/*
-	 * Select a role
-	 */
-	pRetBuffer = m_theDataQueue[enumOwnerPlayer].Attach( c2s_dbplayerselect );
-
-	if ( pRetBuffer )
+	CBuffer *buffer = m_theDataQueue[enumOwnerPlayer].Attach( c2s_dbplayerselect );
+	if ( buffer )
 	{
-		UINT nNextTask = enumError;
-
-		const tagDBSelPlayer *pDSPC = ( const tagDBSelPlayer * )pRetBuffer->GetBuffer();
-
-#ifdef	CONSOLE_DEBUG
-	_cprintf( "CGamePlayer::SelAddDelRole Select a role from list\n" );
-#endif
-
-		if ( _QueryRoleInfo_ToDBRole( pDSPC->szRoleName ) )
+		const tagDBSelPlayer *request = ( const tagDBSelPlayer * )buffer->GetBuffer();
+		bool valid = buffer->GetUsed() == sizeof( *request ) && _OwnsRole( request->szRoleName );
+		if ( valid )
 		{
-			nNextTask = enumLoginSelectRole;
+			m_sPendingRoleName = request->szRoleName;
+			m_theDataQueue[enumOwnerRoleSvr].Empty();
+			valid = _QueryRoleInfo_ToDBRole( request->szRoleName );
 		}
-
-		SAFE_RELEASE( pRetBuffer );
+		SAFE_RELEASE( buffer );
 		m_theDataQueue[enumOwnerPlayer].Detach( c2s_dbplayerselect );
-
-		return nNextTask;
+		if ( !valid )
+		{
+			tagNotifyPlayerLogin result;
+			ZeroMemory( &result, sizeof( result ) );
+			result.cProtocol = s2c_notifyplayerlogin;
+			m_pPlayerServer->SendData( m_lnIdentityID, &result, sizeof( result ) );
+		}
+		return valid ? enumLoginSelectRole : enumSelAddDelRole;
 	}
 
-	/*
-	 * Create a role
-	 */
-	pRetBuffer = m_theDataQueue[enumOwnerPlayer].Attach( c2s_newplayer );
-
-	if ( pRetBuffer )
+	buffer = m_theDataQueue[enumOwnerPlayer].Attach( c2s_newplayer );
+	if ( buffer )
 	{
-		UINT nNextTask = enumError;
-
-		const TProcessData *pCRPD = ( const TProcessData * )pRetBuffer->GetBuffer();
-
-		const NEW_PLAYER_COMMAND *pNPC = ( const NEW_PLAYER_COMMAND * )( pCRPD->pDataBuffer );
-
-		ASSERT( pNPC );
-		
-		char szRoleName[NAME_LEN];
-		size_t namelen = pRetBuffer->GetUsed() - sizeof( TProcessData );
-		
-		namelen = ( namelen < 31 ) ? namelen : 31;
-
-		memcpy( szRoleName, pNPC->m_szName, namelen );
-		szRoleName[namelen] = '\0';
-
-#ifdef	CONSOLE_DEBUG
-	_cprintf( "CGamePlayer::SelAddDelRole Create a role [Name : %s]\n", szRoleName );
-#endif
-		m_theDataQueue[enumOwnerRoleSvr].Empty();
-
-		if ( _CreateNewPlayer_ToDBRole( ( const char * )szRoleName, 
-					pNPC->m_btRoleNo, 
-					pNPC->m_btSeries,
-					pNPC->m_NativePlaceId ) )
+		bool valid = false;
+		KNewPlayerCurrent role;
+		ZeroMemory( &role, sizeof( role ) );
+		size_t header = sizeof( TProcessData ) - 1;
+		size_t nameOffset = m_bCurrentLogin ? 5 : 4;
+		if ( buffer->GetUsed() >= header + nameOffset + 2 &&
+			buffer->GetUsed() <= header + nameOffset + sizeof( role.Name ) )
 		{
-			nNextTask = enumLoginCreateRole;
+			const TProcessData *data = ( const TProcessData * )buffer->GetBuffer();
+			size_t nameLength = buffer->GetUsed() - header - nameOffset;
+			if ( data->nDataLen == buffer->GetUsed() - header &&
+				data->pDataBuffer[nameOffset + nameLength - 1] == 0 &&
+				!memchr( data->pDataBuffer + nameOffset, 0, nameLength - 1 ) )
+			{
+				memcpy( &role, data->pDataBuffer, 4 );
+				role.Portrait = m_bCurrentLogin ? data->pDataBuffer[4] : 0;
+				memcpy( role.Name, data->pDataBuffer + nameOffset, nameLength );
+				m_sPendingRoleName = role.Name;
+				valid = IsRoleNameValid( role.Name ) && role.Sex <= 1 && role.Series <= 2 &&
+					m_RoleNames.size() < s_nRoleListCount && m_thePlayerCreator.IsNativePlace( role.NativePlace );
+			}
 		}
-
-		SAFE_RELEASE( pRetBuffer );
+		m_theDataQueue[enumOwnerRoleSvr].Empty();
+		if ( valid )
+		{
+			valid = _CreateNewPlayer_ToDBRole( role.Name, role.Sex, role.Series, role.NativePlace, role.Portrait );
+		}
+		SAFE_RELEASE( buffer );
 		m_theDataQueue[enumOwnerPlayer].Detach( c2s_newplayer );
-
-		return nNextTask;
+		if ( !valid )
+		{
+			_SendRoleResult( false, 2 );
+		}
+		return valid ? enumLoginCreateRole : enumSelAddDelRole;
 	}
 
-	/*
-	 * Delete a role
-	 */
-	pRetBuffer = m_theDataQueue[enumOwnerPlayer].Attach( c2s_roleserver_deleteplayer );
-
-	if ( pRetBuffer )
+	buffer = m_theDataQueue[enumOwnerPlayer].Attach( c2s_roleserver_deleteplayer );
+	if ( buffer )
 	{
-		UINT nNextTask = enumError;
-
-#ifdef	CONSOLE_DEBUG
-	_cprintf( "CGamePlayer::SelAddDelRole Del a role in list\n" );
-#endif
 		m_theDataQueue[enumOwnerRoleSvr].Empty();
-
-		if ( _DeleteRole_ToDBRole( pRetBuffer->GetBuffer(), pRetBuffer->GetUsed() ) )
-		{
-            nNextTask = enumToNextTask;
-		}
-
-		SAFE_RELEASE( pRetBuffer );
+		bool valid = _DeleteRole_ToDBRole( buffer->GetBuffer(), buffer->GetUsed() ) != 0;
+		SAFE_RELEASE( buffer );
 		m_theDataQueue[enumOwnerPlayer].Detach( c2s_roleserver_deleteplayer );
-
-		if ( enumToNextTask != nNextTask )
+		if ( !valid )
 		{
-			tagNewDelRoleResponse ndrr;
-			ndrr.cProtocol = s2c_rolenewdelresponse;
-			ndrr.szRoleName[0] = '\0';
-			ndrr.bSucceeded = false;
-
-			m_pPlayerServer->SendData( m_lnIdentityID, ( const void * )&ndrr, sizeof( tagNewDelRoleResponse ) );
-
-			nNextTask = enumSelAddDelRole;
+			_SendRoleResult( false, 3 );
 		}
-
-		return nNextTask;
+		return valid ? enumToNextTask : enumSelAddDelRole;
 	}
-
 	return enumRepeat;
 }
 
+
 UINT CGamePlayer::DelRole_WaitForVerify()
 {
-#ifdef	CONSOLE_DEBUG
-	_cprintf( "CGamePlayer::DelRole_WaitForVerify...\n" );
-#endif
-	CBuffer *pRetBuffer = m_theDataQueue[enumOwnerAccSvr].Attach( s2c_accountlogin );
-    
-    if (pRetBuffer)
-    {
-		UINT nNextTask = enumError;
+	CBuffer *buffer = m_theDataQueue[enumOwnerAccSvr].Attach( s2c_accountlogin );
+	if ( !buffer )
+	{
+		return enumRepeat;
+	}
+	bool valid = buffer->GetUsed() >= 1 + sizeof( KAccountUserReturn ) &&
+		( ( const KAccountUserReturn * )( buffer->GetBuffer() + 1 ) )->nReturn == ACTION_SUCCESS;
+	SAFE_RELEASE( buffer );
+	m_theDataQueue[enumOwnerAccSvr].Detach( s2c_accountlogin );
+	m_sSuperPassword = "";
+	m_bUseSuperPassword = false;
+	if ( !valid || !_OwnsRole( m_sDelRoleName.c_str() ) )
+	{
+		_SendRoleResult( false, 3 );
+		return enumSelAddDelRole;
+	}
 
-		KAccountUserReturnExt* pReturn = ( KAccountUserReturnExt * )( pRetBuffer->GetBuffer() + 1/* size of a protocol byte */ );
-
-		int nResult = pReturn->nReturn;
-
-		if (nResult == ACTION_SUCCESS)
-        {
-            const char *pRoleName = m_sDelRoleName.c_str();
-	        
-            const size_t lenRN = strlen( pRoleName );
-	        const size_t lenRI = sizeof( TProcessData ) - 1 + lenRN;
-	        
-	        CBuffer *pBuffer = m_theGlobalAllocator.Allocate();
-	        
-	        TProcessData *pRoleInfo = reinterpret_cast< TProcessData * >( const_cast< BYTE * >( pBuffer->GetBuffer() ) );
-	        
-	        ASSERT( pRoleInfo );
-	        
-	        pRoleInfo->nProtoId = c2s_roleserver_deleteplayer;
-	        pRoleInfo->nDataLen = lenRN;
-	        pRoleInfo->ulIdentity = m_lnIdentityID;
-	        
-	        memcpy( &pRoleInfo->pDataBuffer[0], pRoleName, lenRN );
-	        pRoleInfo->pDataBuffer[lenRN] = '\0';
-	        
-	        m_pDBRoleClient->SendPackToServer( ( const void * )pRoleInfo, lenRI );
-	        
-	        SAFE_RELEASE( pBuffer );
-        
-            nNextTask = enumLoginDeleteRole;
-        }
-        else
-        {
-            tagNewDelRoleResponse ndrr;
-            ndrr.cProtocol = s2c_rolenewdelresponse;
-            ndrr.szRoleName[0] = '\0';
-            ndrr.bSucceeded = false;
-
-            m_pPlayerServer->SendData( m_lnIdentityID, ( const void * )&ndrr, sizeof( tagNewDelRoleResponse ) );
-
-            nNextTask = enumSelAddDelRole;  // 表示这次的动作完成，进入下一个等待流程
-        }
-
-		SAFE_RELEASE( pRetBuffer );
-		m_theDataQueue[enumOwnerAccSvr].Detach( s2c_accountlogin );
-
-        return nNextTask;
-    }
-	return enumRepeat;
-
-
+	buffer = m_theGlobalAllocator.Allocate();
+	TProcessData *data = ( TProcessData * )const_cast< BYTE * >( buffer->GetBuffer() );
+	ZeroMemory( data, sizeof( *data ) );
+	data->nProtoId = c2s_roleserver_deleteplayer;
+	data->ulIdentity = m_lnIdentityID;
+	if ( m_bCurrentLogin )
+	{
+		TDBRoleRequestCurrent request;
+		ZeroMemory( &request, sizeof( request ) );
+		strncpy( request.szRoleName, m_sDelRoleName.c_str(), sizeof( request.szRoleName ) - 1 );
+		strncpy( request.szAccountName, m_sAccountName.c_str(), sizeof( request.szAccountName ) - 1 );
+		data->bLeave = 1;
+		data->nDataLen = sizeof( request );
+		memcpy( data->pDataBuffer, &request, sizeof( request ) );
+	}
+	else
+	{
+		data->nDataLen = m_sDelRoleName.size();
+		memcpy( data->pDataBuffer, m_sDelRoleName.c_str(), data->nDataLen );
+	}
+	m_pDBRoleClient->SendPackToServer( data, sizeof( *data ) - 1 + data->nDataLen );
+	SAFE_RELEASE( buffer );
+	return enumLoginDeleteRole;
 }
 
 
 UINT CGamePlayer::WaitForCreateResult()
 {
-#ifdef	CONSOLE_DEBUG
-	_cprintf( "CGamePlayer::WaitForCreateResult...\n" );
-#endif
-
-	CBuffer *pRetBuffer = m_theDataQueue[enumOwnerRoleSvr].Attach( s2c_roleserver_createrole_result );
-
-	if ( pRetBuffer )
+	CBuffer *buffer = m_theDataQueue[enumOwnerRoleSvr].Attach( s2c_roleserver_createrole_result );
+	if ( !buffer )
 	{
-		UINT nNextTask = enumError;
-
-		TProcessData *pPD = ( TProcessData * )pRetBuffer->GetBuffer();
-
-		ASSERT( pPD );
-
-		char cResult = pPD->pDataBuffer[0];
-
-		tagNewDelRoleResponse ndrr;
-		ndrr.cProtocol = s2c_rolenewdelresponse;
-		ndrr.szRoleName[0] = '\0';
-		ndrr.bSucceeded = false;
-
-#ifdef	CONSOLE_DEBUG
-		_cprintf( "CGamePlayer::WaitForCreateResult %s\n", ( 1 == cResult ) ? "Successful" : "Failed" );
-#endif
-
-		switch ( cResult )
-		{
-		case 1:	// Successed
-
-			ndrr.bSucceeded = true;
-
-			m_pPlayerServer->SendData( m_lnIdentityID, ( const void * )&ndrr, sizeof( tagNewDelRoleResponse ) );
-
-			nNextTask = enumToNextTask;
-			break;
-
-		//case -1:	// Failed
-		//case -2:	// Have exist
-		default:
-
-			ndrr.bSucceeded = false;
-
-			m_pPlayerServer->SendData( m_lnIdentityID, ( const void * )&ndrr, sizeof( tagNewDelRoleResponse ) );
-			
-			nNextTask = enumSelAddDelRole;
-			break;
-		}
-
-		SAFE_RELEASE( pRetBuffer );
-		m_theDataQueue[enumOwnerRoleSvr].Detach( s2c_roleserver_createrole_result );
-
-		return nNextTask;
+		return enumRepeat;
 	}
-
-	return enumRepeat;
+	bool success = buffer->GetUsed() == sizeof( TProcessData ) &&
+		( ( const TProcessData * )buffer->GetBuffer() )->pDataBuffer[0] == 1;
+	SAFE_RELEASE( buffer );
+	m_theDataQueue[enumOwnerRoleSvr].Detach( s2c_roleserver_createrole_result );
+	_SendRoleResult( success, success ? 0 : 2 );
+	if ( success )
+	{
+		m_RoleNames.push_back( m_sPendingRoleName );
+		// Read the committed database record before transferring it to GameServer.
+		if ( _QueryRoleInfo_ToDBRole( m_sPendingRoleName.c_str() ) )
+		{
+			return enumToNextTask;
+		}
+	}
+	return enumSelAddDelRole;
 }
+
 
 UINT CGamePlayer::WaitForDeleteResult()
 {
-#ifdef	CONSOLE_DEBUG
-		_cprintf( "CGamePlayer::WaitForDeleteResult\n" );
-#endif
-
-	CBuffer *pRetBuffer = m_theDataQueue[enumOwnerRoleSvr].Attach( s2c_roleserver_deleterole_result );
-
-	if ( pRetBuffer )
+	CBuffer *buffer = m_theDataQueue[enumOwnerRoleSvr].Attach( s2c_roleserver_deleterole_result );
+	if ( !buffer )
 	{
-		UINT nNextTask = enumError;
-
-		TProcessData *pPD = ( TProcessData * )pRetBuffer->GetBuffer();
-
-		ASSERT( pPD );
-
-		char cResult = pPD->pDataBuffer[0];
-
-		tagNewDelRoleResponse ndrr;
-		ndrr.cProtocol = s2c_rolenewdelresponse;
-		ndrr.szRoleName[0] = '\0';
-		ndrr.bSucceeded = false;	
-
-#ifdef	CONSOLE_DEBUG
-		_cprintf( "CGamePlayer::WaitForDeleteResult %s\n", ( 1 == cResult ) ? "Successful" : "Failed" );
-#endif
-
-		switch ( cResult )
-		{
-		case 1:	// Successed
-
-			ndrr.bSucceeded = true;
-
-			m_pPlayerServer->SendData( m_lnIdentityID, ( const void * )&ndrr, sizeof( tagNewDelRoleResponse ) );
-
-			nNextTask = enumSelAddDelRole;
-			break;
-
-		//case -1:	// Failed
-		//case -2:	// Have exist
-		default:
-
-			ndrr.bSucceeded = false;
-
-			m_pPlayerServer->SendData( m_lnIdentityID, ( const void * )&ndrr, sizeof( tagNewDelRoleResponse ) );
-
-			nNextTask = enumSelAddDelRole;
-			break;
-		}
-
-		SAFE_RELEASE( pRetBuffer );
-		m_theDataQueue[enumOwnerRoleSvr].Detach( s2c_roleserver_deleterole_result );
-
-		return nNextTask;
+		return enumRepeat;
 	}
-
-	return enumRepeat;
+	bool success = buffer->GetUsed() == sizeof( TProcessData ) &&
+		( ( const TProcessData * )buffer->GetBuffer() )->pDataBuffer[0] == 1;
+	SAFE_RELEASE( buffer );
+	m_theDataQueue[enumOwnerRoleSvr].Detach( s2c_roleserver_deleterole_result );
+	if ( success )
+	{
+		for ( size_t i = 0; i < m_RoleNames.size(); ++i )
+		{
+			if ( m_RoleNames[i] == m_sDelRoleName )
+			{
+				m_RoleNames.erase( m_RoleNames.begin() + i );
+				break;
+			}
+		}
+	}
+	_SendRoleResult( success, success ? 0 : 2 );
+	m_sDelRoleName = "";
+	return enumSelAddDelRole;
 }
+
 
 bool CGamePlayer::_QueryRoleInfo_ToDBRole( const char *pRoleName )
 {
-	if ( NULL == pRoleName || '\0' == pRoleName[0] )
+	if ( !_OwnsRole( pRoleName ) )
 	{
 		return false;
 	}
-	
-	const size_t lenRN = strlen( pRoleName );
-	const size_t lenRI = sizeof( TProcessData ) - 1 + lenRN;
-
-	CBuffer *pBuffer = m_theGlobalAllocator.Allocate();
-			
-	TProcessData *pRoleInfo = reinterpret_cast< TProcessData * >( const_cast< BYTE * >( pBuffer->GetBuffer() ) );
-	
-	ASSERT( pRoleInfo );
-	
-	pRoleInfo->nProtoId = c2s_roleserver_getroleinfo;
-	pRoleInfo->nDataLen = lenRN;
-	pRoleInfo->ulIdentity = m_lnIdentityID;
-
-	memcpy( &pRoleInfo->pDataBuffer[0], pRoleName, lenRN );
-	pRoleInfo->pDataBuffer[lenRN] = '\0';
-	
-	m_pDBRoleClient->SendPackToServer( ( const void * )pRoleInfo, lenRI );
-	
-	SAFE_RELEASE( pBuffer );
-
+	CBuffer *buffer = m_theGlobalAllocator.Allocate();
+	TProcessData *data = ( TProcessData * )const_cast< BYTE * >( buffer->GetBuffer() );
+	ZeroMemory( data, sizeof( *data ) );
+	data->nProtoId = c2s_roleserver_getroleinfo;
+	data->ulIdentity = m_lnIdentityID;
+	if ( m_bCurrentLogin )
+	{
+		TDBRoleRequestCurrent request;
+		ZeroMemory( &request, sizeof( request ) );
+		strncpy( request.szRoleName, pRoleName, sizeof( request.szRoleName ) - 1 );
+		strncpy( request.szAccountName, m_sAccountName.c_str(), sizeof( request.szAccountName ) - 1 );
+		data->bLeave = 1;
+		data->nDataLen = sizeof( request );
+		memcpy( data->pDataBuffer, &request, sizeof( request ) );
+	}
+	else
+	{
+		data->nDataLen = strlen( pRoleName );
+		memcpy( data->pDataBuffer, pRoleName, data->nDataLen );
+	}
+	m_pDBRoleClient->SendPackToServer( data, sizeof( *data ) - 1 + data->nDataLen );
+	SAFE_RELEASE( buffer );
 	return true;
 }
+
 
 bool CGamePlayer::_CreateNewPlayer_ToDBRole( const char *pRoleName, 
 						int nRoleSex /* male or female */, 
 						int nRoleClass,
-						unsigned short nMapID )
+						unsigned short nMapID, BYTE nPortrait )
 {
 	if ( NULL == pRoleName || '\0' == pRoleName[0] )
 	{
@@ -1666,15 +1596,16 @@ bool CGamePlayer::_CreateNewPlayer_ToDBRole( const char *pRoleName,
 
 	size_t datalength = 0;
 
-	CPlayerCreator::ROLEPARAM	RP;
+	CPlayerCreator::ROLEPARAM RP;
+	ZeroMemory( &RP, sizeof( RP ) );
 
 	int nMinLen = strlen( pRoleName );
-	nMinLen = nMinLen > sizeof( RP.szName ) ? sizeof( RP.szName ) : nMinLen;
+	nMinLen = nMinLen >= sizeof( RP.szName ) ? sizeof( RP.szName ) - 1 : nMinLen;
 	memcpy( RP.szName, pRoleName, nMinLen );
 	RP.szName[nMinLen] = '\0';
 
 	nMinLen = m_sAccountName.size();
-	nMinLen = nMinLen > sizeof( RP.szAccName ) ? sizeof( RP.szAccName ) : nMinLen;
+	nMinLen = nMinLen >= sizeof( RP.szAccName ) ? sizeof( RP.szAccName ) - 1 : nMinLen;
 	memcpy( RP.szAccName, m_sAccountName.c_str(), nMinLen );
 	RP.szAccName[nMinLen] = '\0';
 
@@ -1694,22 +1625,20 @@ bool CGamePlayer::_CreateNewPlayer_ToDBRole( const char *pRoleName,
 		pPD->ulIdentity = m_lnIdentityID;
 
 		pPD->pDataBuffer[0] = 1; // Create successed
-		pPD->nDataLen = datalength + 1 /* sizeof( pPD->pDataBuffer[0] ) */;
+		pPD->bLeave = m_bCurrentLogin ? 1 : 0;
+		pPD->nDataLen = datalength + 1 + ( m_bCurrentLogin ? 1 : 0 );
 		memcpy( &pPD->pDataBuffer[1], pRoleData, datalength );
 
 		/*
 		 * Send a role-info to role dbserver
 		 */
-		size_t nRoleInfoLength = datalength + sizeof( TProcessData );
+		size_t nRoleInfoLength = sizeof( TProcessData ) - 1 + pPD->nDataLen;
+		if ( m_bCurrentLogin )
+		{
+			pPD->pDataBuffer[datalength + 1] = nPortrait;
+		}
 
 		m_thePackager.AddData( c2s_roleserver_createroleinfo,
-			( const BYTE * )pPD,
-			nRoleInfoLength );
-
-		/*
-		 * For create a role
-		 */
-		m_theDataQueue[enumOwnerRoleSvr].AddData( s2c_roleserver_getroleinfo_result, 
 			( const BYTE * )pPD,
 			nRoleInfoLength );
 
@@ -1738,34 +1667,33 @@ bool CGamePlayer::_CreateNewPlayer_ToDBRole( const char *pRoleName,
 
 UINT CGamePlayer::_DeleteRole_ToDBRole( const void *pData, size_t dataLength )
 {
-	tagDBDelPlayer *pDBDP = ( tagDBDelPlayer * )pData;
-
-	if ( NULL == pData || 0 == dataLength )
+	const KDeletePlayerCurrent *request = ( const KDeletePlayerCurrent * )pData;
+	if ( !request || dataLength != ( m_bCurrentLogin ? sizeof( *request ) : sizeof( tagDBDelPlayer ) ) ||
+		!memchr( request->Account, 0, sizeof( request->Account ) ) ||
+		stricmp( request->Account, m_sAccountName.c_str() ) || !_OwnsRole( request->Name ) )
 	{
 		return false;
 	}
-
-	const char *pAccountName = pDBDP->szAccountName;
-	const char *pPassword = pDBDP->Password.szPassword;//ganlei
-	const char *pRoleName = pDBDP->szRoleName;
-
-	if ( !pAccountName || !pPassword || !pRoleName )
+	char proof[33];
+	for ( size_t i = 0; i < 32; ++i )
 	{
-		return false;
+		char value = request->Password.szPassword[i];
+		if ( !( value >= '0' && value <= '9' ) && !( value >= 'a' && value <= 'f' ) &&
+			!( value >= 'A' && value <= 'F' ) )
+		{
+			return false;
+		}
+		proof[i] = value >= 'a' && value <= 'f' ? value - 'a' + 'A' : value;
 	}
-
-    
-	if (m_sAccountName.compare( pAccountName ) != 0)
-    {
-        return false;
-    }
-
-    m_sSuperPassword = pPassword ? pPassword : "";
-    m_sDelRoleName   = pRoleName ? pRoleName : ""; 
-    m_bUseSuperPassword = true;
-    
+	proof[32] = '\0';
+	m_sSuperPassword = proof;
+	SecureZeroMemory( proof, sizeof( proof ) );
+	m_sDelRoleName = request->Name;
+	m_sPendingRoleName = request->Name;
+	m_bUseSuperPassword = true;
 	return true;
 }
+
 
 UINT CGamePlayer::ProcessRoleInfo()
 {
@@ -1790,7 +1718,13 @@ UINT CGamePlayer::ProcessRoleInfo()
 #endif
 		m_nAttachServerID = -1;
 
-		if ( 1 == cResult && _SyncRoleInfo_ToGameServer( ( const void * )( &pPA->pDataBuffer[1] ), pPA->nDataLen-1 ) )
+		bool bValid = pRetBuffer->GetUsed() >= sizeof( TProcessData ) + sizeof( TRoleData ) - 1 &&
+			pPA->nDataLen == pRetBuffer->GetUsed() - sizeof( TProcessData ) + 1;
+		const TRoleData *pRole = reinterpret_cast< const TRoleData * >( pPA->pDataBuffer + 1 );
+		bValid = bValid && pRole->dwDataLen == pPA->nDataLen - 1 - sizeof( BYTE ) &&
+			memchr( pRole->BaseInfo.caccname, 0, 32 ) &&
+			!stricmp( pRole->BaseInfo.caccname, m_sAccountName.c_str() );
+		if ( 1 == cResult && bValid && _SyncRoleInfo_ToGameServer( pRole, pPA->nDataLen - 1 ) )
 		{
 			nNextTask = enumToNextTask;
 		}

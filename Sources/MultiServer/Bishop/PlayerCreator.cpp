@@ -26,7 +26,7 @@ CPlayerCreator::~CPlayerCreator()
 {
 	for (int i = 0; i < MAX_PLAYERTYPE_VALUE; i++)
 	{
-		if (!m_pRoleData[i])
+		if (m_pRoleData[i])
 		{
 			delete [] m_pRoleData[i];
 			m_pRoleData[i] = NULL;
@@ -44,69 +44,70 @@ CPlayerCreator::~CPlayerCreator()
 	m_theMapID2RID.erase( m_theMapID2RID.begin(), m_theMapID2RID.end() );
 }
 
+// Prefer the current resource tree, then an existing server-side legacy file.
+static bool FindPlayerResource( const char *szRelative, char szPath[MAX_PATH] )
+{
+	char szCandidate[MAX_PATH];
+	sprintf( szCandidate, "%s..\\..\\Resources\\%s", GetAppFullPath( NULL ).c_str(), szRelative );
+	if ( GetFullPathName( szCandidate, MAX_PATH, szPath, NULL ) &&
+		GetFileAttributes( szPath ) != INVALID_FILE_ATTRIBUTES )
+	{
+		return true;
+	}
+	sprintf( szPath, "%s%s", GetAppFullPath( NULL ).c_str(), szRelative );
+	return GetFileAttributes( szPath ) != INVALID_FILE_ATTRIBUTES;
+}
+
 bool CPlayerCreator::Init()
 {
-	CIniFile theIniFile;
-
-	_tstring sIniFilePathName;
-
-	sIniFilePathName = GetAppFullPath( NULL );
-
-	char	szFileName[MAX_PATH];
-
-	for (int i = 0; i < MAX_PLAYERTYPE_VALUE; i++)
+	char szRelative[MAX_PATH];
+	char szPath[MAX_PATH];
+	bool bLoaded = true;
+	for ( int i = 0; i < MAX_PLAYERTYPE_VALUE; ++i )
 	{
-		sprintf(szFileName, PLAYERCREATOR_FILE, i);
-		_tstring sIniFileName = sIniFilePathName + szFileName;
-
-		if (!m_pRoleData[i])
-			m_pRoleData[i] = new BYTE[MAX_NEWPLAYER_BUFFER];
-		ZeroMemory(m_pRoleData[i], MAX_NEWPLAYER_BUFFER * sizeof(BYTE));
-		GetRoleDataFromIni(m_pRoleData[i], sIniFileName.c_str());
-	}
-	
-	_tstring sRevivalFileName = sIniFilePathName + REVIVALID_FILENAME;
-
-	CIniFile	cFile;
-	cFile.SetFile( sRevivalFileName.c_str() );
-
-	CIniFile::_VETSTR theIniVetstr;
-	cFile.ReadSections( theIniVetstr );
-
-	char szBuffer[64];
-
-	CIniFile::_VETSTR::iterator it;
-	for ( it = theIniVetstr.begin(); it != theIniVetstr.end(); it ++ )
-	{
-		_tstring info = ( *it );
-
-		if ( info.empty() )
+		sprintf( szRelative, "settings\\npc\\player\\newplayerini%02d.ini", i );
+		if ( !FindPlayerResource( szRelative, szPath ) )
 		{
-			continue;
-		}
-
-		int nSection = atoi( info.c_str() );
-		int nCount = cFile.ReadInteger( info.c_str(), "Count", 0 );
-
-		if ( nCount > 0 )
-		{
-			stdRevivalID rid;
-			
-			for ( int i=0; i<nCount; i++ )
+			sprintf( szRelative, PLAYERCREATOR_FILE, i );
+			if ( !FindPlayerResource( szRelative, szPath ) )
 			{
-				sprintf( szBuffer, "RevivalId%2.2d", i );
-				
-				int nID = cFile.ReadInteger( info.c_str(), szBuffer, 0 );
-				
-				rid.push_back( nID );
+				bLoaded = false;
+				continue;
 			}
-			
-			m_theMapID2RID.insert( stdMapID2RID::value_type( nSection, rid ) );
+		}
+		m_pRoleData[i] = new BYTE[MAX_NEWPLAYER_BUFFER];
+		ZeroMemory( m_pRoleData[i], MAX_NEWPLAYER_BUFFER );
+		if ( !GetRoleDataFromIni( m_pRoleData[i], szPath ) )
+		{
+			delete [] m_pRoleData[i];
+			m_pRoleData[i] = NULL;
+			bLoaded = false;
 		}
 	}
+	return bLoaded;
+}
 
+bool CPlayerCreator::IsNativePlace( unsigned short nMapID )
+{
+	char szPath[MAX_PATH];
+	if ( !FindPlayerResource( "settings\\NativePlaceList.ini", szPath ) )
+	{
+		return false;
+	}
+	CIniFile file( szPath );
+	int nCount = file.ReadInteger( "List", "Count", 0 );
+	for ( int i = 0; i < nCount; ++i )
+	{
+		char szSection[16];
+		sprintf( szSection, "%d", i );
+		if ( file.ReadInteger( szSection, "Id", -1 ) == nMapID )
+		{
+			return true;
+		}
+	}
 	return false;
 }
+
 
 unsigned CPlayerCreator::GetRevivalID( size_t nMapID, UINT nType /*= enumRandom*/ )
 {
@@ -135,48 +136,81 @@ unsigned CPlayerCreator::GetRevivalID( size_t nMapID, UINT nType /*= enumRandom*
 	return 0;
 }
 
-const TRoleData* CPlayerCreator::GetRoleData(unsigned int &uDataLength, LPROLEPARAM lpParam)
+const TRoleData* CPlayerCreator::GetRoleData( unsigned int &uDataLength, LPROLEPARAM lpParam )
 {
-	int nIndex = lpParam->nSeries * ROLE_NO + lpParam->nSex;
-	if (nIndex < 0 || nIndex >= MAX_PLAYERTYPE_VALUE)
+	uDataLength = 0;
+	if ( !lpParam || lpParam->nSeries < 0 || lpParam->nSeries > 2 ||
+		lpParam->nSex < 0 || lpParam->nSex > 1 || !IsNativePlace( lpParam->nMapID ) )
 	{
-		uDataLength = 0;
+		return NULL;
+	}
+	int nIndex = lpParam->nSeries * 2 + lpParam->nSex;
+	if ( !m_pRoleData[nIndex] )
+	{
 		return NULL;
 	}
 
-	if (m_pRoleData[nIndex])
+	TRoleData *pData = reinterpret_cast< TRoleData * >( m_pRoleData[nIndex] );
+	strncpy( pData->BaseInfo.szName, lpParam->szName, sizeof( pData->BaseInfo.szName ) - 1 );
+	pData->BaseInfo.szName[sizeof( pData->BaseInfo.szName ) - 1] = '\0';
+	strncpy( pData->BaseInfo.caccname, lpParam->szAccName, sizeof( pData->BaseInfo.caccname ) - 1 );
+	pData->BaseInfo.caccname[sizeof( pData->BaseInfo.caccname ) - 1] = '\0';
+	pData->BaseInfo.bSex = lpParam->nSex != 0;
+	pData->BaseInfo.ifiveprop = lpParam->nSeries;
+
+	char szPath[MAX_PATH];
+	if ( !FindPlayerResource( "settings\\RevivePos.ini", szPath ) )
 	{
-		TRoleData *pData = ( TRoleData * )m_pRoleData[nIndex];
-
-		ASSERT( pData );
-
-		strncpy(pData->BaseInfo.szName, lpParam->szName, sizeof(pData->BaseInfo.szName));
-        pData->BaseInfo.szName[sizeof(pData->BaseInfo.szName) - 1] = '\0';
-
-		strncpy(pData->BaseInfo.caccname, lpParam->szAccName,  sizeof(pData->BaseInfo.caccname));
-        pData->BaseInfo.caccname[sizeof(pData->BaseInfo.caccname) - 1] = '\0';
-
-		pData->BaseInfo.bSex = ( bool )( 0 != lpParam->nSex );
-		pData->BaseInfo.ifiveprop = lpParam->nSeries;
-
-		unsigned nNativeID = GetRevivalID( lpParam->nMapID );
-
-		pData->BaseInfo.irevivalid = lpParam->nMapID;
-		pData->BaseInfo.irevivalx = nNativeID;
-		pData->BaseInfo.irevivaly = 0;
-		
-		uDataLength = pData->dwDataLen;
-		return ( const TRoleData * )pData;
+		return NULL;
 	}
+	CIniFile file( szPath );
+	char szSection[16];
+	sprintf( szSection, "%d", lpParam->nMapID );
+	char szRegions[256];
+	file.ReadString( szSection, "region", szRegions, sizeof( szRegions ), "" );
+	stdRevivalID regions;
+	char *pRegion = strtok( szRegions, "," );
+	while ( pRegion )
+	{
+		regions.push_back( atoi( pRegion ) );
+		pRegion = strtok( NULL, "," );
+	}
+	if ( regions.empty() )
+	{
+		return NULL;
+	}
+	unsigned nRegion = regions[rand() % regions.size()];
+	char szKey[16];
+	char szPosition[64];
+	sprintf( szKey, "%u", nRegion );
+	file.ReadString( szSection, szKey, szPosition, sizeof( szPosition ), "" );
+	int nX = 0;
+	int nY = 0;
+	if ( sscanf( szPosition, "%d,%d", &nX, &nY ) != 2 || nX <= 0 || nY <= 0 )
+	{
+		return NULL;
+	}
+	pData->BaseInfo.irevivalid = lpParam->nMapID;
+	pData->BaseInfo.irevivalx = nRegion;
+	pData->BaseInfo.irevivaly = 0;
+	pData->BaseInfo.cUseRevive = 0;
+	pData->BaseInfo.ientergameid = lpParam->nMapID;
+	pData->BaseInfo.ientergamex = nX;
+	pData->BaseInfo.ientergamey = nY;
 
-	uDataLength = 0;
-	return NULL;
+	uDataLength = pData->dwDataLen;
+	return pData;
 }
+
 
 bool CPlayerCreator::GetRoleDataFromIni(BYTE* pData, const char* szFileName)
 {
 	CIniFile	cFile;
 
+	if ( GetFileAttributes( szFileName ) == INVALID_FILE_ATTRIBUTES )
+	{
+		return false;
+	}
 	cFile.SetFile( szFileName );
 
 	TRoleData*	pRoleData = (TRoleData *)pData;
@@ -308,7 +342,9 @@ int i;
 		pItemData->iequipversion	= cFile.ReadInteger(szSection, "iequipversion", 0);
 		pItemData->irandseed		= cFile.ReadInteger(szSection, "irandseed", 0);
 		pItemData->ilucky			= cFile.ReadInteger(szSection, "ilucky", 0);
-		pItemData->idurability		= 0;
+		// A new equipment item starts at the maximum generated from its resource row.
+		// Zero remains a valid saved durability for a worn-out item.
+		pItemData->idurability = cFile.ReadInteger(szSection, "idurability", DB_ITEM_DURABILITY_INITIAL);
 		pItemData->iidentify		= 0;
 
 		pItemData ++;

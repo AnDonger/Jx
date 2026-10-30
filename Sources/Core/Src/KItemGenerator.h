@@ -12,6 +12,7 @@
 
 #include "KBasPropTbl.h"
 #include "KItem.h"
+#include <map>
 
 #define		IN
 #define		OUT
@@ -29,6 +30,8 @@ public:
 // 以下是核心成员变量
 protected:
 	KLibOfBPT	m_BPTLib;
+	int			m_nCurrentVersion;
+	std::map<int, KLibOfBPT*> m_VersionLibraries;
 
 // 以下是辅助成员变量
 	int			m_GMA_naryMA[2][NUMOFCMA];	// [0][x]: 前缀; [1][x]: 后缀
@@ -57,7 +60,8 @@ public:
 	BOOL GetGoldItemByIndex(IN int, OUT KItem*);
 // 以下是辅助函数
 private:
-	BOOL Gen_MagicAttrib(int, const int*, int, int, KItemNormalAttrib*, int nVersion);
+	KLibOfBPT* GetVersionLibrary(int nVersion);
+	BOOL Gen_MagicAttrib(int, const int*, int, int, KItemNormalAttrib*, int nVersion, KLibOfBPT*);
 	const KMAGICATTRIB_TABFILE* GetMARecord(int) const;
 	BOOL GMA_GetAvaliableMA(int);
 	BOOL GMA_GetLevelAndDropRate(int);

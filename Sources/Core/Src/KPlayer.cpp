@@ -1,4 +1,5 @@
 #include "KCore.h"
+#include <time.h>
 #ifndef WM_MOUSEHOVER
 #define WM_MOUSEHOVER 0x02A1
 #endif
@@ -144,6 +145,8 @@ void	KPlayer::Release()
 	
 #ifdef _SERVER
 	m_bUseReviveIdWhenLogin = 0;
+	m_nWeightMax = 0;
+	m_btPortrait = 0;
 	m_dwDeathScriptId = 0;
 	
 	m_sLoginRevivalPos.m_nSubWorldID = 0;
@@ -806,34 +809,28 @@ BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 				break;
 			}
 			// 这个消息必须在同步世界NPC数据后做，使客户端能找到当前玩家在客户端的Npc索引
-			CURPLAYER_SYNC	sSync;	// 同步当前玩家的自身独特信息给客户端（装备等）
-			sSync.ProtocolType = (BYTE)s2c_synccurplayer;
-			sSync.m_dwID = Npc[m_nIndex].m_dwID;
-			sSync.m_btLevel = (DWORD)Npc[m_nIndex].m_Level;
-			sSync.m_btSex = Npc[m_nIndex].m_nSex;
-			sSync.m_btKind = Npc[m_nIndex].m_Kind;
-			sSync.m_btSeries = Npc[m_nIndex].m_Series;
-			sSync.m_wLifeMax = Npc[m_nIndex].m_LifeMax;
-			sSync.m_wStaminaMax = Npc[m_nIndex].m_StaminaMax;
-			sSync.m_wManaMax = Npc[m_nIndex].m_ManaMax;
-			sSync.m_HeadImage = Npc[m_nIndex].m_HeadImage;
-			sSync.m_wAttributePoint = this->m_nAttributePoint;
-			sSync.m_wSkillPoint = this->m_nSkillPoint;
-			sSync.m_wStrength = this->m_nStrength;
-			sSync.m_wDexterity = this->m_nDexterity;
-			sSync.m_wVitality = this->m_nVitality;
-			sSync.m_wEngergy = this->m_nEngergy;
-			sSync.m_wLucky = this->m_nLucky;
-			sSync.m_nExp = this->m_nExp;
-			sSync.m_dwLeadExp = this->m_dwLeadExp;
-			sSync.m_btCurFaction = this->m_cFaction.m_nCurFaction;
-			sSync.m_btFirstFaction = this->m_cFaction.m_nFirstAddFaction;
-			sSync.m_nFactionAddTimes = this->m_cFaction.m_nAddTimes;
-			sSync.m_wWorldStat = (WORD)m_nWorldStat;
-			sSync.m_wSectStat = (WORD)m_nSectStat;
-			sSync.m_nMoney1 = this->m_ItemList.GetMoney(room_equipment);
-			sSync.m_nMoney2 = this->m_ItemList.GetMoney(room_repository);
-			if (SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSync, sizeof(CURPLAYER_SYNC))))
+			GAME_CURPLAYER_SYNC sSync;
+			memset(&sSync, 0, sizeof(sSync));
+			sSync.ProtocolType = s2c_synccurplayer;
+			sSync.ID = Npc[m_nIndex].m_dwID;
+			sSync.Level = (BYTE)Npc[m_nIndex].m_Level;
+			sSync.Sex = (BYTE)Npc[m_nIndex].m_nSex;
+			sSync.Series = (BYTE)Npc[m_nIndex].m_Series;
+			sSync.Portrait = m_btPortrait;
+			sSync.LifeMax = (WORD)Npc[m_nIndex].m_LifeMax;
+			sSync.StaminaMax = (WORD)Npc[m_nIndex].m_StaminaMax;
+			sSync.ManaMax = (WORD)Npc[m_nIndex].m_ManaMax;
+			sSync.Strength = (WORD)m_nStrength;
+			sSync.Dexterity = (WORD)m_nDexterity;
+			sSync.Vitality = (WORD)m_nVitality;
+			sSync.Energy = (WORD)m_nEngergy;
+			sSync.Defense = (WORD)Npc[m_nIndex].m_Defend;
+			sSync.Exp = m_nExp;
+			sSync.WorldRank = (WORD)m_nWorldStat;
+			sSync.Money = m_ItemList.GetMoney(room_equipment);
+			sSync.WeightMax = m_nWeightMax;
+			sSync.ServerTime = (DWORD)time(NULL);
+			if (SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSync, sizeof(GAME_CURPLAYER_SYNC))))
 			{
 				bRet = TRUE;
 			}
@@ -872,44 +869,41 @@ BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 
 BOOL KPlayer::SendSyncData_Skill()
 {
-	SKILL_SEND_ALL_SYNC		sSkill;
-	
+	GAME_SKILL_SYNC sSkill;
+	memset(&sSkill, 0, sizeof(sSkill));
 	sSkill.ProtocolType = s2c_synccurplayerskill;
-	sSkill.m_wProtocolLong = 2;
-	int i;
-	int j;
-	for (i = 0,j = 0; i < MAX_NPCSKILL; i++)
+
+	int nCount = 0;
+	for (int i = 1; i < MAX_NPCSKILL; i++)
 	{
-		sSkill.m_sAllSkill[i].SkillId = 0;
-		sSkill.m_sAllSkill[i].SkillLevel = 0;
-		if( Npc[m_nIndex].m_SkillList.m_Skills[i].SkillId <= 0)
+		const NPCSKILL &Skill = Npc[m_nIndex].m_SkillList.m_Skills[i];
+		if (Skill.SkillId <= 0)
 			continue;
-		sSkill.m_sAllSkill[j].SkillId = Npc[m_nIndex].m_SkillList.m_Skills[i].SkillId;
-		sSkill.m_sAllSkill[j].SkillLevel = Npc[m_nIndex].m_SkillList.m_Skills[i].SkillLevel;
-		j++;
+
+		sSkill.m_sAllSkill[nCount].SkillId = Skill.SkillId;
+		sSkill.m_sAllSkill[nCount].SkillLevel = Skill.SkillLevel;
+		sSkill.m_sAllSkill[nCount].SkillStatus = Skill.SkillStatus ? Skill.SkillStatus : 1;
+		nCount++;
 	}
-	sSkill.m_wProtocolLong += sizeof(SKILL_SEND_ALL_SYNC_DATA) * j;
-	
+	sSkill.m_wProtocolLong = 2 + sizeof(GAME_SKILL_SYNC_DATA) * nCount;
+
 	if (SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSkill, sSkill.m_wProtocolLong + 1)))
-	{
 		return TRUE;
-	}
-	else
-	{
-		printf("player Packing skill sync data failed...\n");
-		return FALSE;
-	}
+
+	printf("player Packing skill sync data failed...\n");
+	return FALSE;
 }
 
 void	KPlayer::SendCurNormalSyncData()
 {
-	CURPLAYER_NORMAL_SYNC	sSync;
+	GAME_CURPLAYER_NORMAL_SYNC	sSync;
+	memset(&sSync, 0, sizeof(sSync));
 	
 	sSync.ProtocolType = s2c_synccurplayernormal;
 	sSync.m_shLife = Npc[m_nIndex].m_CurrentLife;
 	sSync.m_shStamina = Npc[m_nIndex].m_CurrentStamina;
 	sSync.m_shMana = Npc[m_nIndex].m_CurrentMana;
-	sSync.m_shAngry = 0;
+	sSync.unknown_1 = 0;
 	if ( !m_cTeam.m_nFlag )
 		sSync.m_btTeamData = 0;
 	else
@@ -920,7 +914,7 @@ void	KPlayer::SendCurNormalSyncData()
 			sSync.m_btTeamData = 0x01;
 	}
 	
-	g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSync, sizeof(CURPLAYER_NORMAL_SYNC));
+	g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSync, sizeof(GAME_CURPLAYER_NORMAL_SYNC));
 }
 
 void KPlayer::QuitGame(int nType)

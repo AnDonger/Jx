@@ -27,13 +27,29 @@ typedef int	__cdecl g_InternalDirSinCosFunction(int pSinCosTable[], int nDir, in
 
 inline int g_DirSin(int nDir, int nMaxDir)
 {
+#ifdef _USBKEY
     return (*(g_InternalDirSinCosFunction *)(&(g_InternalDirSinCosCode[0])))(g_nSin, nDir, nMaxDir);
+#else
+    if (nDir < 0 || nMaxDir <= 0 || nDir >= nMaxDir)
+        return -1;
+
+    int nIndex = (int)((long long)nDir * 64 / nMaxDir);
+    return g_nSin[nIndex];
+#endif
 }
 
 
 inline int g_DirCos(int nDir, int nMaxDir)
 {
+#ifdef _USBKEY
     return (*(g_InternalDirSinCosFunction *)(&(g_InternalDirSinCosCode[0])))(g_nCos, nDir, nMaxDir);
+#else
+    if (nDir < 0 || nMaxDir <= 0 || nDir >= nMaxDir)
+        return -1;
+
+    int nIndex = (int)((long long)nDir * 64 / nMaxDir);
+    return g_nCos[nIndex];
+#endif
 }
 
 //---------------------------------------------------------------------------
@@ -48,12 +64,26 @@ typedef int __cdecl g_InternalIsAccrueConquerFunction(int pAccrueConquerTable[],
 
 inline int g_IsAccrue(int nSrcSeries, int nDesSeries)
 {
+#ifdef _USBKEY
     return (*(g_InternalIsAccrueConquerFunction *)(&(g_InternalIsAccrueConquerCode[0])))(g_nAccrueSeries, nSrcSeries, nDesSeries);
+#else
+    if (nSrcSeries < 0 || nSrcSeries >= series_num)
+        return false;
+
+    return nDesSeries == g_nAccrueSeries[nSrcSeries];
+#endif
 }
 
 inline int g_IsConquer(int nSrcSeries, int nDesSeries)
 {
+#ifdef _USBKEY
     return (*(g_InternalIsAccrueConquerFunction *)(&(g_InternalIsAccrueConquerCode[0])))(g_nConquerSeries, nSrcSeries, nDesSeries);
+#else
+    if (nSrcSeries < 0 || nSrcSeries >= series_num)
+        return false;
+
+    return nDesSeries == g_nConquerSeries[nSrcSeries];
+#endif
 }
 
 

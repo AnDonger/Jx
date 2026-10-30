@@ -126,11 +126,43 @@ struct TRoleData
 	int		dwDataLen;
 	BYTE	pBuffer[1];
 };
+// Current client role-list record; independent of the legacy game database blob.
+struct S3DBI_RoleBaseInfoCurrent
+{
+	char szName[32];
+	BYTE Sex;
+	BYTE Series;
+	BYTE Level;
+	BYTE btPortrait;
+	DWORD dwExperience;
+	BYTE unknown_1;
+	DWORD dwLastLogoutTime;
+	DWORD dwLastLoginIP;
+	DWORD dwLastMapID;
+	BYTE unknown_2[29];
+};
+
+// Account is supplied by Bishop's authenticated session, never by the game client.
+struct TDBRoleRequestCurrent
+{
+	char szRoleName[32];
+	char szAccountName[32];
+};
+
+typedef char S3DBI_RoleBaseInfoCurrentSizeCheck[
+	sizeof( S3DBI_RoleBaseInfoCurrent ) == 82 ? 1 : -1 ];
+
 
 struct TDBTaskData
 {
 	BYTE	m_nTaskId;
 	int		m_nTaskValue;
+};
+
+// -1 is the existing indestructible value; -2 is only used before first generation.
+enum TDBItemDurability
+{
+	DB_ITEM_DURABILITY_INITIAL = -2
 };
 
 struct TDBItemData

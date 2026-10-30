@@ -14,6 +14,7 @@ typedef struct tagNpcSkill
 	int		RemainTimes;
 	DWORD	NextCastTime;		//下次可发送时的最小时间
 	int		CurrentSkillLevel;
+	BYTE	SkillStatus;
 } NPCSKILL, *LPNPCSKILL;
 struct TDBPlayerData;
 #ifndef TOOLVERSION
@@ -117,6 +118,8 @@ public:
 	
 #ifdef _SERVER
 	int		UpdateDBSkillList(BYTE *);
+	int		LoadPlayerSkill(int nSkillID, int nLevel);
+	BOOL	LoadPlayerInitialSkills(int nSeries);
 	void	SetNpcSkill(int nSkillNo, int nSkillId, int nSkillLevel);//sometime , npc's AI SkillList may have same skills.IT ONLY BE USED FOR NPC(NO PLAYER)
 	void	RemoveNpcSkill(int nSkillNo);
 	int		ClearSkillLevel(bool bClearPhysicalLevel);

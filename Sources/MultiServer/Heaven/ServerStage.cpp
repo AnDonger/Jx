@@ -179,6 +179,7 @@ CIOCPServer::CIOCPServer( size_t nPlayerMaxCount,
 		: OnlineGameLib::Win32::CSocketServer( maxFreeSockets, maxFreeBuffers, bufferSize, numThreads )
 		, m_theCacheAllocator( bufferSize_Cache, maxFreeBuffers_Cache )
 		, m_lRefCount( 0 )
+		, m_bGameClientProtocol( false )
 		, m_nPlayerMaxCount( nPlayerMaxCount )
 		, m_nPrecision( nPrecision )
 		, m_nNetworkBufferMaxLen( bufferSize - 32 /* sizeof( protocol of network ) */ )
@@ -809,6 +810,17 @@ STDMETHODIMP_( const char * ) CIOCPServer::GetClientInfo(
 	return NULL;
 }
 
+STDMETHODIMP CIOCPServer::EnableGameClientProtocol()
+{
+	CCriticalSection::Owner locker( m_csCM );
+	if ( !m_usedClientNode.empty() )
+	{
+		return E_UNEXPECTED;
+	}
+	m_bGameClientProtocol = true;
+	return S_OK;
+}
+
 STDMETHODIMP CIOCPServer::QueryInterface( REFIID riid, void** ppv )
 {
 	/*
@@ -818,7 +830,12 @@ STDMETHODIMP CIOCPServer::QueryInterface( REFIID riid, void** ppv )
 	{
 		AddRef();
 
-		*ppv = dynamic_cast< IUnknown * >( this );
+		*ppv = static_cast< IUnknown * >( static_cast< IServer * >( this ) );
+	}
+	else if ( riid == IID_IGameClientProtocol )
+	{
+		AddRef();
+		*ppv = static_cast< IGameClientProtocol * >( this );
 	}
 	else if ( riid == IID_IIOCPServer )
 	{
@@ -1349,6 +1366,21 @@ bool CIOCPServer::_HelperAddClient()
                 SendAccountBegin.AccountBegin.ServerKey    = ~m_theClientManager[dwIndex]->uServerKey;
                 SendAccountBegin.AccountBegin.ClientKey    = ~m_theClientManager[dwIndex]->uClientKey;
 				
+			}
+
+			if ( m_bGameClientProtocol )
+			{
+				// Verified in Release/Client: 0x42BD30, 0x42BD80, table 0x99CB14.
+				static const unsigned uGameKeyTable[10] =
+				{
+					0x6FEE50A2, 0x7099AB45, 0x70467002, 0x6FCE7769, 0x701EE2E6,
+					0x701D9166, 0x70709FCF, 0x6FF600E1, 0x709A98C8, 0x700053CE
+				};
+				unsigned uInitialServerKey = ~SendAccountBegin.AccountBegin.ServerKey;
+				unsigned uGameKey = uGameKeyTable[uInitialServerKey % 10];
+				CCriticalSection::Owner locker( m_csCM );
+				m_theClientManager[dwIndex]->uServerKey = uGameKey * 214013U + 2531011U;
+				m_theClientManager[dwIndex]->uClientKey = 0x1E278E7AU - uGameKey * 0x560397F7U;
 			}
 
             pSocket->Write((BYTE *)&SendAccountBegin, sizeof(SendAccountBegin));

@@ -25,13 +25,15 @@
 /*
  * class CIOCPServer
  */
-class CIOCPServer : public IServer, public OnlineGameLib::Win32::CSocketServer
+class CIOCPServer : public IServer, public IGameClientProtocol, public OnlineGameLib::Win32::CSocketServer
 {
 public:
 
 	/*
 	 * Inherit and public the IServer interface
 	 */
+
+	STDMETHOD( EnableGameClientProtocol )();
 
 	STDMETHOD( Startup )( );
 	STDMETHOD( Cleanup )( );
@@ -120,6 +122,7 @@ protected:
 private:
 	
 	LONG	m_lRefCount;
+	bool	m_bGameClientProtocol;
 
 	OnlineGameLib::Win32::CIOBuffer::Allocator	m_theCacheAllocator;
 

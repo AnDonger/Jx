@@ -22,6 +22,250 @@
 #define PROTOCOL_MSG_SIZE	(sizeof(PROTOCOL_MSG_TYPE))
 #define	MAX_PROTOCOL_NUM	200
 
+// Current Release/Client wire layouts. Unknown fields are sent as zero.
+// Legacy structures below remain available to the original source client.
+struct GAME_WORLD_SYNC
+{
+	BYTE ProtocolType;
+	DWORD SubWorld;
+	DWORD Region;
+	BYTE Weather;
+	DWORD Frame;
+	LONG ResourceId;
+	DWORD MapX;
+	DWORD MapY;
+};
+
+struct GAME_NPC_SYNC
+{
+	BYTE ProtocolType;
+	WORD m_wLength;
+	BYTE Camp;
+	BYTE CurrentCamp;
+	BYTE m_bySeries;
+	BYTE LifePerCent;
+	BYTE m_btMenuState;
+	BYTE m_Doing;
+	BYTE m_btKind;
+	DWORD ID;
+	DWORD NpcSettingIdx;
+	WORD unknown_1;
+	DWORD unknown_2;
+	DWORD unknown_3;
+	WORD unknown_4;
+	WORD unknown_5;
+	DWORD Series;
+	DWORD LifeMax;
+	BYTE unknown_7;
+	WORD MapX;
+	WORD MapY;
+	BYTE MapHigh;
+	WORD OffX;
+	WORD OffY;
+	WORD TargetX;
+	WORD TargetY;
+	BYTE TargetHigh;
+	WORD unknown_8;
+	WORD SnapshotX;
+	WORD SnapshotY;
+	BYTE SnapshotHigh;
+	BYTE unknown_9;
+	char m_szName[35]; // NUL name, zero state flag, empty NUL title.
+};
+
+struct GAME_PLAYER_SYNC
+{
+	BYTE ProtocolType;
+	WORD m_wLength;
+	BYTE WalkSpeed;
+	BYTE RunSpeed;
+	SHORT AttackSpeed;
+	SHORT CastSpeed;
+	BYTE HelmType;
+	BYTE ArmorType;
+	WORD WeaponType;
+	BYTE HorseType;
+	BYTE ShoulderType;
+	BYTE unknown_1;
+	BYTE RankID;
+	DWORD ID;
+	BYTE m_btSomeFlag;
+	DWORD Portrait;
+};
+
+struct GAME_PLAYER_NORMAL_SYNC
+{
+	BYTE ProtocolType;
+	BYTE unknown_1;
+	DWORD ID;
+	BYTE RunSpeed;
+	SHORT AttackSpeed;
+	SHORT CastSpeed;
+	BYTE HelmType;
+	BYTE ArmorType;
+	WORD WeaponType;
+	BYTE HorseType;
+	BYTE ShoulderType;
+	BYTE unknown_2;
+	BYTE RankID;
+	BYTE m_btSomeFlag;
+	BYTE AppearanceFlags;
+	WORD AppearanceType;
+	WORD unknown_5;
+};
+
+struct GAME_TONG_SELF_INFO_SYNC
+{
+	BYTE ProtocolType;
+	WORD m_wLength;
+	BYTE m_btMsgId;
+	BYTE m_btJoinFlag;
+	BYTE m_btFigure;
+	BYTE m_btCamp;
+	BYTE unknown_1;
+	char m_szTongName[32];
+	char m_szTitle[32];
+	char m_szMaster[32];
+};
+
+struct GAME_CURPLAYER_SYNC
+{
+	BYTE ProtocolType;
+	BYTE unknown_1;
+	DWORD ID;
+	BYTE Level;
+	BYTE Sex;
+	BYTE unknown_2;
+	BYTE Series;
+	WORD LifeMax;
+	WORD StaminaMax;
+	WORD ManaMax;
+	DWORD Portrait;
+	WORD unknown_4;
+	WORD Strength;
+	WORD Dexterity;
+	WORD Vitality;
+	WORD Energy;
+	WORD Defense;
+	DWORD Exp;
+	DWORD unknown_5;
+	BYTE unknown_6;
+	BYTE unknown_7;
+	DWORD unknown_8;
+	WORD WorldRank;
+	WORD unknown_9;
+	LONG Money;
+	LONG TongBei;
+	DWORD Reputation;
+	DWORD WeightMax;
+	WORD unknown_10;
+	DWORD unknown_11;
+	BYTE unknown_12[10];
+	DWORD unknown_13;
+	DWORD unknown_14;
+	DWORD unknown_15;
+	DWORD ServerTime;
+};
+
+struct GAME_CURPLAYER_NORMAL_SYNC
+{
+	BYTE ProtocolType;
+	LONG m_shLife;
+	SHORT m_shStamina;
+	SHORT m_shMana;
+	WORD unknown_1;
+	BYTE m_btTeamData;
+};
+
+struct GAME_NPC_NORMAL_SYNC
+{
+	BYTE ProtocolType;
+	BYTE WarState;
+	BYTE unknown_1;
+	BYTE Camp;
+	DWORD ID;
+	DWORD MapX;
+	DWORD MapY;
+	DWORD unknown_2;
+	BYTE LifePerCent;
+	DWORD LifeMax;
+	BYTE Doing;
+	BYTE unknown_3;
+	BYTE unknown_4;
+	BYTE unknown_5;
+};
+
+struct GAME_NPC_PLAYER_NORMAL_SYNC
+{
+	BYTE ProtocolType;
+	DWORD m_dwNpcID;
+	DWORD m_dwMapX;
+	DWORD m_dwMapY;
+	WORD m_wOffX;
+	WORD m_wOffY;
+	BYTE unknown_1[7];
+};
+
+struct GAME_SKILL_SYNC_DATA
+{
+	WORD SkillId;
+	BYTE SkillLevel;
+	BYTE unknown_1;
+	BYTE SkillStatus;
+	DWORD TotalExp;
+};
+
+struct GAME_SKILL_SYNC
+{
+	BYTE ProtocolType;
+	WORD m_wProtocolLong;
+	GAME_SKILL_SYNC_DATA m_sAllSkill[80];
+};
+
+struct GAME_ITEM_SYNC
+{
+	BYTE ProtocolType;
+	DWORD m_ID;
+	BYTE m_Genre;
+	WORD m_Detail;
+	WORD m_Particur;
+	BYTE m_Series;
+	BYTE m_Level;
+	BYTE m_btPlace;
+	BYTE m_btX;
+	BYTE m_btY;
+	BYTE m_Luck;
+	BYTE m_MagicLevel[6];
+	WORD m_Version;
+	WORD m_Durability;
+	DWORD m_RandomSeed;
+	DWORD unknown_1;
+	BYTE unknown_2;
+	BYTE Count;
+	BYTE unknown_3;
+	DWORD unknown_4;
+	BYTE unknown_5;
+	DWORD ValidityStartTime;
+	BYTE StateFlags;
+	BYTE unknown_6;
+	DWORD unknown_7;
+	BYTE unknown_8;
+	BYTE BindingMode;
+	DWORD unknown_9;
+};
+
+static_assert(sizeof(GAME_WORLD_SYNC) == 26, "49 map sync");
+static_assert(sizeof(GAME_NPC_SYNC) - 35 == 63, "4C entity prefix");
+static_assert(sizeof(GAME_PLAYER_SYNC) == 26, "4A appearance");
+static_assert(sizeof(GAME_PLAYER_NORMAL_SYNC) == 25, "4B appearance");
+static_assert(sizeof(GAME_CURPLAYER_SYNC) == 98, "44 current player");
+static_assert(sizeof(GAME_CURPLAYER_NORMAL_SYNC) == 12, "46 resources");
+static_assert(sizeof(GAME_NPC_NORMAL_SYNC) == 29, "4D entity update");
+static_assert(sizeof(GAME_NPC_PLAYER_NORMAL_SYNC) == 24, "4E player position");
+static_assert(sizeof(GAME_SKILL_SYNC_DATA) == 9, "45 skill record");
+static_assert(sizeof(GAME_ITEM_SYNC) == 58, "CB item sync");
+static_assert(sizeof(GAME_TONG_SELF_INFO_SYNC) == 104, "FD/4 guild self");
+
 typedef struct
 {
 	BYTE	ProtocolType;
@@ -860,6 +1104,7 @@ struct tagGuidableInfo : public tagProtoHeader
 	GUID guid;
 	WORD nExtPoint;			//可用的附送点
 	WORD nChangePoint;		//变化的附送点
+	BYTE btPortrait;			// Role metadata; not part of the persistent RoleData buffer.
 	size_t	datalength;
 	char	szData[0];
 
@@ -1014,6 +1259,13 @@ struct tagIdentityMapping : public tagGameSvrInfo
 struct tagLogicLogin : public tagProtoHeader
 {
 	GUID guid;
+};
+
+// Current client login: GUID followed by six bytes not yet used by the server.
+struct tagGameLogicLogin : public tagLogicLogin
+{
+	DWORD unknown_1;
+	WORD unknown_2;
 };
 
 /*
@@ -1383,6 +1635,66 @@ typedef struct
 	DWORD			m_dwReplyServerTime;
 	DWORD			m_dwClientTime;
 } PING_CLIENTREPLY_COMMAND;
+
+// 当前客户端 0x8D 的挑战回复。后两个 DWORD 不属于旧版客户端时钟。
+typedef struct
+{
+	BYTE			ProtocolType;
+	DWORD			ChallengeValue;
+	DWORD			ResponseValue;
+	DWORD			unknown_1;
+} GAME_CHALLENGE_REPLY_COMMAND;
+
+typedef struct
+{
+	BYTE			ProtocolType;
+	WORD			Length;
+	DWORD			SimulationFrame;
+	WORD			ElapsedMovementFrames;
+	WORD			MapX;
+	WORD			MapY;
+	BYTE			MapHigh;
+	WORD			OffX;
+	WORD			OffY;
+	WORD			TargetX;
+	WORD			TargetY;
+	BYTE			TargetHigh;
+	WORD			MovementRecordCount;
+} GAME_RUN_COMMAND_PREFIX;
+
+typedef struct
+{
+	BYTE			ProtocolType;
+	WORD			Length;
+	BYTE			Subtype;
+	DWORD			SimulationFrame;
+	WORD			ElapsedFrames;
+	WORD			MapX;
+	WORD			MapY;
+	BYTE			MapHigh;
+	WORD			OffX;
+	WORD			OffY;
+} GAME_STOP_COMMAND;
+
+typedef struct
+{
+	BYTE			ProtocolType;
+	DWORD			ID;
+	BYTE			unknown_1;
+	WORD			MapX;
+	WORD			MapY;
+	BYTE			MapHigh;
+	WORD			OffX;
+	WORD			OffY;
+	WORD			TargetX;
+	WORD			TargetY;
+	BYTE			TargetHigh;
+} GAME_NPC_MOVE_SYNC;
+
+static_assert(sizeof(GAME_CHALLENGE_REPLY_COMMAND) == 13, "challenge reply size");
+static_assert(sizeof(GAME_RUN_COMMAND_PREFIX) == 25, "run prefix size");
+static_assert(sizeof(GAME_STOP_COMMAND) == 19, "stop command size");
+static_assert(sizeof(GAME_NPC_MOVE_SYNC) == 20, "movement sync size");
 
 typedef struct
 {

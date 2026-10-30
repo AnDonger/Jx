@@ -67,7 +67,7 @@ public:
 	void PreparePlayerForLoginFailed(int nIndex);
 	void RemovePlayerForExchange(int nIndex);
 	void RecoverPlayerExchange(int nIndex);
-	int  AddCharacter(int nExtPoint, int nChangeExtPoint, void* pBuffer, GUID* pGuid);
+	int  AddCharacter(int nExtPoint, int nChangeExtPoint, void* pBuffer, GUID* pGuid, BYTE btPortrait);
 	int	 AddTempTaskValue(int nIndex, const char* pData);
 	//向游戏发送操作
 	int	 OperationRequest(unsigned int uOper, unsigned int uParam, int nParam);
@@ -126,7 +126,7 @@ int	 CoreServerShell::GetConnectInfo(KCoreConnectInfo* pInfo)
 }
 
 
-int CoreServerShell::AddCharacter(int nExtPoint, int nChangeExtPoint, void* pBuffer, GUID* pGuid)
+int CoreServerShell::AddCharacter(int nExtPoint, int nChangeExtPoint, void* pBuffer, GUID* pGuid, BYTE btPortrait)
 {
 	int nIdx = 0;
 	const TRoleData* pData = (const TRoleData*)pBuffer;
@@ -146,6 +146,7 @@ int CoreServerShell::AddCharacter(int nExtPoint, int nChangeExtPoint, void* pBuf
 		Player[nIdx].m_pStatusLoadPlayerInfo = Player[nIdx].m_SaveBuffer;
 		// 扩展点，用于活动
 		Player[nIdx].SetExtPoint(nExtPoint, nChangeExtPoint);
+		Player[nIdx].m_btPortrait = btPortrait;
 		return nIdx;
 	}
 	return 0;
@@ -268,6 +269,12 @@ int	CoreServerShell::GetGameData(unsigned int uDataId, unsigned int uParam, int 
 			nRet = PlayerSet.GetPlayerName(nParam, (char*)uParam);
 			if (nRet == FALSE)
 				((char *)uParam)[0] = 0;
+		}
+		break;
+	case SGDI_CHARACTER_PORTRAIT:
+		if (uParam > 0 && uParam < MAX_PLAYER)
+		{
+			nRet = Player[uParam].m_btPortrait;
 		}
 		break;
 	case SGDI_CHARACTER_EXTPOINTCHANGED:
@@ -771,8 +778,31 @@ int CoreServerShell::Breathe()
 
 bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 {
+	if (!pChar || nSize < 1)
+		return false;
+
 	WORD wCheckSize;
 	BYTE nProtocol = (BYTE)pChar[0];
+
+	// 当前客户端的动作编号与旧版枚举不一致，先检查实际封包布局。
+	if (nProtocol == 0x7A)
+		return nSize == sizeof(GAME_CHALLENGE_REPLY_COMMAND);
+	if (nProtocol == 0x50)
+	{
+		if (nSize < sizeof(GAME_RUN_COMMAND_PREFIX))
+			return false;
+		const GAME_RUN_COMMAND_PREFIX* pRun = (const GAME_RUN_COMMAND_PREFIX*)pChar;
+		return pRun->Length + PROTOCOL_MSG_SIZE == nSize &&
+			nSize == sizeof(GAME_RUN_COMMAND_PREFIX) + pRun->MovementRecordCount * 8;
+	}
+	if (nProtocol == 0xB8)
+	{
+		if (nSize < 4 || *(const WORD*)(pChar + 1) + PROTOCOL_MSG_SIZE != nSize)
+			return false;
+		if ((BYTE)pChar[3] == 0x1E)
+			return nSize == sizeof(GAME_STOP_COMMAND);
+		return true;
+	}
 
 	if (nProtocol >= c2s_end || nProtocol <= c2s_gameserverbegin)
 	{
@@ -782,6 +812,8 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 
 	if (g_nProtocolSize[nProtocol - c2s_gameserverbegin - 1] == -1)
 	{
+		if (nSize < 3)
+			return false;
 		wCheckSize = *(WORD*)&pChar[1] + PROTOCOL_MSG_SIZE;
 	}
 	else

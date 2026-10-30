@@ -1077,14 +1077,17 @@ void KSubWorld::GetMps(int *nX, int *nY, int nSpeed, int nDir, int nMaxDir /* = 
 #ifdef _SERVER
 BOOL KSubWorld::SendSyncData(int nIdx, int nClient)
 {
-	WORLD_SYNC	WorldSync;
+	GAME_WORLD_SYNC	WorldSync;
+	memset(&WorldSync, 0, sizeof(WorldSync));
 	WorldSync.ProtocolType = (BYTE)s2c_syncworld;
 	WorldSync.Region = m_Region[Npc[nIdx].m_RegionIndex].m_RegionID;
 	WorldSync.Weather = m_nWeather;
 	WorldSync.Frame = m_dwCurrentTime;
 	WorldSync.SubWorld = m_SubWorldID;
+	WorldSync.ResourceId = -1;
+	Npc[nIdx].GetMpsPos((int *)&WorldSync.MapX, (int *)&WorldSync.MapY);
 
-	if (SUCCEEDED(g_pServer->PackDataToClient(nClient, (BYTE*)&WorldSync, sizeof(WORLD_SYNC))))
+	if (SUCCEEDED(g_pServer->PackDataToClient(nClient, (BYTE*)&WorldSync, sizeof(GAME_WORLD_SYNC))))
 	{
 		return TRUE;
 	}

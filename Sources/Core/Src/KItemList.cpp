@@ -138,6 +138,48 @@ void KItemList::GetWeaponDamage(int* nMin, int* nMax)
 // Comments		:
 // Author		: Spe
 *****************************************************************************/
+int KItemList::ClientEquipmentSlotToPart(int nSlot)
+{
+	switch (nSlot)
+	{
+	case 0:
+		return itempart_head;
+	case 1:
+		return itempart_body;
+	case 2:
+		return itempart_belt;
+	case 3:
+		return itempart_foot;
+	case 5:
+		return itempart_weapon;
+	case 6:
+		return itempart_horse;
+	default:
+		return -1;
+	}
+}
+
+int KItemList::EquipmentPartToClientSlot(int nPart)
+{
+	switch (nPart)
+	{
+	case itempart_head:
+		return 0;
+	case itempart_body:
+		return 1;
+	case itempart_belt:
+		return 2;
+	case itempart_foot:
+		return 3;
+	case itempart_weapon:
+		return 5;
+	case itempart_horse:
+		return 6;
+	default:
+		return -1;
+	}
+}
+
 int KItemList::Add(int nIdx, int nPlace, int nX, int nY)
 {
 	if (nIdx <= 0)
@@ -163,6 +205,10 @@ int KItemList::Add(int nIdx, int nPlace, int nX, int nY)
 	case pos_equip:
 		if (nX < 0 || nX >= itempart_num)
 			return 0;
+#ifdef _SERVER
+		if (EquipmentPartToClientSlot(nX) < 0 || !Fit(nIdx, nX))
+			return 0;
+#endif
 		if (m_EquipItem[nX])
 			return 0;
 //	有可能是条件不够，被其他装备凑上的。是否能装备应该放到Equip时检查
@@ -217,8 +263,10 @@ int KItemList::Add(int nIdx, int nPlace, int nX, int nY)
 		Equip(m_Items[i].nIdx, nX);
 	}
 #ifdef _SERVER
-	ITEM_SYNC	sItem;
-	sItem.ProtocolType = s2c_syncitem;
+	GAME_ITEM_SYNC	sItem;
+	memset(&sItem, 0, sizeof(sItem));
+	sItem.Count = 1;
+	sItem.ProtocolType = 0xCB;
 	sItem.m_ID = Item[nIdx].GetID();
 	sItem.m_Genre = Item[nIdx].GetGenre();
 	sItem.m_Detail = Item[nIdx].GetDetailType();
@@ -227,14 +275,15 @@ int KItemList::Add(int nIdx, int nPlace, int nX, int nY)
 	sItem.m_Level = Item[nIdx].GetLevel();
 	sItem.m_Luck = Item[nIdx].m_GeneratorParam.nLuck;
 	sItem.m_btPlace = m_Items[i].nPlace;
-	sItem.m_btX = m_Items[i].nX;
+	sItem.m_btX = m_Items[i].nPlace == pos_equip ?
+		EquipmentPartToClientSlot(m_Items[i].nX) : m_Items[i].nX;
 	sItem.m_btY = m_Items[i].nY;
 	for (int j = 0; j < 6; j++)
 		sItem.m_MagicLevel[j] = (BYTE)Item[nIdx].m_GeneratorParam.nGeneratorLevel[j];
 	sItem.m_RandomSeed = Item[nIdx].m_GeneratorParam.uRandomSeed;
 	sItem.m_Version = Item[nIdx].m_GeneratorParam.nVersion;
 	sItem.m_Durability = Item[nIdx].GetDurability();
-	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(ITEM_SYNC));
+	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC));
 #endif
 
 #ifndef _SERVER
@@ -703,16 +752,16 @@ BOOL KItemList::Equip(int nIdx, int nPlace /* = -1 */)
 	switch(nEquipPlace)
 	{
 	case itempart_head:
-		Npc[nNpcIdx].m_HelmType = g_ItemChangeRes.GetHelmRes(Item[nIdx].GetParticular(), Item[nIdx].GetLevel());
+		Npc[nNpcIdx].m_HelmType = g_ItemChangeRes.GetHelmRes(Item[nIdx].GetParticular(), Item[nIdx].GetLevel(), Item[nIdx].m_GeneratorParam.nVersion);
 		break;
 	case itempart_body:
-		Npc[nNpcIdx].m_ArmorType = g_ItemChangeRes.GetArmorRes(Item[nIdx].GetParticular(), Item[nIdx].GetLevel());
+		Npc[nNpcIdx].m_ArmorType = g_ItemChangeRes.GetArmorRes(Item[nIdx].GetParticular(), Item[nIdx].GetLevel(), Item[nIdx].m_GeneratorParam.nVersion);
 		break;
 	case itempart_weapon:
-		Npc[nNpcIdx].m_WeaponType = g_ItemChangeRes.GetWeaponRes(Item[nIdx].GetDetailType(), Item[nIdx].GetParticular(), Item[nIdx].GetLevel());
+		Npc[nNpcIdx].m_WeaponType = g_ItemChangeRes.GetWeaponRes(Item[nIdx].GetDetailType(), Item[nIdx].GetParticular(), Item[nIdx].GetLevel(), Item[nIdx].m_GeneratorParam.nVersion);
 		break;
 	case itempart_horse:
-		Npc[nNpcIdx].m_HorseType = g_ItemChangeRes.GetHorseRes(Item[nIdx].GetParticular(), Item[nIdx].GetLevel());
+		Npc[nNpcIdx].m_HorseType = g_ItemChangeRes.GetHorseRes(Item[nIdx].GetParticular(), Item[nIdx].GetLevel(), Item[nIdx].m_GeneratorParam.nVersion);
 		if (Npc[nNpcIdx].m_HorseType >= 0)
 		{
 			Npc[nNpcIdx].m_bRideHorse = TRUE;
@@ -1330,6 +1379,22 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 	sMove.m_btUpPos = DesPos->nPlace;
 	sMove.m_btUpX = DesPos->nX;
 	sMove.m_btUpY = DesPos->nY;
+	// Exchange requests and replies use current client slots; the equipment logic uses ITEM_PART.
+	ItemPos SrcEquipmentPos = *SrcPos;
+	ItemPos DesEquipmentPos = *DesPos;
+	if (SrcPos->nPlace == pos_equip)
+	{
+		SrcEquipmentPos.nX = ClientEquipmentSlotToPart(SrcPos->nX);
+		DesEquipmentPos.nX = ClientEquipmentSlotToPart(DesPos->nX);
+		if (SrcEquipmentPos.nX < 0 || DesEquipmentPos.nX < 0)
+		{
+			g_DebugLog("[Item] Unsupported client equipment exchange slots: %d, %d", SrcPos->nX, DesPos->nX);
+			return;
+		}
+		SrcPos = &SrcEquipmentPos;
+		DesPos = &DesEquipmentPos;
+	}
+
 #endif
 
 	// 源装备从SrcPos到手上，手上的装备到DesPos
@@ -1587,8 +1652,10 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 					g_pServer->PackDataToClient(Player[Player[m_PlayerIdx].m_cTrade.m_nTradeDest].m_nNetConnectIdx, (BYTE*)&sRemove, sizeof(ITEM_REMOVE_SYNC));
 				}
 				// 手上的东西放在了交易栏
-				ITEM_SYNC	sItem;
-				sItem.ProtocolType = s2c_syncitem;
+				GAME_ITEM_SYNC	sItem;
+	memset(&sItem, 0, sizeof(sItem));
+	sItem.Count = 1;
+				sItem.ProtocolType = 0xCB;
 				sItem.m_ID = Item[m_Hand].GetID();
 				sItem.m_Genre = Item[m_Hand].GetGenre();
 				sItem.m_Detail = Item[m_Hand].GetDetailType();
@@ -1604,7 +1671,7 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 				sItem.m_RandomSeed = Item[m_Hand].m_GeneratorParam.uRandomSeed;
 				sItem.m_Version = Item[m_Hand].m_GeneratorParam.nVersion;
 				sItem.m_Durability = Item[m_Hand].GetDurability();
-				g_pServer->PackDataToClient(Player[Player[m_PlayerIdx].m_cTrade.m_nTradeDest].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(ITEM_SYNC));
+				g_pServer->PackDataToClient(Player[Player[m_PlayerIdx].m_cTrade.m_nTradeDest].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC));
 
 				g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sMove, sizeof(PLAYER_MOVE_ITEM_SYNC));
 #endif

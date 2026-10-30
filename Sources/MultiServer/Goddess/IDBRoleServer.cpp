@@ -4,6 +4,13 @@
 #include "DBBackup.h"
 #include "../../../../Headers/KGmProtocol.h"
 #include "CRC32.h"
+#include "IniFile.h"
+#include "Utils.h"
+#include "CriticalSection.h"
+#include <sql.h>
+#include <sqlext.h>
+
+#pragma comment( lib, "odbc32.lib" )
 
 #include <iostream>
 #include <strstream>
@@ -16,6 +23,168 @@ static ZDBTable *db_table = NULL;
 static size_t nMaxRoleCount_InAccount = 3;
 static CDBBackup::TStatData GameStatData;//游戏统计数据（服务器初始化时填入）
 static CDBBackup* DBBackup = NULL;
+
+extern HWND hListOutput;
+
+static SQLHENV g_hRoleEnvironment = SQL_NULL_HENV;
+static SQLHDBC g_hRoleConnection = SQL_NULL_HDBC;
+static OnlineGameLib::Win32::CCriticalSection g_csRoleDatabase;
+
+static void LogRoleDatabaseError( SQLSMALLINT nType, SQLHANDLE hHandle )
+{
+	SQLCHAR state[6];
+	SQLCHAR message[512];
+	SQLINTEGER native = 0;
+	SQLSMALLINT length = 0;
+	if ( SQL_SUCCEEDED( SQLGetDiagRec( nType, hHandle, 1, state, &native,
+		message, sizeof( message ), &length ) ) )
+	{
+		char text[640];
+		sprintf( text, "SQL role database [%s] %ld: %s", state, native, message );
+		AddOutputString( hListOutput, text );
+		OnlineGameLib::Win32::TraceNetworkData( text, NULL, 0 );
+	}
+}
+
+class CRoleStatement
+{
+public:
+	SQLHSTMT m_hStatement;
+
+	CRoleStatement()
+		: m_hStatement( SQL_NULL_HSTMT )
+	{
+		SQLAllocHandle( SQL_HANDLE_STMT, g_hRoleConnection, &m_hStatement );
+	}
+
+	~CRoleStatement()
+	{
+		if ( m_hStatement != SQL_NULL_HSTMT )
+		{
+			SQLFreeHandle( SQL_HANDLE_STMT, m_hStatement );
+		}
+	}
+
+	bool Execute( const char *szSql )
+	{
+		if ( m_hStatement != SQL_NULL_HSTMT && SQL_SUCCEEDED(
+			SQLExecDirectA( m_hStatement, ( SQLCHAR * )szSql, SQL_NTS ) ) )
+		{
+			return true;
+		}
+		LogRoleDatabaseError( SQL_HANDLE_STMT, m_hStatement );
+		return false;
+	}
+
+	bool Name( int nParameter, WCHAR *szValue )
+	{
+		return SQL_SUCCEEDED( SQLBindParameter( m_hStatement, nParameter, SQL_PARAM_INPUT,
+			SQL_C_WCHAR, SQL_WVARCHAR, 32, 0, szValue, 0, NULL ) );
+	}
+};
+
+static bool RoleNameToWide( const char *szName, WCHAR szWide[32] )
+{
+	if ( !szName || !memchr( szName, 0, 32 ) || !szName[0] )
+	{
+		return false;
+	}
+	return MultiByteToWideChar( 936, MB_ERR_INVALID_CHARS, szName, -1, szWide, 32 ) > 0;
+}
+
+static bool CheckRoleData( const TRoleData *pData, size_t nLength )
+{
+	if ( !pData || nLength < sizeof( TRoleData ) - 1 || nLength >= 64 * 1024 - 32 ||
+		pData->dwDataLen != nLength || !memchr( pData->BaseInfo.szName, 0, 32 ) ||
+		!memchr( pData->BaseInfo.caccname, 0, 32 ) || !pData->BaseInfo.szName[0] ||
+		!pData->BaseInfo.caccname[0] )
+	{
+		return false;
+	}
+	int offsets[] = { pData->dwFSkillOffset, pData->dwLSkillOffset,
+		pData->dwTaskOffset, pData->dwItemOffset, pData->dwFriendOffset };
+	int counts[] = { pData->nFightSkillCount, pData->nLiveSkillCount,
+		pData->nTaskCount, pData->nItemCount, pData->nFriendCount };
+	size_t sizes[] = { sizeof( TDBSkillData ), sizeof( TDBSkillData ),
+		sizeof( TDBTaskData ), sizeof( TDBItemData ), 0 };
+	for ( int i = 0; i < 5; ++i )
+	{
+		if ( counts[i] < 0 || offsets[i] < sizeof( TRoleData ) - 1 ||
+			static_cast< size_t >( offsets[i] ) > nLength ||
+			static_cast< size_t >( counts[i] ) * sizes[i] > nLength - offsets[i] )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool OpenRoleDatabase()
+{
+	OnlineGameLib::Win32::CIniFile file;
+	std::string path = OnlineGameLib::Win32::GetAppFullPath( NULL ) + "DataBase.ini";
+	file.SetFile( path.c_str() );
+	char server[256];
+	char database[128];
+	char user[128];
+	char password[128];
+	file.ReadString( "role", "Server", server, sizeof( server ), "" );
+	file.ReadString( "role", "DataBase", database, sizeof( database ), "" );
+	file.ReadString( "role", "User", user, sizeof( user ), "" );
+	file.ReadString( "role", "PassWord", password, sizeof( password ), "" );
+	if ( !server[0] || !database[0] )
+	{
+		return false;
+	}
+	if ( !SQL_SUCCEEDED( SQLAllocHandle( SQL_HANDLE_ENV, SQL_NULL_HANDLE, &g_hRoleEnvironment ) ) ||
+		!SQL_SUCCEEDED( SQLSetEnvAttr( g_hRoleEnvironment, SQL_ATTR_ODBC_VERSION,
+			( SQLPOINTER )SQL_OV_ODBC3, 0 ) ) ||
+		!SQL_SUCCEEDED( SQLAllocHandle( SQL_HANDLE_DBC, g_hRoleEnvironment, &g_hRoleConnection ) ) )
+	{
+		return false;
+	}
+	SQLSetConnectAttr( g_hRoleConnection, SQL_LOGIN_TIMEOUT, ( SQLPOINTER )10, 0 );
+	char connection[1024];
+	sprintf( connection, "DRIVER={SQL Server};SERVER=%s;DATABASE=%s;", server, database );
+	if ( user[0] )
+	{
+		strcat( connection, "UID=" );
+		strcat( connection, user );
+		strcat( connection, ";PWD=" );
+		strcat( connection, password );
+		strcat( connection, ";" );
+	}
+	else
+	{
+		strcat( connection, "Trusted_Connection=Yes;" );
+	}
+	SQLRETURN result = SQLDriverConnectA( g_hRoleConnection, NULL, ( SQLCHAR * )connection,
+		SQL_NTS, NULL, 0, NULL, SQL_DRIVER_NOPROMPT );
+	SecureZeroMemory( password, sizeof( password ) );
+	SecureZeroMemory( connection, sizeof( connection ) );
+	if ( !SQL_SUCCEEDED( result ) )
+	{
+		LogRoleDatabaseError( SQL_HANDLE_DBC, g_hRoleConnection );
+		return false;
+	}
+	CRoleStatement statement;
+	return statement.Execute(
+		"SET NOCOUNT ON; "
+		"IF OBJECT_ID(N'dbo.Role_Info',N'U') IS NULL BEGIN "
+		"CREATE TABLE dbo.Role_Info("
+		"iid int IDENTITY(1,1) NOT NULL,"
+		"cusercode nvarchar(32) COLLATE Chinese_PRC_BIN2 NOT NULL PRIMARY KEY,"
+		"caccname nvarchar(32) COLLATE Chinese_PRC_CI_AS NOT NULL,"
+		"RoleData varbinary(max) NOT NULL,btPortrait tinyint NOT NULL DEFAULT(0)); "
+		"CREATE INDEX IX_Role_Info_Account ON dbo.Role_Info(caccname,iid); END; "
+		"IF OBJECT_ID(N'dbo.RoleStorageMigration',N'U') IS NULL "
+		"CREATE TABLE dbo.RoleStorageMigration(MigrationID int NOT NULL PRIMARY KEY); "
+		"IF OBJECT_ID(N'dbo.RoleLegacyArchive',N'U') IS NULL "
+		"CREATE TABLE dbo.RoleLegacyArchive(OriginalKey varbinary(128) NOT NULL PRIMARY KEY,"
+		"RoleData varbinary(max) NOT NULL,Imported bit NOT NULL); "
+		"SELECT TOP 0 cusercode,caccname,RoleData,btPortrait FROM dbo.Role_Info" );
+}
+
 
 static HANDLE hDeadLockThread = NULL;		//检查数据库有没有死锁的线程
 static HANDLE hRemoveLogThread = NULL;	//删除没用日志文件的线程
@@ -53,69 +222,121 @@ DWORD WINAPI RemoveLogProc(LPVOID lpParameter) {
 
 BOOL InitDBInterface( size_t nMaxRoleCount )
 {
+	OnlineGameLib::Win32::TraceNetworkData( "stage=role_database_initialize", NULL, 0 );
 	nMaxRoleCount_InAccount = nMaxRoleCount;
-
-	db_table = new ZDBTable( "database", "roledb" );
-
-	db_table->addIndex( get_account );
-	if ( db_table && db_table->open() )
+	if ( !OpenRoleDatabase() )
 	{
-		DWORD dwThreadId, dwThrdParam = 1;
-/*
+		ReleaseDBInterface();
+		return FALSE;
+	}
 
-		hDeadLockThread = CreateThread(
-			NULL,				// no security attributes 
-			0,					// use default stack size  
-			DeadlockProc,		// thread function 
-			&dwThrdParam,		// argument to thread function 
-			0,					// use default creation flags 
-			&dwThreadId);		// returns the thread identifier 
-		if(!hDeadLockThread)
-		{
-			//创建线程失败,暂时没有处理
-		}
-*/
-
-		hRemoveLogThread = CreateThread(
-			NULL,				// no security attributes 
-			0,					// use default stack size  
-			RemoveLogProc,		// thread function 
-			&dwThrdParam,		// argument to thread function 
-			0,					// use default creation flags 
-			&dwThreadId);		// returns the thread identifier 
-		if(!hRemoveLogThread)
-		{
-			//创建线程失败,暂时没有处理
-		}
-
+	OnlineGameLib::Win32::TraceNetworkData( "stage=role_database_sql_connected", NULL, 0 );
+	CRoleStatement migration;
+	if ( !migration.Execute( "SELECT COUNT(*) FROM dbo.RoleStorageMigration WHERE MigrationID=1" ) ||
+		SQLFetch( migration.m_hStatement ) != SQL_SUCCESS )
+	{
+		return FALSE;
+	}
+	int migrated = 0;
+	SQLGetData( migration.m_hStatement, 1, SQL_C_LONG, &migrated, sizeof( migrated ), NULL );
+	SQLCloseCursor( migration.m_hStatement );
+	if ( migrated )
+	{
 		return TRUE;
 	}
-		
-	return FALSE;
+
+	// Import existing file-library roles once; SQL Server is authoritative afterwards.
+	if ( GetFileAttributes( "database\\roledb" ) != INVALID_FILE_ATTRIBUTES )
+	{
+	OnlineGameLib::Win32::TraceNetworkData( "stage=role_database_legacy_open", NULL, 0 );
+		ZDBTable legacy( "database", "roledb" );
+		legacy.addIndex( get_account );
+		if ( !legacy.open() )
+		{
+			return FALSE;
+		}
+	OnlineGameLib::Win32::TraceNetworkData( "stage=role_database_legacy_read", NULL, 0 );
+		ZCursor *cursor = legacy.first();
+		OnlineGameLib::Win32::TraceNetworkData( "stage=role_database_legacy_first", NULL, 0 );
+		while ( cursor )
+		{
+			TRoleData *role = ( TRoleData * )cursor->data;
+			bool valid = CheckRoleData( role, cursor->size );
+			if ( valid )
+			{
+				WCHAR name[32];
+				valid = RoleNameToWide( role->BaseInfo.szName, name );
+				for ( int i = 0; valid && name[i]; ++i )
+				{
+					if ( name[i] < 32 || name[i] == 127 )
+					{
+						valid = false;
+					}
+				}
+			}
+			int result = valid ? SaveRoleInfo( cursor->data, NULL, TRUE, 0 ) : 0;
+			if ( result == -2 )
+			{
+				char existing[64 * 1024];
+				int length = 0;
+				GetRoleInfo( existing, role->BaseInfo.szName, length );
+				if ( !length || stricmp( ( ( TRoleData * )existing )->BaseInfo.caccname,
+					role->BaseInfo.caccname ) )
+				{
+					result = 0;
+				}
+			}
+			int imported = result == 1 || result == -2;
+			CRoleStatement archive;
+			SQLLEN keyLength = cursor->key_size;
+			SQLLEN dataLength = cursor->size;
+			bool archived = SQL_SUCCEEDED( SQLBindParameter( archive.m_hStatement, 1,
+				SQL_PARAM_INPUT, SQL_C_BINARY, SQL_VARBINARY, keyLength, 0,
+				cursor->key, keyLength, &keyLength ) ) &&
+				SQL_SUCCEEDED( SQLBindParameter( archive.m_hStatement, 2,
+				SQL_PARAM_INPUT, SQL_C_BINARY, SQL_LONGVARBINARY, dataLength, 0,
+				cursor->data, dataLength, &dataLength ) ) &&
+				SQL_SUCCEEDED( SQLBindParameter( archive.m_hStatement, 3,
+				SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0,
+				&imported, 0, NULL ) ) && archive.Execute(
+				"DECLARE @key varbinary(128)=?,@data varbinary(max)=?,@imported int=?; "
+				"IF NOT EXISTS(SELECT 1 FROM dbo.RoleLegacyArchive WHERE OriginalKey=@key) "
+				"INSERT dbo.RoleLegacyArchive(OriginalKey,RoleData,Imported) VALUES(@key,@data,@imported);" );
+			if ( !archived || ( valid && !imported ) )
+			{
+				legacy.closeCursor( cursor );
+				legacy.close();
+				return FALSE;
+			}
+			OnlineGameLib::Win32::TraceNetworkData( "stage=role_database_legacy_import imported=" +
+				OnlineGameLib::Win32::ToString( imported ) + " length=" +
+				OnlineGameLib::Win32::ToString( cursor->size ), NULL, 0 );
+			if ( !legacy.next( cursor ) )
+			{
+				cursor = NULL;
+			}
+		}
+		legacy.close();
+	}
+	return migration.Execute( "INSERT dbo.RoleStorageMigration(MigrationID) VALUES(1)" ) ? TRUE : FALSE;
 }
 
-void ReleaseDBInterface()		//释放数据库引擎
+void ReleaseDBInterface()
 {
-	if ( db_table )
+	OnlineGameLib::Win32::CCriticalSection::Owner lock( g_csRoleDatabase );
+	if ( g_hRoleConnection != SQL_NULL_HDBC )
 	{
-		db_table->commit();
-/*
-
-		if(!hDeadLockThread)
-			TerminateThread(hDeadLockThread, 0);
-*/
-
-		if(!hRemoveLogThread)
-			TerminateThread(hRemoveLogThread, 0);
-
-		db_table->removeLog();
-		
-		StopBackupTimer();//停止备份线程
-		
-		db_table->close();
-		delete db_table;
+		SQLDisconnect( g_hRoleConnection );
+		SQLFreeHandle( SQL_HANDLE_DBC, g_hRoleConnection );
+		g_hRoleConnection = SQL_NULL_HDBC;
+	}
+	if ( g_hRoleEnvironment != SQL_NULL_HENV )
+	{
+		SQLFreeHandle( SQL_HANDLE_ENV, g_hRoleEnvironment );
+		g_hRoleEnvironment = SQL_NULL_HENV;
 	}
 }
+
 
 //[wxb 2003-7-23]
 void SetRoleInfoForGM(int nInfoID, char* pRoleBuffer, char* strUser, int nBufLen)
@@ -139,271 +360,227 @@ void SetRoleInfoForGM(int nInfoID, char* pRoleBuffer, char* strUser, int nBufLen
 			return;
 			break;
 		}
+		DWORD crc = CRC32( 0, aBuffer, size - sizeof( DWORD ) );
+		memcpy( aBuffer + size - sizeof( DWORD ), &crc, sizeof( crc ) );
 		SaveRoleInfo(aBuffer, strUser, false);
 	}
 	
-    delete aBuffer;
+    delete [] aBuffer;
 }
 
 //[wxb 2003-7-22]
-void *GetRoleInfoForGM(int nInfoID, char * pRoleBuffer, char * strUser, int &nBufLen)
+void *GetRoleInfoForGM( int nInfoID, char *pRoleBuffer, char *strUser, int &nBufLen )
 {
-	int size = 0;
-	ZCursor *cursor = db_table->search( strUser, strlen( strUser ) + 1 );
-//	char *buffer = db_table->search( strUser, strlen( strUser ) + 1, size );
-	if ( cursor )
+	char data[64 * 1024];
+	int length = 0;
+	GetRoleInfo( data, strUser, length );
+	nBufLen = 0;
+	if ( length && nInfoID == gm_role_entergame_position )
 	{
-		TRoleData* pRole = (TRoleData*)cursor->data;
-		switch(nInfoID) {
-		case gm_role_entergame_position:
-			nBufLen = sizeof(pRole->BaseInfo.ientergameid) + sizeof(pRole->BaseInfo.ientergamex) + sizeof(pRole->BaseInfo.ientergamey);
-			memcpy( pRoleBuffer, &(pRole->BaseInfo.ientergameid), nBufLen );
-			break;
-		default:
-			ASSERT(0);
-			nBufLen = 0;
-			break;
-		}
-
-		db_table->closeCursor(cursor);
+		TRoleData *role = reinterpret_cast< TRoleData * >( data );
+		nBufLen = 3 * sizeof( int );
+		memcpy( pRoleBuffer, &role->BaseInfo.ientergameid, nBufLen );
 	}
-	else
-	{
-		nBufLen = 0;
-	}
-
 	return pRoleBuffer;
 }
 
-void *GetRoleInfo( char * pRoleBuffer, char * strUser, int &nBufLen )
+void *GetRoleInfo( char *pRoleBuffer, char *strUser, int &nBufLen, BYTE *pPortrait )
 {
-	//输出数据======
-	char aStr[1024];
-	sprintf(aStr,"GetRoleInfo:%s",strUser);
-	AddOutputString(hListOutput,aStr);
-	//===============
-	int size = 0;
-	ZCursor *cursor = db_table->search( strUser, strlen( strUser ) + 1 );
-//	char *buffer = db_table->search( strUser, strlen( strUser ) + 1, size );
-	if ( cursor )
+	nBufLen = 0;
+	if ( pPortrait )
 	{
-		nBufLen = size;
-		memcpy( pRoleBuffer, cursor->data, cursor->size );
-		nBufLen = cursor->size;
-		db_table->closeCursor(cursor);
+		*pPortrait = 0;
 	}
-	else
+	WCHAR name[32];
+	if ( !pRoleBuffer || !RoleNameToWide( strUser, name ) )
 	{
-		nBufLen = 0;
+		return pRoleBuffer;
 	}
-
-	return pRoleBuffer;
-}
-
-//保存角色的信息，如果数据库不存在该玩家，则增加该玩家
-//bAutoInsertWhenNoExistUser 设为TRUE时表示，如果需要保存的该玩家在数据库中并不存在则自动加入到数据库中，FALSE则不增加直接返回错误
-//注意INI文件只须存放将需要改动的数据，不需改动的数据将自动保存原状。
-int	SaveRoleInfo( char * pRoleBuffer, const char *strUser, BOOL bAutoInsertWhenNoExistUser )
-{
-	ASSERT( pRoleBuffer );
-
-	//需要存放帐号首先找到数据
-	TRoleData *pRoleData = ( TRoleData * )pRoleBuffer;
-	
-	//输出数据======
-	char aStr[1024];
-	sprintf(aStr,"SaveRoleInfo:%s dwDataLen=%d",pRoleData->BaseInfo.szName,pRoleData->dwDataLen);
-	AddOutputString(hListOutput,aStr);
-	//===============
-
-	if(pRoleData->dwDataLen >= 64 * 1024) return 0;//如果数据大于64K就不添加到数据库
-
-	if(bAutoInsertWhenNoExistUser)
-	{//如果是新增角色就把账号名转成小写
-		char *ptr = pRoleData->BaseInfo.caccname;	//把账号名转成小写
-		while(*ptr) {
-		if(*ptr >= 'A' && *ptr <= 'Z') *ptr += 'a' - 'A';
-		ptr++;
-		}
-	}
-
-	if (!bAutoInsertWhenNoExistUser)
+	OnlineGameLib::Win32::CCriticalSection::Owner lock( g_csRoleDatabase );
+	CRoleStatement statement;
+	if ( statement.Name( 1, name ) &&
+		statement.Execute( "SELECT RoleData,btPortrait FROM dbo.Role_Info WHERE cusercode=?" ) &&
+		SQLFetch( statement.m_hStatement ) == SQL_SUCCESS )
 	{
-		DWORD	dwCRC = 0;
-		dwCRC = CRC32(dwCRC, pRoleData, pRoleData->dwDataLen - 4);
-		DWORD	dwOrigCRC = *(DWORD *)(pRoleBuffer + pRoleData->dwDataLen - 4);
-		if (dwCRC != dwOrigCRC)
+		SQLLEN length = 0;
+		if ( SQLGetData( statement.m_hStatement, 1, SQL_C_BINARY, pRoleBuffer,
+			64 * 1024 - 32, &length ) == SQL_SUCCESS && length > 0 &&
+			CheckRoleData( ( TRoleData * )pRoleBuffer, length ) )
 		{
-			// TODO:
-			FILE *fLog = fopen("crc_error", "a+b");
-			if(fLog) {
-				char buffer[255];
-				sprintf(buffer, "----\r\n%s\r\b%s\r\n", pRoleData->BaseInfo.szName, pRoleData->BaseInfo.caccname);
-				fwrite(buffer, 1, strlen(buffer), fLog);
-				fwrite(pRoleBuffer, 1, pRoleData->dwDataLen, fLog);
-				fclose(fLog);
+			nBufLen = length;
+			if ( pPortrait )
+			{
+				BYTE portrait = 0;
+				SQLLEN portraitLength = 0;
+				if ( SQLGetData( statement.m_hStatement, 2, SQL_C_UTINYINT, &portrait,
+					sizeof( portrait ), &portraitLength ) == SQL_SUCCESS )
+				{
+					*pPortrait = portrait;
+				}
 			}
-			return 0;
 		}
 	}
-
-	char szAccountName[32];
-
-	int nLength = strlen( pRoleData->BaseInfo.caccname );
-
-	ASSERT( nLength > 0 );
-
-	nLength = nLength > 31 ? 31 : nLength;
-
-	memcpy( szAccountName, pRoleData->BaseInfo.caccname, nLength );
-	szAccountName[nLength] = '\0';
-
-	char szName[32];
-	const char *pName = szName;
-
-	if ( NULL == strUser || strUser[0] == 0 )
-	{
-		int len = strlen( pRoleData->BaseInfo.szName );
-
-		ASSERT( len > 0 );
-
-		len = len > 31 ? 31 : len;
-
-		memcpy( szName, pRoleData->BaseInfo.szName, len );
-		szName[len] = '\0';
-	}
-	else
-	{
-		int len = strlen( strUser );
-
-		ASSERT( len > 0 );
-
-		memcpy( szName, strUser, len );
-		szName[len] = '\0';
-	}
-	
-	if ( bAutoInsertWhenNoExistUser )
-	{
-		int nCount = 0;
-		int size = 0;
-
-		/*
-		 * Role of same name only
-		 */
-		ZCursor *user_cursor = db_table->search(pName, strlen( pName ) + 1 );
-//		char *user_data = db_table->search( pName, strlen( pName ) + 1, size );
-		if ( user_cursor )
-		{
-			db_table->closeCursor(user_cursor);
-
-			return 0;
-		}
-
-		/*
-		 * Get count of role by the key of account
-		 */
-		ZCursor *cursor = db_table->search( szAccountName, strlen( szAccountName ) + 1, 0 );
-//		char *buffer = db_table->search( szAccountName, strlen( szAccountName ) + 1, size, 0 );
-
-		while ( cursor )
-		{
-			nCount ++;
-			if(!db_table->next( cursor ))break;
-		}
-
-		if ( nCount >= nMaxRoleCount_InAccount )
-		{
-			return 0;
-		}
-	}
-
-	if ( db_table->add( pName, strlen( pName ) + 1, pRoleBuffer, pRoleData->dwDataLen ) )
-	{
-		return 1;
-	}
-
-	return 0;
+	return pRoleBuffer;
 }
 
-int GetRoleListOfAccount( char * szAccountName, S3DBI_RoleBaseInfo * RoleBaseList, int nMaxCount )
+int SaveRoleInfo( char *pRoleBuffer, const char *strUser, BOOL bCreate, int nPortrait )
 {
-	int size = 0;
-	int count = 0;
-
-	char *ptr = szAccountName;	//把账号名转成小写
-	while(*ptr) {
-		if(*ptr >= 'A' && *ptr <= 'Z') *ptr += 'a' - 'A';
-		ptr++;
-	}
-
-	//输出数据======
-	char aStr[1024];
-	sprintf(aStr,"GetRoleListOfAccount:%s",szAccountName);
-	AddOutputString(hListOutput,aStr);
-	//===============
-
-	S3DBI_RoleBaseInfo *base_ptr = RoleBaseList;
-
-	ZCursor *cursor = db_table->search( szAccountName, strlen( szAccountName ) + 1, 0 );
-//	char *buffer = db_table->search( szAccountName, strlen( szAccountName ) + 1, size, 0 );
-	
-	while ( count < nMaxCount && cursor )
+	TRoleData *role = reinterpret_cast< TRoleData * >( pRoleBuffer );
+	if ( !role || !CheckRoleData( role, role->dwDataLen ) )
 	{
-		TRoleData *pRoleData = (TRoleData *)cursor->data;
-		
-		strncpy( base_ptr->szName, pRoleData->BaseInfo.szName, 32 ); 
-        base_ptr->szName[31] = '\0';
-		
-		base_ptr->Sex = pRoleData->BaseInfo.bSex;
-		base_ptr->Series = pRoleData->BaseInfo.ifiveprop;
-//		base_ptr->HelmType = pRoleData->BaseInfo.ihelmres;
-//		base_ptr->ArmorType = pRoleData->BaseInfo.iarmorres;
-//		base_ptr->WeaponType = pRoleData->BaseInfo.iweaponres;
-		base_ptr->Level = pRoleData->BaseInfo.ifightlevel;
-		
-		base_ptr++;
-		
-		/*
-		 * Get next info from database
-		 */
-		count++;
-		if(!db_table->next( cursor ))break;
+		return 0;
+	}
+	WCHAR name[32];
+	WCHAR account[32];
+	if ( !RoleNameToWide( role->BaseInfo.szName, name ) ||
+		!RoleNameToWide( role->BaseInfo.caccname, account ) ||
+		( strUser && strUser[0] && strcmp( strUser, role->BaseInfo.szName ) ) )
+	{
+		return 0;
+	}
+	if ( !bCreate )
+	{
+		DWORD crc = 0;
+		memcpy( &crc, pRoleBuffer + role->dwDataLen - sizeof( crc ), sizeof( crc ) );
+		if ( CRC32( 0, role, role->dwDataLen - sizeof( crc ) ) != crc )
+		{
+			return 0;
+		}
+	}
+	OnlineGameLib::Win32::CCriticalSection::Owner lock( g_csRoleDatabase );
+	CRoleStatement statement;
+	SQLLEN dataLength = role->dwDataLen;
+	int maxCount = nMaxRoleCount_InAccount;
+	if ( !statement.Name( 1, name ) || !statement.Name( 2, account ) ||
+		!SQL_SUCCEEDED( SQLBindParameter( statement.m_hStatement, 3, SQL_PARAM_INPUT,
+			SQL_C_BINARY, SQL_LONGVARBINARY, dataLength, 0, pRoleBuffer, dataLength, &dataLength ) ) ||
+		!SQL_SUCCEEDED( SQLBindParameter( statement.m_hStatement, 4, SQL_PARAM_INPUT,
+			SQL_C_LONG, SQL_INTEGER, 0, 0, &nPortrait, 0, NULL ) ) ||
+		!SQL_SUCCEEDED( SQLBindParameter( statement.m_hStatement, 5, SQL_PARAM_INPUT,
+			SQL_C_LONG, SQL_INTEGER, 0, 0, &maxCount, 0, NULL ) ) )
+	{
+		return 0;
+	}
+	const char *sql = bCreate ?
+		"SET NOCOUNT ON; SET XACT_ABORT ON; "
+		"DECLARE @name nvarchar(32)=?,@account nvarchar(32)=?,@data varbinary(max)=?,"
+		"@portrait int=?,@maximum int=?,@result int=0; "
+		"SET TRANSACTION ISOLATION LEVEL SERIALIZABLE; BEGIN TRANSACTION; "
+		"IF EXISTS(SELECT 1 FROM dbo.Role_Info WITH(UPDLOCK,HOLDLOCK) WHERE cusercode=@name) SET @result=-2; "
+		"ELSE IF (SELECT COUNT(*) FROM dbo.Role_Info WITH(UPDLOCK,HOLDLOCK) WHERE caccname=@account)>=@maximum SET @result=-3; "
+		"ELSE BEGIN INSERT dbo.Role_Info(cusercode,caccname,RoleData,btPortrait) "
+		"VALUES(@name,@account,@data,CASE WHEN @portrait<0 THEN 0 ELSE @portrait END); SET @result=1; END; "
+		"COMMIT TRANSACTION; SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SELECT @result;" :
+		"SET NOCOUNT ON; DECLARE @name nvarchar(32)=?,@account nvarchar(32)=?,@data varbinary(max)=?,"
+		"@portrait int=?,@maximum int=?; "
+		"UPDATE dbo.Role_Info SET RoleData=@data,btPortrait=CASE WHEN @portrait<0 THEN btPortrait ELSE @portrait END "
+		"WHERE cusercode=@name AND caccname=@account; SELECT @@ROWCOUNT;";
+	if ( !statement.Execute( sql ) || SQLFetch( statement.m_hStatement ) != SQL_SUCCESS )
+	{
+		SQLEndTran( SQL_HANDLE_DBC, g_hRoleConnection, SQL_ROLLBACK );
+		return 0;
+	}
+	int result = 0;
+	SQLLEN length = 0;
+	SQLGetData( statement.m_hStatement, 1, SQL_C_LONG, &result, sizeof( result ), &length );
+	return result;
+}
+
+int GetRoleListCurrentOfAccount( const char *szAccountName,
+	S3DBI_RoleBaseInfoCurrent *pRoleList, int nMaxCount )
+{
+	WCHAR account[32];
+	if ( !pRoleList || nMaxCount < 1 || nMaxCount > 3 || !RoleNameToWide( szAccountName, account ) )
+	{
+		return -1;
+	}
+	OnlineGameLib::Win32::CCriticalSection::Owner lock( g_csRoleDatabase );
+	CRoleStatement statement;
+	if ( !statement.Name( 1, account ) || !statement.Execute(
+		"SELECT RoleData,btPortrait FROM dbo.Role_Info WHERE caccname=? ORDER BY iid" ) )
+	{
+		return -1;
+	}
+	int count = 0;
+	SQLRETURN result = SQL_SUCCESS;
+	while ( count < nMaxCount && ( result = SQLFetch( statement.m_hStatement ) ) == SQL_SUCCESS )
+	{
+		char data[64 * 1024];
+		SQLLEN length = 0;
+		SQLCHAR portrait = 0;
+		if ( SQLGetData( statement.m_hStatement, 1, SQL_C_BINARY, data, sizeof( data ), &length ) != SQL_SUCCESS ||
+			length <= 0 || !CheckRoleData( ( TRoleData * )data, length ) ||
+			!SQL_SUCCEEDED( SQLGetData( statement.m_hStatement, 2, SQL_C_UTINYINT,
+				&portrait, sizeof( portrait ), NULL ) ) )
+		{
+			return -1;
+		}
+		TRoleBaseInfo &base = ( ( TRoleData * )data )->BaseInfo;
+		S3DBI_RoleBaseInfoCurrent &role = pRoleList[count++];
+		ZeroMemory( &role, sizeof( role ) );
+		memcpy( role.szName, base.szName, sizeof( role.szName ) );
+		role.Sex = base.bSex;
+		role.Series = base.ifiveprop;
+		role.Level = base.ifightlevel;
+		role.btPortrait = portrait;
+		role.dwExperience = base.fightexp;
+		role.dwLastMapID = base.cUseRevive ? base.irevivalid : base.ientergameid;
+	}
+	return result == SQL_ERROR ? -1 : count;
+}
+
+int GetRoleListOfAccount( char *szAccountName, S3DBI_RoleBaseInfo *pRoleList, int nMaxCount )
+{
+	S3DBI_RoleBaseInfoCurrent roles[3];
+	int count = GetRoleListCurrentOfAccount( szAccountName, roles, nMaxCount );
+	for ( int i = 0; i < count; ++i )
+	{
+		ZeroMemory( &pRoleList[i], sizeof( pRoleList[i] ) );
+		memcpy( pRoleList[i].szName, roles[i].szName, 32 );
+		pRoleList[i].Sex = roles[i].Sex;
+		pRoleList[i].Series = roles[i].Series;
+		pRoleList[i].Level = roles[i].Level;
 	}
 	return count;
 }
 
-bool DeleteRole( const char * strUser )
+bool DeleteRole( const char *strUser, const char *szAccountName )
 {
-	if ( db_table && strUser && strUser[0] )
+	WCHAR name[32];
+	WCHAR account[32];
+	if ( !RoleNameToWide( strUser, name ) ||
+		( szAccountName && !RoleNameToWide( szAccountName, account ) ) )
 	{
-		return db_table->remove( strUser, strlen( strUser ) + 1 );
+		return false;
 	}
-	return false;
+	OnlineGameLib::Win32::CCriticalSection::Owner lock( g_csRoleDatabase );
+	CRoleStatement statement;
+	if ( !statement.Name( 1, name ) || ( szAccountName && !statement.Name( 2, account ) ) )
+	{
+		return false;
+	}
+	const char *sql = szAccountName ?
+		"SET NOCOUNT ON; DELETE dbo.Role_Info WHERE cusercode=? AND caccname=?; SELECT @@ROWCOUNT;" :
+		"SET NOCOUNT ON; DELETE dbo.Role_Info WHERE cusercode=?; SELECT @@ROWCOUNT;";
+	if ( !statement.Execute( sql ) || SQLFetch( statement.m_hStatement ) != SQL_SUCCESS )
+	{
+		return false;
+	}
+	int count = 0;
+	SQLGetData( statement.m_hStatement, 1, SQL_C_LONG, &count, sizeof( count ), NULL );
+	return count == 1;
 }
 
-// 下面的函数可能存在内存泄漏问题
-//char* GetAccountByUser(char * strUser)
-//{//通过用户名查找帐户
-//	char* aBuffer = new char[64 * 1024];
-//	TRoleData* pRoleData;
-//	int size;
-//
-//	GetRoleInfo(aBuffer, strUser, size);
-//	if(size)
-//	{
-//		pRoleData = (TRoleData*)aBuffer;
-//		return pRoleData->BaseInfo.caccname;
-//	}
-//	else
-//	{
-//		return NULL;
-//	}
-//}
 
 //------------------------------------------------------------------------
 //数据库备份与数据统计 Add By Fellow At 2003.08.14
 bool StartBackupTimer(int aTime)
-{//开始运行备份线程
+{
+	// The legacy Berkeley backup is not a SQL Server database backup.
+	if ( !db_table )
+	{
+		return false;
+	}//开始运行备份线程
 	DBBackup = new CDBBackup( "database", "roledb", db_table );
 	DBBackup->SaveStatInfo();
 	bool aStartResult = DBBackup->Open(aTime);

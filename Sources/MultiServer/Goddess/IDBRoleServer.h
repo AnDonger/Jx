@@ -15,15 +15,18 @@ BOOL InitDBInterface( size_t nMaxRoleCount );
 
 void ReleaseDBInterface();
 
-void *GetRoleInfo( char * pRoleBuffer, char * strUser, int &nBufLen );
+void *GetRoleInfo( char * pRoleBuffer, char * strUser, int &nBufLen, BYTE *pPortrait = NULL );
 void *GetRoleInfoForGM(int nInfoID, char * pRoleBuffer, char * strUser, int &nBufLen);
 void SetRoleInfoForGM(int nInfoID, char * pRoleBuffer, char * strUser, int nBufLen);
 
-int	SaveRoleInfo( char * pRoleBuffer, const char * strUser, BOOL bAutoInsertWhenNoExistUser );
+int	SaveRoleInfo( char * pRoleBuffer, const char * strUser, BOOL bAutoInsertWhenNoExistUser, int nPortrait = -1 );
 
 int GetRoleListOfAccount( char * szAccountName, S3DBI_RoleBaseInfo * RoleBaseList, int nMaxCount );
 
-bool DeleteRole( const char * strUser );
+int GetRoleListCurrentOfAccount( const char *szAccountName,
+	S3DBI_RoleBaseInfoCurrent *pRoleList, int nMaxCount );
+
+bool DeleteRole( const char *strUser, const char *szAccountName = NULL );
 
 char* GetAccountByUser(char * strUser);//通过用户名查找帐户
 

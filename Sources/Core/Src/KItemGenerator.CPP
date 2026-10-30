@@ -17,18 +17,53 @@ KItemGenerator	ItemGen;			//	装备生成器
 
 KItemGenerator::KItemGenerator()
 {
+	m_nCurrentVersion = -1;
 }
 
 KItemGenerator::~KItemGenerator()
 {
+	std::map<int, KLibOfBPT*>::iterator it;
+	for (it = m_VersionLibraries.begin(); it != m_VersionLibraries.end(); ++it)
+		delete it->second;
+	m_VersionLibraries.clear();
 }
 
 /******************************************************************************
 	功能：	数据初始化. 从tab file中读取数据
 ******************************************************************************/
+KLibOfBPT* KItemGenerator::GetVersionLibrary(int nVersion)
+{
+	if (nVersion == -1)
+		nVersion = m_nCurrentVersion;
+	if (nVersion < 0 || nVersion > 999)
+		return NULL;
+	if (nVersion == m_nCurrentVersion)
+		return &m_BPTLib;
+
+	std::map<int, KLibOfBPT*>::iterator it = m_VersionLibraries.find(nVersion);
+	if (it != m_VersionLibraries.end())
+		return it->second;
+
+	KLibOfBPT* pLibrary = new KLibOfBPT;
+	if (!pLibrary->Init(nVersion))
+	{
+		delete pLibrary;
+		g_DebugLog("[Item] Equipment resource version is unavailable: %d", nVersion);
+		return NULL;
+	}
+	m_VersionLibraries[nVersion] = pLibrary;
+	return pLibrary;
+}
+
 BOOL KItemGenerator::Init()
 {
-	if (!m_BPTLib.Init())		// 此调用从若干的tab file中载入所有的初始属性
+	KIniFile itemVersion;
+	m_nCurrentVersion = 1;
+	if (itemVersion.Load("\\settings\\item\\itemversion.ini"))
+		itemVersion.GetInteger("ItemVersion", "Version", 1, &m_nCurrentVersion);
+	if (m_nCurrentVersion < 0 || m_nCurrentVersion > 999)
+		return FALSE;
+	if (!m_BPTLib.Init(m_nCurrentVersion))		// 此调用从若干的tab file中载入所有的初始属性
 		return FALSE;
 
 	for (int i = equip_meleeweapon; i < equip_detailnum - equip_meleeweapon; i++)
@@ -209,59 +244,21 @@ BOOL KItemGenerator::Gen_Equipment(IN int nDetailType,
 		memcpy(pItem->m_GeneratorParam.nGeneratorLevel, pnaryMALevel, sizeof(int) * 6);
 	else
 		ZeroMemory(pItem->m_GeneratorParam.nGeneratorLevel, sizeof(int) * 6);
-	pItem->m_GeneratorParam.nVersion = g_SubWorldSet.GetGameVersion();
 	pItem->m_GeneratorParam.nLuck = nLucky;
 #else
 	g_RandomSeed(pItem->m_GeneratorParam.uRandomSeed);
 	if (pnaryMALevel)
 		memcpy(pItem->m_GeneratorParam.nGeneratorLevel, pnaryMALevel, sizeof(int) * 6);
 #endif
+	pItem->m_GeneratorParam.nVersion = nVersion == -1 ? m_nCurrentVersion : nVersion;
 	int nGameVersion = pItem->m_GeneratorParam.nVersion;
 
 	// 根据入口参数, 确定装备的基本数据
-	const int i = nParticularType * 10 + nLevel - 1;// 本公式由策划定义
-												// 详见SPE 2002年8月31日7:40
-												// email: 基础道具数值表
-												// 等级数据从1开始，所以要减回来
-	const KBASICPROP_EQUIPMENT* pEqu = NULL;
-	switch(nDetailType)
-	{
-	case equip_meleeweapon:
-		pEqu = m_BPTLib.GetMeleeWeaponRecord(i);
-		break;
-	case equip_rangeweapon:
-		pEqu = m_BPTLib.GetRangeWeaponRecord(i);
-		break;
-	case equip_armor:
-		pEqu = m_BPTLib.GetArmorRecord(i);
-		break;
-	case equip_helm:
-		pEqu = m_BPTLib.GetHelmRecord(i);
-		break;
-	case equip_boots:
-		pEqu = m_BPTLib.GetBootRecord(i);
-		break;
-	case equip_belt:
-		pEqu = m_BPTLib.GetBeltRecord(i);
-		break;
-	case equip_amulet:
-		pEqu = m_BPTLib.GetAmuletRecord(i);
-		break;
-	case equip_ring:
-		pEqu = m_BPTLib.GetRingRecord(i);
-		break;
-	case equip_cuff:
-		pEqu = m_BPTLib.GetCuffRecord(i);
-		break;
-	case equip_pendant:
-		pEqu = m_BPTLib.GetPendantRecord(i);
-		break;
-	case equip_horse:
-		pEqu = m_BPTLib.GetHorseRecord(i);
-		break;
-	default:
-		break;
-	}
+	KLibOfBPT* pLibrary = GetVersionLibrary(pItem->m_GeneratorParam.nVersion);
+	if (!pLibrary)
+		return FALSE;
+	const KBASICPROP_EQUIPMENT* pEqu =
+		pLibrary->FindEquipment(nDetailType, nParticularType, nLevel);
 	if (NULL == pEqu)
 		{ _ASSERT(FALSE); return bEC; }
 		// 运行至此的直接原因: 只有n种装备, 而上面 i 的值在[0,n-1]之外
@@ -276,7 +273,7 @@ BOOL KItemGenerator::Gen_Equipment(IN int nDetailType,
 		return TRUE;
 	// 确定装备的魔法属性
 	KItemNormalAttrib	sMA[6];	// 道具的魔法属性
-	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion);
+	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion, pLibrary);
 	if (bEC)
 		pItem->SetAttrib_MA(sMA);
 
@@ -294,7 +291,7 @@ BOOL KItemGenerator::Gen_Equipment(IN int nDetailType,
 // Add by Freeway Chen in 2003.5.30
 BOOL KItemGenerator::Gen_MagicAttrib(
     int nType, const int* pnaryMALevel, int nSeriesReq, int nLucky,
-	KItemNormalAttrib* pnaryMA, int nGameVersion
+	KItemNormalAttrib* pnaryMA, int nGameVersion, KLibOfBPT* pLibrary
 )
 {
     int nResult = false;
@@ -317,7 +314,7 @@ BOOL KItemGenerator::Gen_MagicAttrib(
         SelectedMagicTable.Clear();
 
         // 根据前缀后缀、物品类型、五行需求、需求级别将所有符合条件的魔法属性项取出来
-        const KBPT_ClassMAIT *pCMITItem = m_BPTLib.GetCMIT(
+        const KBPT_ClassMAIT *pCMITItem = pLibrary->GetCMIT(
             1 - (i & 1),        // 前缀后缀
             nType,              // 物品类型
             nSeriesReq,         // 五行需求 
@@ -347,7 +344,7 @@ BOOL KItemGenerator::Gen_MagicAttrib(
         {
             // 根据索引值，取出相应的项
             int nMAIndex = pCMITItem->Get(j);
-            KMAGICATTRIB_TABFILE *pMAItem = (KMAGICATTRIB_TABFILE *)m_BPTLib.GetMARecord(nMAIndex);
+            KMAGICATTRIB_TABFILE *pMAItem = (KMAGICATTRIB_TABFILE *)pLibrary->GetMARecord(nMAIndex);
             if (!pMAItem)
             {
                 _ASSERT(pMAItem);
@@ -389,7 +386,7 @@ BOOL KItemGenerator::Gen_MagicAttrib(
         
         // 如果发现满足条件的魔法属性，就设置
         int nLuckyItemIndex = GetRandomNumber(0, nSelectedCount - 1);
-        KMAGICATTRIB_TABFILE *pMAItem = (KMAGICATTRIB_TABFILE *)m_BPTLib.GetMARecord(
+        KMAGICATTRIB_TABFILE *pMAItem = (KMAGICATTRIB_TABFILE *)pLibrary->GetMARecord(
              SelectedMagicTable.Get(nLuckyItemIndex)
         );
 
@@ -701,48 +698,11 @@ BOOL KItemGenerator::GetEquipmentCommonAttrib(IN int nDetailType, IN int nPartic
 		return FALSE;
 	}
 
-	const int i = nParticularType * 10 + nLevel - 1;// 本公式由策划定义
-												// 详见SPE 2002年8月31日7:40
-												// email: 基础道具数值表
-	const KBASICPROP_EQUIPMENT* pEqu = NULL;
-	switch(nDetailType)
-	{
-	case equip_meleeweapon:
-		pEqu = m_BPTLib.GetMeleeWeaponRecord(i);
-		break;
-	case equip_rangeweapon:
-		pEqu = m_BPTLib.GetRangeWeaponRecord(i);
-		break;
-	case equip_armor:
-		pEqu = m_BPTLib.GetArmorRecord(i);
-		break;
-	case equip_helm:
-		pEqu = m_BPTLib.GetHelmRecord(i);
-		break;
-	case equip_boots:
-		pEqu = m_BPTLib.GetBootRecord(i);
-		break;
-	case equip_belt:
-		pEqu = m_BPTLib.GetBeltRecord(i);
-		break;
-	case equip_amulet:
-		pEqu = m_BPTLib.GetAmuletRecord(i);
-		break;
-	case equip_ring:
-		pEqu = m_BPTLib.GetRingRecord(i);
-		break;
-	case equip_cuff:
-		pEqu = m_BPTLib.GetCuffRecord(i);
-		break;
-	case equip_pendant:
-		pEqu = m_BPTLib.GetPendantRecord(i);
-		break;
-	case equip_horse:
-		pEqu = m_BPTLib.GetHorseRecord(i);
-		break;
-	default:
-		break;
-	}
+	KLibOfBPT* pLibrary = GetVersionLibrary(pItem->m_GeneratorParam.nVersion);
+	if (!pLibrary)
+		return FALSE;
+	const KBASICPROP_EQUIPMENT* pEqu =
+		pLibrary->FindEquipment(nDetailType, nParticularType, nLevel);
 	if (NULL == pEqu)
 		{ _ASSERT(FALSE); return FALSE; }
 		// 运行至此的直接原因: 只有n种装备, 而上面 i 的值在[0,n-1]之外
@@ -783,52 +743,15 @@ BOOL KItemGenerator::Gen_ExistEquipment(IN int nDetailType,
 	g_RandomSeed(pItem->m_GeneratorParam.uRandomSeed);
 	if (pnaryMALevel)
 		memcpy(pItem->m_GeneratorParam.nGeneratorLevel, pnaryMALevel, sizeof(int) * 6);
+	pItem->m_GeneratorParam.nVersion = nVersion == -1 ? m_nCurrentVersion : nVersion;
 	int nGameVersion = pItem->m_GeneratorParam.nVersion;
 
 	// 根据入口参数, 确定装备的基本数据
-	const int i = nParticularType * 10 + nLevel - 1;// 本公式由策划定义
-												// 详见SPE 2002年8月31日7:40
-												// email: 基础道具数值表
-												// 等级数据从1开始，所以要减回来
-	const KBASICPROP_EQUIPMENT* pEqu = NULL;
-	switch(nDetailType)
-	{
-	case equip_meleeweapon:
-		pEqu = m_BPTLib.GetMeleeWeaponRecord(i);
-		break;
-	case equip_rangeweapon:
-		pEqu = m_BPTLib.GetRangeWeaponRecord(i);
-		break;
-	case equip_armor:
-		pEqu = m_BPTLib.GetArmorRecord(i);
-		break;
-	case equip_helm:
-		pEqu = m_BPTLib.GetHelmRecord(i);
-		break;
-	case equip_boots:
-		pEqu = m_BPTLib.GetBootRecord(i);
-		break;
-	case equip_belt:
-		pEqu = m_BPTLib.GetBeltRecord(i);
-		break;
-	case equip_amulet:
-		pEqu = m_BPTLib.GetAmuletRecord(i);
-		break;
-	case equip_ring:
-		pEqu = m_BPTLib.GetRingRecord(i);
-		break;
-	case equip_cuff:
-		pEqu = m_BPTLib.GetCuffRecord(i);
-		break;
-	case equip_pendant:
-		pEqu = m_BPTLib.GetPendantRecord(i);
-		break;
-	case equip_horse:
-		pEqu = m_BPTLib.GetHorseRecord(i);
-		break;
-	default:
-		break;
-	}
+	KLibOfBPT* pLibrary = GetVersionLibrary(pItem->m_GeneratorParam.nVersion);
+	if (!pLibrary)
+		return FALSE;
+	const KBASICPROP_EQUIPMENT* pEqu =
+		pLibrary->FindEquipment(nDetailType, nParticularType, nLevel);
 	if (NULL == pEqu)
 		{ _ASSERT(FALSE); return bEC; }
 		// 运行至此的直接原因: 只有n种装备, 而上面 i 的值在[0,n-1]之外
@@ -843,7 +766,7 @@ BOOL KItemGenerator::Gen_ExistEquipment(IN int nDetailType,
 		return TRUE;
 	// 确定装备的魔法属性
 	KItemNormalAttrib	sMA[6];	// 道具的魔法属性
-	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion);
+	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion, pLibrary);
 	if (bEC)
 		pItem->SetAttrib_MA(sMA);
 

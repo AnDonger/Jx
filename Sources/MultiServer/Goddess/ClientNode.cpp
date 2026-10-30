@@ -10,6 +10,7 @@
 
 #include "../../../../Headers/KGmProtocol.h"
 #include "RoleNameFilter.h"
+#include "Utils.h"
 
 using OnlineGameLib::Win32::CCriticalSection;
 using OnlineGameLib::Win32::CPackager;
@@ -284,118 +285,89 @@ void CClientNode::Process()
 
 void CClientNode::_QueryRoleList( const void *pData, size_t dataLength )
 {
-	char szAccountName[_NAME_LENGTH];
-
-	ASSERT( m_pServer && pData && dataLength );
-
-#ifdef CONSOLE_DEBUG
-	cout << "_QueryRoleList::Begin" << endl;
-#endif
-
-	TProcessData *pPlayerList = ( TProcessData * )pData;
-
-	int nRoleListCount = pPlayerList->pDataBuffer[0];
-	int nLen = pPlayerList->nDataLen;
-	unsigned long ulIdentity = pPlayerList->ulIdentity;
-
-	if ( nLen <= 1 || nLen >= _NAME_LENGTH )
+	const TProcessData *request = ( const TProcessData * )pData;
+	size_t header = sizeof( TProcessData ) - 1;
+	if ( dataLength < header + 3 || request->nDataLen != dataLength - header ||
+		request->nDataLen > 32 || request->pDataBuffer[0] < 1 || request->pDataBuffer[0] > 3 )
 	{
-#ifdef CONSOLE_DEBUG
-		cout << "_QueryRoleList::Name is invalid" << endl;
-#endif
-
 		return;
 	}
-
-	memcpy( szAccountName, ( const char * )( &pPlayerList->pDataBuffer[1] ), nLen - 1 );
-	szAccountName[nLen - 1] = '\0';
-
-	/*
-	 * Database
-	 */
-	S3DBI_RoleBaseInfo DBI[4];
-	const size_t s_nStructSize = sizeof( S3DBI_RoleBaseInfo );
-
-#ifdef CONSOLE_DEBUG
-	cout << "_QueryRoleList::GetRoleListOfAccount " << szAccountName << endl;
-#endif
-
-	int nCount = GetRoleListOfAccount( szAccountName, &DBI[0], nRoleListCount );
-
-	CBuffer *pBuffer = m_theAllocator.Allocate();
-
-	TProcessData *pListData = reinterpret_cast< TProcessData * >( const_cast< BYTE * >( pBuffer->GetBuffer() ) );
-
-	pListData->nProtoId = s2c_roleserver_getrolelist_result;
-	pListData->ulIdentity = ulIdentity;
-
-	int nDataLen = nCount * s_nStructSize + 1;
-	pListData->nDataLen = nDataLen;
-	
-	pListData->pDataBuffer[0] = nCount;
-	memcpy( &pListData->pDataBuffer[1], &DBI[0], nDataLen );
-
-	int nUsedLen = sizeof( TProcessData ) - 1 + nDataLen;
-	pBuffer->Use( nUsedLen );
-
-	m_pServer->SendData( m_nIndentity, ( const void * )pListData, nUsedLen );
-
-	SAFE_RELEASE( pBuffer );	
-
-#ifdef CONSOLE_DEBUG
-	cout << "_QueryRoleList::end" << endl;
-#endif
-}
-void CClientNode::_CreateRole( const void *pData, size_t dataLength )
-{
-	ASSERT( m_pServer && pData && dataLength );
-
-#ifdef CONSOLE_DEBUG
-	cout << "_CreateRole::Begin" << endl;
-#endif
-
-	TProcessData *pPD = ( TProcessData * )pData;
-
-	int nResult = 0;
-
-	{{
-	extern CRoleNameFilter g_fltRoleName;
-
-	TRoleData* pRoleData = (TRoleData*)(pPD->pDataBuffer + 1);
-
-	if (pRoleData->BaseInfo.szName[0])
+	char account[32];
+	ZeroMemory( account, sizeof( account ) );
+	memcpy( account, request->pDataBuffer + 1, request->nDataLen - 1 );
+	CBuffer *buffer = m_theAllocator.Allocate();
+	TProcessData *response = ( TProcessData * )const_cast< BYTE * >( buffer->GetBuffer() );
+	ZeroMemory( response, sizeof( *response ) );
+	response->nProtoId = s2c_roleserver_getrolelist_result;
+	response->ulIdentity = request->ulIdentity;
+	int count = 0;
+	size_t recordSize = 0;
+	if ( request->bLeave )
 	{
-		for (size_t pos = sizeof(pRoleData->BaseInfo.szName) - 1; pos >= 1; pos--)
+		S3DBI_RoleBaseInfoCurrent roles[3];
+		count = GetRoleListCurrentOfAccount( account, roles, request->pDataBuffer[0] );
+		recordSize = sizeof( roles[0] );
+		if ( count > 0 )
 		{
-			if (!pRoleData->BaseInfo.szName[pos])
-				break;
-		}
-
-
-size_t pos; // Fixed By MrChucong@gmail.com
-		if (pos >= 1)
-		{
-			if (g_fltRoleName.IsTextPass(pRoleData->BaseInfo.szName))
-				nResult = SaveRoleInfo( &pPD->pDataBuffer[1], NULL, TRUE );
-			else
-				nResult = -1;
+			memcpy( response->pDataBuffer + 1, roles, count * recordSize );
 		}
 	}
-	}}
-
-	TProcessData Info;
-
-	Info.nProtoId = s2c_roleserver_createrole_result;
-	Info.ulIdentity = pPD->ulIdentity;
-	Info.nDataLen = 1;
-	Info.pDataBuffer[0] = ( nResult == 1 ) ? 1 : -1;
-
-	m_pServer->SendData( m_nIndentity, ( const void * )&Info, sizeof( Info ) );
-
-#ifdef CONSOLE_DEBUG
-	cout << "_CreateRole::End" << endl;
-#endif
+	else
+	{
+		S3DBI_RoleBaseInfo roles[3];
+		count = GetRoleListOfAccount( account, roles, request->pDataBuffer[0] );
+		recordSize = sizeof( roles[0] );
+		if ( count > 0 )
+		{
+			memcpy( response->pDataBuffer + 1, roles, count * recordSize );
+		}
+	}
+	response->pDataBuffer[0] = count;
+	response->nDataLen = 1 + ( count > 0 ? count * recordSize : 0 );
+	m_pServer->SendData( m_nIndentity, response, header + response->nDataLen );
+	SAFE_RELEASE( buffer );
 }
+
+
+void CClientNode::_CreateRole( const void *pData, size_t dataLength )
+{
+	if ( !pData || dataLength < sizeof( TProcessData ) - 1 )
+	{
+		return;
+	}
+	const TProcessData *request = ( const TProcessData * )pData;
+	int result = 0;
+	size_t header = sizeof( TProcessData ) - 1;
+	if ( dataLength >= sizeof( TProcessData ) + sizeof( TRoleData ) - 1 &&
+		request->nDataLen == dataLength - header )
+	{
+		const TRoleData *role = ( const TRoleData * )( request->pDataBuffer + 1 );
+		size_t extra = request->bLeave ? 1 : 0;
+		if ( role->dwDataLen >= sizeof( TRoleData ) - 1 &&
+			role->dwDataLen + 1 + extra == request->nDataLen &&
+			memchr( role->BaseInfo.szName, 0, sizeof( role->BaseInfo.szName ) ) &&
+			role->BaseInfo.szName[0] )
+		{
+			extern CRoleNameFilter g_fltRoleName;
+			if ( g_fltRoleName.IsTextPass( role->BaseInfo.szName ) )
+			{
+				int portrait = request->bLeave ? ( BYTE )request->pDataBuffer[1 + role->dwDataLen] : 0;
+				result = SaveRoleInfo( ( char * )role, NULL, TRUE, portrait );
+			}
+		}
+	}
+	TProcessData response;
+	ZeroMemory( &response, sizeof( response ) );
+	response.nProtoId = s2c_roleserver_createrole_result;
+	response.ulIdentity = request->ulIdentity;
+	response.nDataLen = 1;
+	response.pDataBuffer[0] = result == 1 ? 1 : -1;
+	m_pServer->SendData( m_nIndentity, &response, sizeof( response ) );
+	OnlineGameLib::Win32::TraceNetworkData( "stage=role_create_database result=" +
+		OnlineGameLib::Win32::ToString( result ), ( const BYTE * )&response, sizeof( response ) );
+}
+
+
 void CClientNode::_SaveRoleInfo( const void *pData, size_t dataLength )
 {
 	ASSERT( m_pServer && pData && dataLength );
@@ -403,8 +375,18 @@ void CClientNode::_SaveRoleInfo( const void *pData, size_t dataLength )
 	cout << "_SaveRoleInfo::Begin" << endl;
 #endif
 
+	if ( !pData || dataLength < sizeof( TProcessData ) - 1 + sizeof( TRoleData ) - 1 )
+	{
+		return;
+	}
 	TProcessData *pPD = ( TProcessData * )pData;
-	
+	TRoleData *pDataRole = ( TRoleData * )pPD->pDataBuffer;
+	if ( pPD->nDataLen != dataLength - ( sizeof( TProcessData ) - 1 ) ||
+		pDataRole->dwDataLen != pPD->nDataLen ||
+		!memchr( pDataRole->BaseInfo.szName, 0, 32 ) )
+	{
+		return;
+	}
 	int nResult = 0;
 	TRoleData* pRole = (TRoleData*)(&pPD->pDataBuffer[0]);
 	char szName[32];
@@ -443,56 +425,44 @@ void CClientNode::_SaveRoleInfo( const void *pData, size_t dataLength )
 }
 void CClientNode::_DelRole( const void *pData, size_t dataLength )
 {
-	ASSERT( m_pServer && pData && dataLength );
-
-#ifdef CONSOLE_DEBUG
-	cout << "_DelRole::Begin" << endl;
-#endif
-
-	TProcessData *pRoleInfo = ( TProcessData * )pData;
-
-	char szRoleName[_NAME_LENGTH];
-
-	int nDataLen = pRoleInfo->nDataLen;
-	nDataLen = ( nDataLen > _NAME_LENGTH ) ? _NAME_LENGTH : nDataLen;
-
-	int result = -1;
-
-	if ( nDataLen > 0 )
+	if ( !pData || dataLength < sizeof( TProcessData ) - 1 )
 	{
-		memcpy( szRoleName, &pRoleInfo->pDataBuffer[0], nDataLen );
-		szRoleName[nDataLen] = '\0';
-
-#ifdef CONSOLE_DEBUG
-		cout << "_DelRole::DeleteRole " << szRoleName << endl;
-#endif
-
-		if ( DeleteRole( szRoleName ) )
+		return;
+	}
+	const TProcessData *request = ( const TProcessData * )pData;
+	bool success = false;
+	size_t header = sizeof( TProcessData ) - 1;
+	if ( dataLength >= header && request->nDataLen == dataLength - header )
+	{
+		if ( request->bLeave && request->nDataLen == sizeof( TDBRoleRequestCurrent ) )
 		{
-			result = 1;
+			const TDBRoleRequestCurrent *role = ( const TDBRoleRequestCurrent * )request->pDataBuffer;
+			if ( memchr( role->szRoleName, 0, 32 ) && memchr( role->szAccountName, 0, 32 ) &&
+				!IsRoleLock( ( char * )role->szRoleName ) )
+			{
+				success = DeleteRole( role->szRoleName, role->szAccountName );
+			}
 		}
-		else
+		else if ( !request->bLeave && request->nDataLen > 0 && request->nDataLen < 32 )
 		{
-			result = -1;
+			char name[32];
+			ZeroMemory( name, sizeof( name ) );
+			memcpy( name, request->pDataBuffer, request->nDataLen );
+			if ( !IsRoleLock( name ) )
+			{
+				success = DeleteRole( name );
+			}
 		}
 	}
-
-	if ( pRoleInfo->ulIdentity >= 0 )
-	{
-		TProcessData Info;
-		
-		Info.nProtoId = s2c_roleserver_deleterole_result;
-		Info.ulIdentity = pRoleInfo->ulIdentity;
-		Info.nDataLen = 1;
-		Info.pDataBuffer[0] = result;
-		
-		m_pServer->SendData( m_nIndentity, ( const void * )&Info, sizeof( Info ) );	
-	}
-
-#ifdef CONSOLE_DEBUG	
-	cout << "_DelRole::End" << endl;
-#endif
+	TProcessData response;
+	ZeroMemory( &response, sizeof( response ) );
+	response.nProtoId = s2c_roleserver_deleterole_result;
+	response.ulIdentity = request->ulIdentity;
+	response.nDataLen = 1;
+	response.pDataBuffer[0] = success ? 1 : -1;
+	m_pServer->SendData( m_nIndentity, &response, sizeof( response ) );
 }
+
 
 //for Relay System and GM [wxb 2003-7-22]
 void CClientNode::_RelayExtend( const void *pData, size_t dataLength )
@@ -549,82 +519,77 @@ void CClientNode::_RelayExtend( const void *pData, size_t dataLength )
 
 void CClientNode::_GetRoleInfo( const void *pData, size_t dataLength )
 {
-	ASSERT( m_pServer && pData && dataLength );
-
-#ifdef CONSOLE_DEBUG
-	cout << "_GetRoleInfo::Begin" << endl;
-#endif
-
-	TProcessData *pRoleInfo = ( TProcessData * )pData;
-
-	char szRoleName[_NAME_LENGTH];
-
-	int nDataLen = pRoleInfo->nDataLen;
-	nDataLen = ( nDataLen > _NAME_LENGTH ) ? _NAME_LENGTH : nDataLen;
-
-	CBuffer *pBuffer = m_theAllocator.Allocate();
-		
-	TProcessData *pRoleData = reinterpret_cast< TProcessData * >( const_cast< BYTE * >( pBuffer->GetBuffer() ) );
-
-	int nUsedLength = sizeof( TProcessData );
-
-	size_t nIdentity = pRoleInfo->ulIdentity;
-	
-	pRoleData->nProtoId = s2c_roleserver_getroleinfo_result;
-	pRoleData->pDataBuffer[0] = -1;
-	pRoleData->nDataLen = 1;	
-	pRoleData->ulIdentity = nIdentity;
-
-	if ( nDataLen > 0 )
+	if ( !pData || dataLength < sizeof( TProcessData ) - 1 )
 	{
-		memcpy( szRoleName, &pRoleInfo->pDataBuffer[0], nDataLen );
-		szRoleName[nDataLen] = '\0';
-		
-		int result = -1;
-
-#ifdef CONSOLE_DEBUG
-		cout << "_GetRoleInfo::GetRoleInfo " << szRoleName << endl;
-#endif
-
-		int nRoleInfoLen = 0;
-		
-		if (!IsRoleLock(szRoleName))
-			GetRoleInfo( &pRoleData->pDataBuffer[1], szRoleName, nRoleInfoLen );
-
-		if ( nRoleInfoLen > 0 )
+		return;
+	}
+	const TProcessData *request = ( const TProcessData * )pData;
+	char name[32];
+	char account[32];
+	ZeroMemory( name, sizeof( name ) );
+	ZeroMemory( account, sizeof( account ) );
+	bool valid = false;
+	size_t header = sizeof( TProcessData ) - 1;
+	if ( dataLength >= header && request->nDataLen == dataLength - header )
+	{
+		if ( request->bLeave && request->nDataLen == sizeof( TDBRoleRequestCurrent ) )
 		{
-			pRoleData->pDataBuffer[0] = 1;
-			pRoleData->nDataLen = nRoleInfoLen + 1;
-
-			nUsedLength = sizeof( TProcessData ) + nRoleInfoLen;
+			const TDBRoleRequestCurrent *role = ( const TDBRoleRequestCurrent * )request->pDataBuffer;
+			if ( memchr( role->szRoleName, 0, 32 ) && memchr( role->szAccountName, 0, 32 ) &&
+				role->szAccountName[0] )
+			{
+				memcpy( name, role->szRoleName, sizeof( name ) );
+				memcpy( account, role->szAccountName, sizeof( account ) );
+				valid = name[0] != 0;
+			}
+		}
+		else if ( !request->bLeave && request->nDataLen > 0 && request->nDataLen < sizeof( name ) )
+		{
+			memcpy( name, request->pDataBuffer, request->nDataLen );
+			valid = name[0] != 0;
 		}
 	}
-
-	pBuffer->Use( nUsedLength );
-
-	m_theSend.AddData( s2c_roleserver_getroleinfo_result, pBuffer->GetBuffer(), nUsedLength, nIdentity );
-
-	CBuffer *pPack = m_theSend.GetHeadPack( s2c_roleserver_getroleinfo_result );
-
-	while ( pPack )
+	CBuffer *buffer = m_theAllocator.Allocate();
+	TProcessData *response = ( TProcessData * )const_cast< BYTE * >( buffer->GetBuffer() );
+	ZeroMemory( response, sizeof( *response ) );
+	response->nProtoId = s2c_roleserver_getroleinfo_result;
+	response->ulIdentity = request->ulIdentity;
+	response->pDataBuffer[0] = -1;
+	response->nDataLen = 1;
+	if ( valid && !IsRoleLock( name ) )
 	{
-		m_pServer->SendData( m_nIndentity, ( const void * )pPack->GetBuffer(), pPack->GetUsed() );
-
-		SAFE_RELEASE( pPack );
-
-		pPack = m_theSend.GetNextPack( s2c_roleserver_getroleinfo_result );
+		int length = 0;
+		BYTE portrait = 0;
+		GetRoleInfo( ( char * )response->pDataBuffer + 1, name, length, &portrait );
+		if ( length > 0 )
+		{
+			const TRoleData *role = ( const TRoleData * )( response->pDataBuffer + 1 );
+			if ( !request->bLeave || !stricmp( role->BaseInfo.caccname, account ) )
+			{
+				response->pDataBuffer[0] = 1;
+				response->nDataLen = length + 1;
+				if ( request->bLeave )
+				{
+					// Current role loading carries portrait metadata outside the saved RoleData ABI.
+					response->pDataBuffer[length + 1] = portrait;
+					response->nDataLen += sizeof( portrait );
+				}
+			}
+		}
 	}
-
+	size_t length = header + response->nDataLen;
+	m_theSend.AddData( s2c_roleserver_getroleinfo_result, buffer->GetBuffer(), length, request->ulIdentity );
+	CBuffer *pack = m_theSend.GetHeadPack( s2c_roleserver_getroleinfo_result );
+	while ( pack )
+	{
+		m_pServer->SendData( m_nIndentity, pack->GetBuffer(), pack->GetUsed() );
+		SAFE_RELEASE( pack );
+		pack = m_theSend.GetNextPack( s2c_roleserver_getroleinfo_result );
+	}
 	m_theSend.DelData( s2c_roleserver_getroleinfo_result );
-
-	SAFE_RELEASE( pPack );
-
-	SAFE_RELEASE( pBuffer );
-
-#ifdef CONSOLE_DEBUG
-	cout << "_GetRoleInfo::End" << endl;
-#endif
+	SAFE_RELEASE( buffer );
 }
+
 
 void CClientNode::_GetGameStat( const void *pData, size_t dataLength )
 {//发送游戏统计数据(By Fellow,2003.7.22)

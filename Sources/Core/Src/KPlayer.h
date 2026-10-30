@@ -117,6 +117,8 @@ public:
 	DWORD			m_dwLoginTime;
 //	DWORD			m_uLastPingTime;
 	char			m_AccoutName[32];				
+	int				m_nWeightMax;
+	BYTE			m_btPortrait;
 	void*			m_pStatusLoadPlayerInfo;	//加载玩家信息时用
 	BYTE*			m_pCurStatusOffset;			//二进制时，记录读到指针位置了
 	BOOL			m_bFinishLoading;			//完成加载

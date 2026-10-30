@@ -162,6 +162,18 @@ DECLARE_INTERFACE_( IServer, IUnknown )
 
 
 /*
+ * Current game clients derive their transport keys from ACCOUNT_BEGIN.
+ * Account and inter-server connections retain the original IServer behavior.
+ */
+DEFINE_GUID( IID_IGameClientProtocol,
+0xc02ff89a, 0xe427, 0x4cc4, 0x91, 0x4e, 0x19, 0x1b, 0x24, 0xeb, 0xb3, 0x86 );
+
+DECLARE_INTERFACE_( IGameClientProtocol, IUnknown )
+{
+	STDMETHOD( EnableGameClientProtocol )() PURE;
+};
+
+/*
  * Antitype : IServerFactory Interface
  */
 // {A4984B66-8CDE-4752-9BEE-DACC06A63548}

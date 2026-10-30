@@ -180,6 +180,8 @@ private:
 	bool m_bCurrentLogin;
 	BYTE m_LoginPassword[64];
 	OnlineGameLib::Win32::_tstring	m_sRoleName;
+	OnlineGameLib::Win32::_tstring	m_sPendingRoleName;
+	vector< OnlineGameLib::Win32::_tstring > m_RoleNames;
 
     bool    m_bUseSuperPassword;
     OnlineGameLib::Win32::_tstring	m_sSuperPassword;
@@ -302,12 +304,14 @@ protected:
 
 	bool _VerifyAccount_ToPlayer( UINT nQueryResult , unsigned long nLeftTime);
 	bool _QueryRoleInfo_ToDBRole( const char *pRoleName );
+	bool _OwnsRole( const char *pRoleName );
+	void _SendRoleResult( bool bSuccess, BYTE nReason = 0 );
 	bool _SyncRoleInfo_ToGameServer( const void *pData, size_t dataLength );
 
 	bool _CreateNewPlayer_ToDBRole( const char *pRoleName,
 		int nRoleSex /* male or female */, 
 		int nRoleClass, 
-		unsigned short nMapID );
+		unsigned short nMapID, BYTE nPortrait );
 
 	UINT _DeleteRole_ToDBRole( const void *pData, size_t dataLength );
 

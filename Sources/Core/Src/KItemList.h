@@ -62,6 +62,8 @@ public:
 	KItemList();
 	~KItemList();
 	int			Init(int nIdx);
+	static int ClientEquipmentSlotToPart(int nSlot);
+	static int EquipmentPartToClientSlot(int nPart);
 	int			GetEquipment(int nIdx) { return m_EquipItem[nIdx]; }
 	int			GetActiveAttribNum(int nIdx);					// nIdx指游戏世界中道具数组的编号
 	int			GetWeaponType();								// 取得武器的类型，近程武器(equip_meleeweapon)还是远程武器(equip_rangeweapon)

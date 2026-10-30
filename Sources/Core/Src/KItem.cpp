@@ -434,9 +434,9 @@ void KItem::operator = (const KBASICPROP_QUEST& sData)
 #endif
 	ZeroMemory(m_aryBaseAttrib, sizeof(m_aryBaseAttrib));
 	// 赋值: 需求属性部分: 无
-	ZeroMemory(m_aryRequireAttrib, sizeof(m_aryBaseAttrib));
+	ZeroMemory(m_aryRequireAttrib, sizeof(m_aryRequireAttrib));
 	// 赋值: 魔法属性部分: 无
-	ZeroMemory(m_aryMagicAttrib, sizeof(m_aryBaseAttrib));
+	ZeroMemory(m_aryMagicAttrib, sizeof(m_aryMagicAttrib));
 #ifndef _SERVER
 	m_Image.Color.Color_b.a = 255;
 	m_Image.nFrame = 0;
@@ -468,9 +468,9 @@ void KItem::operator = (const KBASICPROP_TOWNPORTAL& sData)
 #endif
 	ZeroMemory(m_aryBaseAttrib, sizeof(m_aryBaseAttrib));
 	// 赋值: 需求属性部分: 无
-	ZeroMemory(m_aryRequireAttrib, sizeof(m_aryBaseAttrib));
+	ZeroMemory(m_aryRequireAttrib, sizeof(m_aryRequireAttrib));
 	// 赋值: 魔法属性部分: 无
-	ZeroMemory(m_aryMagicAttrib, sizeof(m_aryBaseAttrib));
+	ZeroMemory(m_aryMagicAttrib, sizeof(m_aryMagicAttrib));
 #ifndef _SERVER
 	m_Image.Color.Color_b.a = 255;
 	m_Image.nFrame = 0;
@@ -723,7 +723,7 @@ void KItem::GetDesc(char* pszMsg, bool bShowPrice, int nPriceScale, int nActiveA
 	strcat(pszMsg, m_CommonAttrib.szIntro);
 	strcat(pszMsg, "\n");
 	int i;//tuannd
-	for ( i = 0; i < 7; i++)
+	for ( i = 0; i < sizeof(m_aryBaseAttrib) / sizeof(m_aryBaseAttrib[0]); i++)
 	{
 		if (!m_aryBaseAttrib[i].nAttribType)
 		{
@@ -801,7 +801,7 @@ void KItem::GetDesc(char* pszMsg, bool bShowPrice, int nPriceScale, int nActiveA
 
 int KItem::GetMaxDurability()
 {
-	for (int i = 0; i < 7; i++)
+	for (int i = 0; i < sizeof(m_aryBaseAttrib) / sizeof(m_aryBaseAttrib[0]); i++)
 	{
 		if (m_aryBaseAttrib[i].nAttribType == magic_durability_v)
 		{
