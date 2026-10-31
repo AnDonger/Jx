@@ -90,6 +90,7 @@ public:
 	int			RevivalAllNpc();//将地图上所有的Npc包括已死亡的Npc全部恢复成原始状态
 	void		BroadCast(const char* pBuffer, size_t uSize);
 	BOOL		LoadMap(int nIdx);
+	BOOL		LoadFixedNpc();
 	BOOL		LoadSupplementNpc();
 	void		LoadObject(char* szPath, char* szFile);
 	void		NpcChangeRegion(int nSrcRegionIdx, int nDesRegionIdx, int nNpcIdx);

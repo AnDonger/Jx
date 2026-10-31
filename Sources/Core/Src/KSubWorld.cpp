@@ -496,6 +496,152 @@ BYTE KSubWorld::GetBarrier(int nMpsX, int nMpsY)
 }
 
 #ifdef _SERVER
+BOOL KSubWorld::LoadFixedNpc()
+{
+	const char *pszFile = "\\ServerConfig\\FixedNpcs.ini";
+	KIniFile IniFile;
+	if (!IniFile.Load(pszFile))
+		return TRUE;
+
+	char szSection[32];
+	sprintf(szSection, "%d", m_SubWorldID);
+	int nEnabled, nCount;
+	IniFile.GetInteger(szSection, "Enabled", 0, &nEnabled);
+	if (!nEnabled)
+		return TRUE;
+	IniFile.GetInteger(szSection, "Count", -1, &nCount);
+	if (nCount < 0 || nCount >= MAX_NPC)
+	{
+		printf("[FixedNpc] Invalid count for map %d: %s.\n", m_SubWorldID, pszFile);
+		return FALSE;
+	}
+	if (!nCount)
+		return TRUE;
+
+	KMemClass Data, Indices;
+	KSPNpc *pCells = (KSPNpc *)Data.Alloc(nCount * sizeof(KSPNpc));
+	int *pIndices = (int *)Indices.Alloc(nCount * sizeof(int));
+	if (!pCells || !pIndices)
+		return FALSE;
+	memset(pCells, 0, nCount * sizeof(KSPNpc));
+	memset(pIndices, 0, nCount * sizeof(int));
+
+	// 先验证整批固定NPC，再创建实体；补充配置不改变原生区域数据。
+	for (int i = 0; i < nCount; i++)
+	{
+		char szKey[32], szValue[128], szName[128], cExtra;
+		int nTemplate, nLevel, nX, nY, nKind;
+		sprintf(szKey, "Npc%03d", i + 1);
+		if (!IniFile.GetString(szSection, szKey, "", szValue, sizeof(szValue)) ||
+			sscanf(szValue, "%d,%d,%d,%d %c", &nTemplate, &nLevel, &nX, &nY, &cExtra) != 4 ||
+			nTemplate < 0 || nTemplate >= MAX_NPCSTYLE ||
+			nTemplate >= g_NpcSetting.GetHeight() - 1 ||
+			nLevel < 1 || nLevel >= MAX_NPC_LEVEL ||
+			nX < 0 || nY < 0)
+		{
+			printf("[FixedNpc] Invalid map %d record %s: %s.\n", m_SubWorldID, szKey, pszFile);
+			return FALSE;
+		}
+		g_NpcSetting.GetInteger(nTemplate + 2, "Kind", -1, &nKind);
+		if (nKind != kind_dialoger)
+		{
+			printf("[FixedNpc] Map %d record %s is not a dialog NPC template.\n", m_SubWorldID, szKey);
+			return FALSE;
+		}
+		sprintf(szKey, "Name%03d", i + 1);
+		if (!IniFile.GetString(szSection, szKey, "", szName, sizeof(szName)) ||
+			!szName[0] || strlen(szName) >= sizeof(pCells[i].szName))
+		{
+			printf("[FixedNpc] Invalid name for map %d record %s.\n", m_SubWorldID, szKey);
+			return FALSE;
+		}
+
+		KSPNpc& Cell = pCells[i];
+		Cell.nTemplateID = nTemplate;
+		Cell.nLevel = (short)nLevel;
+		Cell.nPositionX = nX;
+		Cell.nPositionY = nY;
+		Cell.shKind = kind_dialoger;
+		strcpy(Cell.szName, szName);
+		int nCamp, nSeries;
+		g_NpcSetting.GetInteger(nTemplate + 2, "Camp", 0, &nCamp);
+		g_NpcSetting.GetInteger(nTemplate + 2, "Series", 0, &nSeries);
+		Cell.cCamp = (BYTE)nCamp;
+		Cell.cSeries = (BYTE)nSeries;
+		for (int j = 0; j < i; j++)
+		{
+			if (pCells[j].nTemplateID == nTemplate && !strcmp(pCells[j].szName, szName) &&
+				abs(pCells[j].nPositionX - nX) <= 32 && abs(pCells[j].nPositionY - nY) <= 32)
+			{
+				printf("[FixedNpc] Duplicate configuration site for map %d record %s.\n", m_SubWorldID, szKey);
+				return FALSE;
+			}
+		}
+	}
+
+	int nUsed = 0;
+	int nSkipped = 0;
+	for (int nNpc = NpcSet.GetNextIdx(0); nNpc; nNpc = NpcSet.GetNextIdx(nNpc))
+	{
+		nUsed++;
+		if (Npc[nNpc].m_SubWorldIndex != m_nIndex || Npc[nNpc].m_Kind != kind_dialoger)
+			continue;
+		int nX, nY;
+		Npc[nNpc].GetMpsPos(&nX, &nY);
+		for (int i = 0; i < nCount; i++)
+		{
+			if (pIndices[i] == -1)
+				continue;
+			KSPNpc& Cell = pCells[i];
+			// 同名可以有多个站点，只跳过与已有原生实体相同的地点。
+			if (Npc[nNpc].m_NpcSettingIdx == Cell.nTemplateID &&
+				!strcmp(Npc[nNpc].Name, Cell.szName) &&
+				abs(nX - Cell.nPositionX) <= 128 && abs(nY - Cell.nPositionY) <= 256)
+			{
+				pIndices[i] = -1;
+				nSkipped++;
+			}
+		}
+	}
+	// 原生实体保留原位，仅检查本次实际新增站点的障碍。
+	for (int i = 0; i < nCount; i++)
+	{
+		if (pIndices[i] != -1 && GetBarrier(pCells[i].nPositionX, pCells[i].nPositionY) != Obstacle_NULL)
+		{
+			printf("[FixedNpc] Blocked site for map %d record Npc%03d.\n", m_SubWorldID, i + 1);
+			return FALSE;
+		}
+	}
+	if (nCount - nSkipped > MAX_NPC - 1 - nUsed)
+	{
+		printf("[FixedNpc] Insufficient NPC slots for map %d.\n", m_SubWorldID);
+		return FALSE;
+	}
+
+	int nLoaded = 0;
+	for (int i = 0; i < nCount; i++)
+	{
+		if (pIndices[i] == -1)
+			continue;
+		pIndices[i] = NpcSet.Add(m_nIndex, &pCells[i]);
+		if (!pIndices[i])
+		{
+			for (int j = 0; j < i; j++)
+			{
+				if (pIndices[j] > 0)
+					NpcSet.Remove(pIndices[j]);
+			}
+			printf("[FixedNpc] Map %d creation failed; new entries rolled back.\n", m_SubWorldID);
+			return FALSE;
+		}
+		nLoaded++;
+	}
+	printf("[FixedNpc] Map %d: %d/%d fixed NPCs loaded, %d existing sites retained: %s.\n",
+		m_SubWorldID, nLoaded, nCount, nSkipped, pszFile);
+	return TRUE;
+}
+
+
 BOOL KSubWorld::LoadSupplementNpc()
 {
 	const char *pszFile = "\\ServerConfig\\MonsterSpawns.ini";
@@ -691,6 +837,9 @@ BOOL KSubWorld::LoadMap(int nId)
 				nLoadedRegions++;
 		}
 	}
+
+	if (nLoadedRegions && !LoadFixedNpc())
+		printf("[FixedNpc] Supplemental fixed NPC data rejected for map %d.\n", nId);
 
 	if (nLoadedRegions && !LoadSupplementNpc())
 		printf("[Spawn] Supplemental monster data rejected for map %d.\n", nId);
