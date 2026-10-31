@@ -3432,13 +3432,17 @@ void KNpc::NormalSync()
 
 	NpcSync.ProtocolType = (BYTE)s2c_syncnpcmin;
 	NpcSync.ID = m_dwID;
-	if (m_CurrentLife > 0 && m_CurrentLifeMax > 0)
+	// 当前客户端的增量生命比例以2048为分母，11位全零表示满血。
+	int nLifePerCent = 0;
+	if (m_CurrentLife > 0 && m_CurrentLifeMax > 0 && m_CurrentLife < m_CurrentLifeMax)
 	{
-		NpcSync.LifePerCent = (BYTE)((m_CurrentLife * 2047LL) / m_CurrentLifeMax);
-		NpcSync.Camp = (BYTE)(((m_CurrentLife * 2047LL / m_CurrentLifeMax) >> 3) & 0xE0);
+		// 向上取整，避免客户端还原时再次截断；受伤比例不能进入满血编码。
+		nLifePerCent = (int)((m_CurrentLife * 2048LL + m_CurrentLifeMax - 1) / m_CurrentLifeMax);
+		if (nLifePerCent >= 2048)
+			nLifePerCent = 2047;
 	}
-	else
-		NpcSync.LifePerCent = 0;
+	NpcSync.LifePerCent = (BYTE)nLifePerCent;
+	NpcSync.Camp = (BYTE)((nLifePerCent >> 3) & 0xE0);
 
 	NpcSync.MapX = nMpsX;
 	NpcSync.MapY = nMpsY;
