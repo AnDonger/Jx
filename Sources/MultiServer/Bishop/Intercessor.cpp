@@ -314,6 +314,18 @@ bool CIntercessor::StartupNetwork()
 
 	if ( m_pPlayerServer )
 	{
+		IClientTls *pClientTls = NULL;
+		if ( FAILED( m_pPlayerServer->QueryInterface( IID_IClientTls,
+			reinterpret_cast< void ** >( &pClientTls ) ) ) )
+		{
+			return false;
+		}
+		HRESULT hClientTls = pClientTls->EnableClientTls();
+		pClientTls->Release();
+		if ( FAILED( hClientTls ) )
+		{
+			return false;
+		}
 		m_pPlayerServer->Startup();
 
 		m_pPlayerServer->RegisterMsgFilter( reinterpret_cast< void * >( this ), PlayerEventNotify );

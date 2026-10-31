@@ -15,6 +15,7 @@
 #include "SocketServer.h"
 #include "tstring.h"
 #include "Event.h"
+#include "ClientTls.h"
 #include ".\Interface\IServer.h"
 
 #include <map>
@@ -25,7 +26,7 @@
 /*
  * class CIOCPServer
  */
-class CIOCPServer : public IServer, public IGameClientProtocol, public OnlineGameLib::Win32::CSocketServer
+class CIOCPServer : public IServer, public IGameClientProtocol, public IClientTls, public OnlineGameLib::Win32::CSocketServer
 {
 public:
 
@@ -34,6 +35,7 @@ public:
 	 */
 
 	STDMETHOD( EnableGameClientProtocol )();
+	STDMETHOD( EnableClientTls )();
 
 	STDMETHOD( Startup )( );
 	STDMETHOD( Cleanup )( );
@@ -123,6 +125,7 @@ private:
 	
 	LONG	m_lRefCount;
 	bool	m_bGameClientProtocol;
+	CClientTlsContext *m_pTlsContext;
 
 	OnlineGameLib::Win32::CIOBuffer::Allocator	m_theCacheAllocator;
 
@@ -149,6 +152,8 @@ private:
 		OnlineGameLib::Win32::CCriticalSection			csWriteAction;
 		
 		OnlineGameLib::Win32::CIOBuffer					*pWriteBuffer;
+
+		CClientTlsConnection *pTls;
 
         unsigned    uKeyMode;
 		unsigned	uServerKey;
@@ -208,6 +213,10 @@ private:
 		TASK_STACK		m_theTaskStack;
 
 	};
+
+	bool WriteTransport( Socket *pSocket, const BYTE *pData, size_t length );
+	bool WriteWire( Socket *pSocket, const BYTE *pData, size_t length );
+	void CheckTlsTimeouts();
 
 	bool _SendDataEx( LPCLIENT_NODE pNode,
 			const void * const	pData,

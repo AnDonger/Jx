@@ -173,6 +173,16 @@ DECLARE_INTERFACE_( IGameClientProtocol, IUnknown )
 	STDMETHOD( EnableGameClientProtocol )() PURE;
 };
 
+
+/* TLS is enabled explicitly for public client listeners only. */
+DEFINE_GUID( IID_IClientTls,
+0x50180ce7, 0xd78b, 0x4b10, 0x9b, 0x79, 0x90, 0xac, 0xab, 0xe1, 0x87, 0xd4 );
+
+DECLARE_INTERFACE_( IClientTls, IUnknown )
+{
+	STDMETHOD( EnableClientTls )() PURE;
+};
+
 /*
  * Antitype : IServerFactory Interface
  */

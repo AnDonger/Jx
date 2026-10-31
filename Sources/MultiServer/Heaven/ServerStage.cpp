@@ -180,6 +180,7 @@ CIOCPServer::CIOCPServer( size_t nPlayerMaxCount,
 		, m_theCacheAllocator( bufferSize_Cache, maxFreeBuffers_Cache )
 		, m_lRefCount( 0 )
 		, m_bGameClientProtocol( false )
+		, m_pTlsContext( NULL )
 		, m_nPlayerMaxCount( nPlayerMaxCount )
 		, m_nPrecision( nPrecision )
 		, m_nNetworkBufferMaxLen( bufferSize - 32 /* sizeof( protocol of network ) */ )
@@ -209,6 +210,7 @@ CIOCPServer::CIOCPServer( size_t nPlayerMaxCount,
 		LPCLIENT_NODE pCN = new CLIENT_NODE;
 
 		pCN->pSocket = NULL;
+		pCN->pTls = NULL;
 		
 		pCN->pRecvBuffer	= m_theCacheAllocator.Allocate();
 		pCN->pReadBuffer	= m_theCacheAllocator.Allocate();
@@ -270,6 +272,8 @@ CIOCPServer::~CIOCPServer()
 			
 			if ( pCN )
 			{
+				delete pCN->pTls;
+				pCN->pTls = NULL;
 				pCN->pRecvBuffer->Release();
 				pCN->pReadBuffer->Release();
 				
@@ -289,6 +293,7 @@ CIOCPServer::~CIOCPServer()
 	{
 		::TerminateThread( m_hHelperThread, 0L );
 	}
+	delete m_pTlsContext;
 }
 
 STDMETHODIMP CIOCPServer::Startup( )
@@ -519,7 +524,7 @@ STDMETHODIMP CIOCPServer::SendPackToClient( const unsigned long &ulnClientID /* 
 				
 				if ( ok )
 				{
-					pCN->pSocket->Write( pBuffer, true );
+					WriteTransport( pCN->pSocket, pBuffer->GetBuffer(), pBuffer->GetUsed() );
 				}
 				
 				pBuffer->Release();			
@@ -604,7 +609,7 @@ STDMETHODIMP CIOCPServer::SendData( const unsigned long &ulnClientID,
                     &pCN->uServerKey
 				);
 
-				pCN->pSocket->Write( pBuffer, true );
+				WriteTransport( pCN->pSocket, pBuffer->GetBuffer(), pBuffer->GetUsed() );
 				
 				pBuffer->Release();			
 				
@@ -680,7 +685,7 @@ bool CIOCPServer::_SendDataEx( LPCLIENT_NODE pNode,
 				&pNode->uServerKey
 				);
 			
-			pNode->pSocket->Write( pBuffer, true );
+			WriteTransport( pNode->pSocket, pBuffer->GetBuffer(), pBuffer->GetUsed() );
 			
 			pBuffer->Release();			
 			
@@ -763,7 +768,6 @@ STDMETHODIMP CIOCPServer::ShutdownClient( const unsigned long &ulnClientID )
 			if ( pCN->pSocket )
 			{
 				pCN->pSocket->AbortiveClose();
-				pCN->pSocket = NULL;
 			}
 
 			pCN->pReadBuffer->Empty();
@@ -831,6 +835,11 @@ STDMETHODIMP CIOCPServer::QueryInterface( REFIID riid, void** ppv )
 		AddRef();
 
 		*ppv = static_cast< IUnknown * >( static_cast< IServer * >( this ) );
+	}
+	else if ( riid == IID_IClientTls )
+	{
+		AddRef();
+		*ppv = static_cast< IClientTls * >( this );
 	}
 	else if ( riid == IID_IGameClientProtocol )
 	{
@@ -915,51 +924,77 @@ void CIOCPServer::OnConnectionClosed( Socket *pSocket )
 	}
 }
 
-void CIOCPServer::ReadCompleted( Socket *pSocket, OnlineGameLib::Win32::CIOBuffer *pBuffer )
+void CIOCPServer::ReadCompleted( Socket *pSocket, CIOBuffer *pBuffer )
 {
 	try
 	{
-		// SetupRead points WSABUF at the new bytes, after any retained partial frame.
-		const BYTE *pReceived = reinterpret_cast< const BYTE * >( pBuffer->GetWSABUF()->buf );
-		size_t previousSize = pReceived - pBuffer->GetBuffer();
-		if ( previousSize <= pBuffer->GetUsed() )
-		{
-			TraceRequest( pSocket, _T("receive"), pReceived, pBuffer->GetUsed() - previousSize,
-				pBuffer->GetSequenceNumber(), -1, _T("raw_fragment") );
-		}
+		TraceRequest( pSocket, _T("receive"), pBuffer->GetBuffer(), pBuffer->GetUsed(),
+			pBuffer->GetSequenceNumber(), -1, _T("raw_fragment") );
 
-		if ( pSocket->GetMessageCallback() )
+		CCriticalSection::Owner locker( m_csCM );
+		CPerConnectionData *pData = reinterpret_cast< CPerConnectionData * >( pSocket->GetUserPtr() );
+		if ( !pData || pData->GetConnectionFirstParam() >= m_nPlayerMaxCount )
 		{
-			ProcessMessage( pSocket, pBuffer );
+			pSocket->Shutdown();
+			return;
+		}
+		LPCLIENT_NODE pCN = m_theClientManager[pData->GetConnectionFirstParam()];
+		if ( !pCN || pCN->pSocket != pSocket )
+		{
+			pSocket->Shutdown();
 			return;
 		}
 
-		const CPerConnectionData *pData = reinterpret_cast< const CPerConnectionData * >( pSocket->GetUserPtr() );
-
-		if ( pData )
+		const BYTE *pPlain = pBuffer->GetBuffer();
+		size_t plainLength = pBuffer->GetUsed();
+		std::vector< BYTE > plain;
+		if ( pCN->pTls )
 		{
-			DWORD dwIndex = pData->GetConnectionFirstParam();
-			
-			const BYTE *pPackData = pBuffer->GetBuffer();
-			const size_t used = pBuffer->GetUsed();
-			
-			LPCLIENT_NODE pCN = NULL;
+			bool wasReady = pCN->pTls->IsReady();
+			std::vector< BYTE > wire;
+			bool ok = pCN->pTls->Receive( pPlain, plainLength, plain, wire );
+			if ( !wire.empty() && !WriteWire( pSocket, &wire[0], wire.size() ) )
 			{
-				CCriticalSection::Owner	locker( m_csCM );
-				
-				pCN = ( LPCLIENT_NODE )( m_theClientManager[dwIndex] );
-				
-				if ( pCN && pCN->pSocket == pSocket )
-				{
-					CCriticalSection::Owner lock( pCN->csReadAction );
-					
-					pCN->pRecvBuffer->AddData( pPackData, used );
-				}
+				return;
+			}
+			if ( !ok )
+			{
+				TraceRequest( pSocket, _T("tls_close"), NULL, 0, 0, -1,
+					pCN->pTls->GetError().c_str() );
+				pSocket->Shutdown();
+				return;
+			}
+			if ( !wasReady && pCN->pTls->IsReady() )
+			{
+				TraceRequest( pSocket, _T("tls_ready"), NULL, 0, 0, -1,
+					pCN->pTls->GetDescription().c_str() );
+			}
+			pPlain = plain.empty() ? NULL : &plain[0];
+			plainLength = plain.size();
+			TraceRequest( pSocket, _T("tls_plain"), pPlain, plainLength,
+				pBuffer->GetSequenceNumber(), -1, _T("application_fragment") );
+		}
+
+		CCriticalSection::Owner readLock( pCN->csReadAction );
+		while ( plainLength )
+		{
+			size_t available = pCN->pRecvBuffer->GetSize() - pCN->pRecvBuffer->GetUsed();
+			if ( !available )
+			{
+				TraceRequest( pSocket, _T("reject"), NULL, 0, 0, -1, _T("receive_cache_full") );
+				pSocket->Shutdown();
+				return;
+			}
+			size_t length = plainLength < available ? plainLength : available;
+			pCN->pRecvBuffer->AddData( pPlain, length );
+			pPlain += length;
+			plainLength -= length;
+			if ( pSocket->GetMessageCallback() )
+			{
+				ProcessMessage( pSocket, pCN->pRecvBuffer );
 			}
 		}
-		
 		pBuffer->Empty();
-		
 		pSocket->Read( pBuffer );
 	}
 	catch( const CException &e )
@@ -967,15 +1002,12 @@ void CIOCPServer::ReadCompleted( Socket *pSocket, OnlineGameLib::Win32::CIOBuffe
 		Output( _T("ReadCompleted - Exception - ") + e.GetWhere() + _T(" - ") + e.GetMessage() );
 		TraceRequest( pSocket, _T("reject"), pBuffer->GetBuffer(), pBuffer->GetUsed(),
 			0, -1, e.GetMessage().c_str() );
-
 		pSocket->Shutdown();
 	}
 	catch(...)
 	{
-		Output( _T("ReadCompleted - Unexpected exception") );
 		TraceRequest( pSocket, _T("reject"), pBuffer->GetBuffer(), pBuffer->GetUsed(),
 			0, -1, _T("receive_exception") );
-
 		pSocket->Shutdown();
 	}
 }
@@ -1269,9 +1301,15 @@ unsigned int __stdcall CIOCPServer::HelperThreadFunction( void *pParam )
 unsigned int CIOCPServer::_HelperThreadFunction()
 {
 	bool bAdd, bDel;
+	DWORD lastTlsCheck = GetTickCount();
 
 	while ( !m_hQuitHelper.Wait( 0 ) )
 	{
+		if ( GetTickCount() - lastTlsCheck >= 1000 )
+		{
+			CheckTlsTimeouts();
+			lastTlsCheck = GetTickCount();
+		}
 		bAdd = _HelperAddClient();
 
 		bDel = _HelperDelClient();
@@ -1337,6 +1375,10 @@ bool CIOCPServer::_HelperAddClient()
 				CCriticalSection::Owner	locker( m_csCM );
 				
 				m_theClientManager[dwIndex]->pSocket    = pSocket;
+				if ( m_pTlsContext )
+				{
+					m_theClientManager[dwIndex]->pTls = new CClientTlsConnection( *m_pTlsContext );
+				}
                 m_theClientManager[dwIndex]->uServerKey = _Rand();
                 m_theClientManager[dwIndex]->uClientKey = _Rand();
                 m_theClientManager[dwIndex]->uKeyMode   = 0;
@@ -1383,7 +1425,7 @@ bool CIOCPServer::_HelperAddClient()
 				m_theClientManager[dwIndex]->uClientKey = 0x1E278E7AU - uGameKey * 0x560397F7U;
 			}
 
-            pSocket->Write((BYTE *)&SendAccountBegin, sizeof(SendAccountBegin));
+            WriteTransport( pSocket, reinterpret_cast< const BYTE * >( &SendAccountBegin ), sizeof( SendAccountBegin ) );
 			TraceRequest( pSocket, _T("handshake"), reinterpret_cast< const BYTE * >( &SendAccountBegin ),
 				sizeof( SendAccountBegin ), 0, CIPHER_PROTOCOL_TYPE, _T("account_begin") );
 
@@ -1459,6 +1501,8 @@ bool CIOCPServer::_HelperDelClient()
 			if ( pCN )
 			{
 				pCN->pSocket = NULL;
+				delete pCN->pTls;
+				pCN->pTls = NULL;
 				
 				pCN->pReadBuffer->Empty();
 				pCN->pRecvBuffer->Empty();
@@ -1599,5 +1643,81 @@ void CIOCPServer::ProcessMessage( Socket *pSocket, CIOBuffer *pBuffer )
 		}
 	}
 
-	pSocket->Read( pBuffer );
+}
+
+STDMETHODIMP CIOCPServer::EnableClientTls()
+{
+	CCriticalSection::Owner locker( m_csCM );
+	if ( !m_usedClientNode.empty() )
+	{
+		return E_UNEXPECTED;
+	}
+	if ( !m_pTlsContext )
+	{
+		m_pTlsContext = new CClientTlsContext;
+	}
+	if ( !m_pTlsContext->Initialize() )
+	{
+		Output( _T("Client TLS: ") + m_pTlsContext->GetError() );
+		return E_FAIL;
+	}
+	return S_OK;
+}
+
+bool CIOCPServer::WriteWire( Socket *pSocket, const BYTE *pData, size_t length )
+{
+	// TLS records can exceed an IOCP buffer. Queue ordered socket-sized pieces.
+	while ( length )
+	{
+		size_t part = length < m_nNetworkBufferMaxLen ? length : m_nNetworkBufferMaxLen;
+		if ( !pSocket->Write( pData, part, true ) )
+		{
+			pSocket->Shutdown();
+			return false;
+		}
+		pData += part;
+		length -= part;
+	}
+	return true;
+}
+
+bool CIOCPServer::WriteTransport( Socket *pSocket, const BYTE *pData, size_t length )
+{
+	CCriticalSection::Owner locker( m_csCM );
+	CPerConnectionData *pConnection = reinterpret_cast< CPerConnectionData * >( pSocket->GetUserPtr() );
+	if ( !pConnection || pConnection->GetConnectionFirstParam() >= m_nPlayerMaxCount )
+	{
+		return false;
+	}
+	LPCLIENT_NODE pCN = m_theClientManager[pConnection->GetConnectionFirstParam()];
+	if ( !pCN || pCN->pSocket != pSocket )
+	{
+		return false;
+	}
+	if ( !pCN->pTls )
+	{
+		return WriteWire( pSocket, pData, length );
+	}
+	std::vector< BYTE > wire;
+	if ( !pCN->pTls->Send( pData, length, wire ) )
+	{
+		TraceRequest( pSocket, _T("tls_error"), NULL, 0, 0, -1, pCN->pTls->GetError().c_str() );
+		pSocket->Shutdown();
+		return false;
+	}
+	return wire.empty() || WriteWire( pSocket, &wire[0], wire.size() );
+}
+
+void CIOCPServer::CheckTlsTimeouts()
+{
+	CCriticalSection::Owner locker( m_csCM );
+	for ( LIST::iterator it = m_usedClientNode.begin(); it != m_usedClientNode.end(); ++it )
+	{
+		LPCLIENT_NODE pCN = m_theClientManager[*it];
+		if ( pCN->pSocket && pCN->pTls && pCN->pTls->HasExpired() )
+		{
+			TraceRequest( pCN->pSocket, _T("tls_error"), NULL, 0, 0, -1, _T("handshake_timeout") );
+			pCN->pSocket->Shutdown();
+		}
+	}
 }

@@ -384,6 +384,18 @@ BOOL KSwordOnLineSever::Init()
 	{
 		return FALSE;
 	}
+	IClientTls *pClientTls = NULL;
+	if ( FAILED( m_pServer->QueryInterface( IID_IClientTls,
+		reinterpret_cast< void ** >( &pClientTls ) ) ) )
+	{
+		return FALSE;
+	}
+	HRESULT hClientTls = pClientTls->EnableClientTls();
+	pClientTls->Release();
+	if ( FAILED( hClientTls ) )
+	{
+		return FALSE;
+	}
 #endif
 
 	m_pServer->Startup();

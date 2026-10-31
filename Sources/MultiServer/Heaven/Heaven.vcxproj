@@ -39,6 +39,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
+    <OpenSslRoot Condition="'$(OpenSslRoot)' == ''">$(ProjectDir)..\..\..\Test\Dependencies\OpenSSL</OpenSslRoot>
     <_ProjectFileVersion>11.0.50727.1</_ProjectFileVersion>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -63,7 +64,7 @@
     <ClCompile>
       <Optimization>MaxSpeed</Optimization>
       <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
-      <AdditionalIncludeDirectories>..\Common;..\..\..\Headers;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(OpenSslRoot)\include;..\Common;..\..\..\Headers;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;HEAVEN_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -80,6 +81,7 @@
       <Culture>0x0804</Culture>
     </ResourceCompile>
     <Link>
+      <AdditionalDependencies>$(OpenSslRoot)\lib\libssl.lib;$(OpenSslRoot)\lib\libcrypto.lib;ws2_32.lib;crypt32.lib;advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>.\Release/Heaven.dll</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <ModuleDefinitionFile>.\Heaven.def</ModuleDefinitionFile>
@@ -113,7 +115,7 @@ copy /Y "$(TargetDir)$(TargetName).map" "$(ProjectDir)..\..\..\Release\Server\$(
     </Midl>
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>..\Common;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(OpenSslRoot)\include;..\Common;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;HEAVEN_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <MinimalRebuild>true</MinimalRebuild>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
@@ -132,6 +134,7 @@ copy /Y "$(TargetDir)$(TargetName).map" "$(ProjectDir)..\..\..\Release\Server\$(
       <Culture>0x0804</Culture>
     </ResourceCompile>
     <Link>
+      <AdditionalDependencies>$(OpenSslRoot)\lib\libssl.lib;$(OpenSslRoot)\lib\libcrypto.lib;ws2_32.lib;crypt32.lib;advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>.\Debug/Heaven.dll</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <ModuleDefinitionFile>.\Heaven.def</ModuleDefinitionFile>
@@ -160,12 +163,14 @@ copy debug\heaven.dll ..\..\..\..\bin\server\debug\heaven.dll
     <ClCompile Include="Heaven.cpp" />
     <ClCompile Include="IServer.cpp" />
     <ClCompile Include="ServerStage.cpp" />
+    <ClCompile Include="ClientTls.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Heaven.def" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ServerStage.h" />
+    <ClInclude Include="ClientTls.h" />
     <ClInclude Include="Interface\HeavenInterface.h" />
     <ClInclude Include="Interface\IServer.h" />
   </ItemGroup>
