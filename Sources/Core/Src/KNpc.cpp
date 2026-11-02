@@ -61,6 +61,7 @@ extern KLuaScript		*g_pNpcLevelScript;
 
 //-----------------------------------------------------------------------
 #define	GAME_UPDATE_TIME		10
+#define GAME_REPLENISH_TIME		(GAME_UPDATE_TIME * 10)
 #define	GAME_SYNC_LOSS			100
 #define	STAMINA_RECOVER_SCALE	4
 // 区域的宽高（格子单位）
@@ -190,6 +191,8 @@ void KNpc::Init()
 	m_StaminaGain				= 0;		// Npc的体力回复速度
 	m_StaminaLoss				= 0;		// Npc的体力下降速度
 	m_AttackRating				= 100;		// Npc的命中率
+	m_ExDefend = 0;
+	m_CurrentExDefend = 0;
 	m_Defend					= 10;		// Npc的防御
 	m_WalkSpeed					= 6;		// Npc的行走速度
 	m_RunSpeed					= 10;		// Npc的跑动速度
@@ -645,13 +648,17 @@ BOOL KNpc::ProcessState()
 //				this->SendCommand(do_stand);
 		}
 		// 生命自然回复
-		m_CurrentLife += m_CurrentLifeReplenish;
-		if (m_CurrentLife > m_CurrentLifeMax)
-			m_CurrentLife = m_CurrentLifeMax;
-		// 内力自然回复
-		m_CurrentMana += m_CurrentManaReplenish;
-		if (m_CurrentMana > m_CurrentManaMax)
-			m_CurrentMana = m_CurrentManaMax;
+		// 自然回复独立于药品、打坐与光环计时。参考 fsb2 的 100 帧周期。
+		if (!(m_LoopFrames % GAME_REPLENISH_TIME) && m_CurrentLife > 0 &&
+			m_Doing != do_death && m_Doing != do_revive)
+		{
+			m_CurrentLife += m_CurrentLifeReplenish;
+			if (m_CurrentLife > m_CurrentLifeMax)
+				m_CurrentLife = m_CurrentLifeMax;
+			m_CurrentMana += m_CurrentManaReplenish;
+			if (m_CurrentMana > m_CurrentManaMax)
+				m_CurrentMana = m_CurrentManaMax;
+		}
 		// 体力自然回复
 		if (m_Doing == do_run)
 			m_CurrentStamina += m_CurrentStaminaGain / STAMINA_RECOVER_SCALE;
@@ -671,7 +678,8 @@ BOOL KNpc::ProcessState()
 				SubWorld[m_SubWorldIndex].Map2Mps(m_RegionIndex, m_MapX, m_MapY, m_OffX, m_OffY, &nMpsX, &nMpsY);
 				_ASSERT(m_ActiveAuraID < MAX_SKILL && nLevel < MAX_SKILLLEVEL);
 #ifdef _SERVER
-				NPC_SKILL_SYNC SkillCmd;
+				GAME_AURA_SKILL_SYNC SkillCmd;
+				memset(&SkillCmd, 0, sizeof(SkillCmd));
 				SkillCmd.ID = this->m_dwID;
 				KSkill * pOrdinSkill = (KSkill *) g_SkillManager.GetSkill(m_ActiveAuraID, nLevel);
 				if (pOrdinSkill)
@@ -720,7 +728,7 @@ BOOL KNpc::ProcessState()
 					KSkill * pOrdinSkill2 = (KSkill *) g_SkillManager.GetSkill(nChildSkillId, nLevel);
 					if (pOrdinSkill2)
                     {
-						pOrdinSkill2->Cast(m_Index, nMpsX, nMpsY);
+						pOrdinSkill2->ApplyStateSkill(m_Index);
                     }
 				}
 			}
@@ -988,9 +996,19 @@ void KNpc::DoDeath(int nMode/* = 0*/)
 	//丢物品
 	DeathPunish(nMode, nPlayer);
 
-	NPC_DEATH_SYNC	NetCommand;
+	GAME_NPC_DEATH_SYNC	NetCommand;
+	memset(&NetCommand, 0, sizeof(NetCommand));
 	NetCommand.ProtocolType = (BYTE)s2c_npcdeath;
 	NetCommand.ID = m_dwID;
+
+	NetCommand.DeathKind = (BYTE)nMode;
+	int nMpsX, nMpsY;
+	GetMpsPos(&nMpsX, &nMpsY);
+	NetCommand.MapX = (WORD)nMpsX;
+	NetCommand.MapY = (WORD)nMpsY;
+	NetCommand.MapHigh = (BYTE)(((nMpsX >> 16) & 15) | ((nMpsY >> 12) & 240));
+	NetCommand.OffX = (WORD)m_OffX;
+	NetCommand.OffY = (WORD)m_OffY;
 
 	POINT	POff[8] = 
 	{
@@ -1171,11 +1189,18 @@ void KNpc::DoHurt(int nHurtFrames, int nX, int nY)
 	m_Frames.nCurrentFrame = 0;
 
 #ifdef _SERVER	// 向周围9个Region广播发技能
-	NPC_HURT_SYNC	NetCommand;
-	NetCommand.ProtocolType = (BYTE)s2c_npchurt;
+	GAME_NPC_HURT_SYNC NetCommand;
+	memset(&NetCommand, 0, sizeof(NetCommand));
+	NetCommand.ProtocolType = 0x5B;
 	NetCommand.ID = m_dwID;
-	NetCommand.nFrames = m_Frames.nTotalFrame;
-	GetMpsPos(&NetCommand.nX, &NetCommand.nY);
+	NetCommand.HurtFrames = (WORD)m_Frames.nTotalFrame;
+	int nMpsX, nMpsY;
+	GetMpsPos(&nMpsX, &nMpsY);
+	NetCommand.MapX = (WORD)nMpsX;
+	NetCommand.MapY = (WORD)nMpsY;
+	NetCommand.MapHigh = (BYTE)(((nMpsX >> 16) & 15) | ((nMpsY >> 12) & 240));
+	NetCommand.OffX = (WORD)m_OffX;
+	NetCommand.OffY = (WORD)m_OffY;
 
 	POINT	POff[8] = 
 	{
@@ -1604,10 +1629,6 @@ void KNpc::DoSkill(int nX, int nY)
 	{
 		if (!m_FightMode)
 			return;
-#ifdef _SERVER
-		if (m_nPlayerIdx > 0)
-			Player[m_nPlayerIdx].m_ItemList.Abrade(enumAbradeAttack);
-#endif
 	}
 
 
@@ -1624,18 +1645,28 @@ void KNpc::DoSkill(int nX, int nY)
 			)
 			)
 		{
-	
-			
+#ifdef _SERVER
+			if (IsPlayer() && m_nPlayerIdx > 0)
+				Player[m_nPlayerIdx].m_ItemList.Abrade(enumAbradeAttack);
+#endif
 		/*------------------------------------------------------------------------------------
 		发技能时，当需指定目标对象时，传至Skill.Cast的两个参数第一个参数为-1,第二个为Npc index
 		在S2C时，第二个参数必须由Server的NpcIndex转为NpcdwID参出去。
 		在C收到该指令时，将NpcdwID转为本机的NpcIndex
 			-------------------------------------------------------------------------------------*/
 #ifdef _SERVER	// 向周围9个Region广播发技能
-			NPC_SKILL_SYNC	NetCommand;
+			GAME_SKILL_CAST_SYNC	NetCommand;
+			memset(&NetCommand, 0, sizeof(NetCommand));
 			
 			NetCommand.ProtocolType = (BYTE)s2c_skillcast;
 			NetCommand.ID = m_dwID;
+			int nMpsX, nMpsY;
+			GetMpsPos(&nMpsX, &nMpsY);
+			NetCommand.MapX = (WORD)nMpsX;
+			NetCommand.MapY = (WORD)nMpsY;
+			NetCommand.MapHigh = (BYTE)(((nMpsX >> 16) & 15) | ((nMpsY >> 12) & 240));
+			NetCommand.OffX = (WORD)m_OffX;
+			NetCommand.OffY = (WORD)m_OffY;
 			NetCommand.nSkillID = m_ActiveSkillID;
 			NetCommand.nSkillLevel = m_SkillList.GetCurrentLevel(m_ActiveSkillID);
 			
@@ -1685,6 +1716,7 @@ void KNpc::DoSkill(int nX, int nY)
 
 #endif
 			if (eStyle == SKILL_SS_Missles 
+				|| eStyle == SKILL_SS_Attack
 				|| eStyle == SKILL_SS_Melee 
 				|| eStyle == SKILL_SS_InitiativeNpcState 
 				|| eStyle == SKILL_SS_PassivityNpcState)
@@ -2145,6 +2177,56 @@ void KNpc::ModifyAttrib(int nAttacker, void* pData)
 }
 
 #ifdef _SERVER
+int KNpc::GetSyncLifeRatio() const
+{
+	if (m_CurrentLifeMax <= 0 || m_CurrentLife >= m_CurrentLifeMax)
+		return 0;
+	// 新版小同步中零表示满血，死亡前的零生命使用最小非零比例。
+	if (m_CurrentLife <= 0)
+		return 1;
+	int nRatio = (int)((m_CurrentLife * 2048LL + m_CurrentLifeMax - 1) / m_CurrentLifeMax);
+	if (nRatio > 2047)
+		nRatio = 2047;
+	return nRatio;
+}
+
+void KNpc::SyncDamage(int nDamage, BYTE bFlags)
+{
+	if (m_RegionIndex < 0 || m_SubWorldIndex < 0)
+		return;
+	GAME_DAMAGE_SYNC Sync;
+	memset(&Sync, 0, sizeof(Sync));
+	Sync.ProtocolType = 0xEA;
+	Sync.DamageFlags = bFlags;
+	Sync.Damage = nDamage;
+	Sync.ID = m_dwID;
+	Sync.LifeMax = m_CurrentLifeMax;
+	int nRatio = GetSyncLifeRatio();
+	Sync.PackedLife = (BYTE)(((nRatio >> 3) & 0xE0) | (m_CurrentCamp & 15));
+	Sync.LifeRatio = (BYTE)nRatio;
+	int nMaxCount = MAX_BROADCAST_COUNT;
+	CURREGION.BroadCast(&Sync, sizeof(Sync), nMaxCount, m_MapX, m_MapY);
+	for (int i = 0; i < 8; i++)
+	{
+		if (CONREGIONIDX(i) >= 0)
+		{
+			static const POINT Offset[8] =
+			{
+				{0, 32},
+				{-16, 32},
+				{-16, 0},
+				{-16, -32},
+				{0, -32},
+				{16, -32},
+				{16, 0},
+				{16, 32},
+			};
+			CONREGION(i).BroadCast(&Sync, sizeof(Sync), nMaxCount,
+				m_MapX - Offset[i].x, m_MapY - Offset[i].y);
+		}
+	}
+}
+
 void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL bIsMelee, BOOL bDoHurt /* TRUE */, BOOL bReturn /* = FALSE */)
 {
 	if (m_Doing == do_death || m_RegionIndex < 0)
@@ -2166,6 +2248,13 @@ void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL
 	switch(nType)
 	{
 	case damage_physics:
+		// 装备防御与敏捷闪避分开，原始资源规定两点防御抵消一点伤害。
+		if (m_CurrentExDefend > 0)
+		{
+			nDamage -= m_CurrentExDefend / PlayerSet.m_cLevelAdd.GetHurtPerDefense();
+			if (nDamage < 0)
+				nDamage = 0;
+		}
 		nRes = m_CurrentPhysicsResist;
 		if (nRes > m_CurrentPhysicsResistMax)
 		{
@@ -2362,6 +2451,9 @@ void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL
 	if (m_Kind != kind_player && Npc[nAttacker].m_Kind == kind_player && Npc[nAttacker].m_nPlayerIdx > 0)
 		m_cDeathCalcExp.AddDamage(Npc[nAttacker].m_nPlayerIdx, (m_CurrentLife - nDamage > 0 ? nDamage : m_CurrentLife));
 	m_CurrentLife -= nDamage;
+	if (m_CurrentLife < 0)
+		m_CurrentLife = 0;
+	SyncDamage(nDamage, 0);
 
 	if (nDamage > 0)
 	{
@@ -2373,7 +2465,7 @@ void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL
 		if (bDoHurt)
 			DoHurt();
 	}
-	if (m_CurrentLife < 0)
+	if (m_CurrentLife <= 0)
 	{
 		int nMode = DeathCalcPKValue(nAttacker);
 		DoDeath(nMode);
@@ -2411,6 +2503,7 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 	{
 		if (!CheckHitTarget(nAr, m_CurrentDefend, nIgnoreAr))
 		{
+			SyncDamage(0, 5);
 			g_DebugLog("[数值]%s闪过攻击", Name);
 			return FALSE;
 		}
@@ -2542,6 +2635,13 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 		pDes->nAttribType = magic_physicsdamage_v;
 		pDes->nValue[0] = pTemp->nValue[0];
 		pDes->nValue[2] = pTemp->nValue[2];
+	}
+	else if (bIsPhysical)
+	{
+		// 当前普通攻击没有 LvlSetting，仍使用角色与武器的基础伤害。
+		pDes->nAttribType = magic_physicsdamage_v;
+		pDes->nValue[0] = nMinDamage;
+		pDes->nValue[2] = nMaxDamage;
 	}
 	pTemp++;
 	pDes++;
@@ -3267,7 +3367,8 @@ void KNpc::SetAuraSkill(int nSkillID)
 			_ASSERT(nSkillID < MAX_SKILL && nCurLevel < MAX_SKILLLEVEL);
 			
 			KSkill * pOrdinSkill = (KSkill *)g_SkillManager.GetSkill(nSkillID, nCurLevel);
-            if (!pOrdinSkill || !pOrdinSkill->IsAura())
+            if (!pOrdinSkill || (!pOrdinSkill->IsAura() &&
+				pOrdinSkill->GetSkillStyle() != SKILL_SS_InitiativeNpcState))
 			{
 				nSkillID  = 0;
 			}
@@ -3334,7 +3435,7 @@ BOOL KNpc::SendSyncData(int nClient)
 	NpcSync.Series				= m_Series;
 	NpcSync.m_Doing				= (BYTE)m_Doing;
 	if (m_CurrentLifeMax > 0)
-		NpcSync.LifePerCent		= (BYTE)((m_CurrentLife << 7) / m_CurrentLifeMax);//Question只改了这部分，其它的也需要spe修改
+		NpcSync.LifePerCent = (BYTE)((m_CurrentLife * 128LL + m_CurrentLifeMax - 1) / m_CurrentLifeMax);
 	else
 		NpcSync.LifePerCent		= 0;
 	if (this->IsPlayer())
@@ -3433,14 +3534,7 @@ void KNpc::NormalSync()
 	NpcSync.ProtocolType = (BYTE)s2c_syncnpcmin;
 	NpcSync.ID = m_dwID;
 	// 当前客户端的增量生命比例以2048为分母，11位全零表示满血。
-	int nLifePerCent = 0;
-	if (m_CurrentLife > 0 && m_CurrentLifeMax > 0 && m_CurrentLife < m_CurrentLifeMax)
-	{
-		// 向上取整，避免客户端还原时再次截断；受伤比例不能进入满血编码。
-		nLifePerCent = (int)((m_CurrentLife * 2048LL + m_CurrentLifeMax - 1) / m_CurrentLifeMax);
-		if (nLifePerCent >= 2048)
-			nLifePerCent = 2047;
-	}
+	int nLifePerCent = GetSyncLifeRatio();
 	NpcSync.LifePerCent = (BYTE)nLifePerCent;
 	NpcSync.Camp = (BYTE)((nLifePerCent >> 3) & 0xE0);
 
@@ -4092,7 +4186,8 @@ void	KNpc::SetSeries(int nSeries)
 *****************************************************************************/
 void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pData, int nDataNum, int nTime/* = -1*/)
 {
-	if (nLevel <= 0|| nSkillID <= 0) return ;
+	if (nLevel <= 0 || nSkillID <= 0 || !pData || nDataNum <= 0)
+		return;
 	_ASSERT(nDataNum < MAX_SKILL_STATE);
 	if (nDataNum >= MAX_SKILL_STATE)
 		nDataNum = MAX_SKILL_STATE;
@@ -4100,14 +4195,25 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 #ifdef _SERVER
 	if (IsPlayer() && pData && nDataNum >= 0)
 	{
-		STATE_EFFECT_SYNC	Sync;
+		GAME_STATE_EFFECT_SYNC	Sync;
+		memset(&Sync, 0, sizeof(Sync));
 		Sync.ProtocolType = s2c_syncstateeffect;
-		Sync.m_dwSkillID = nSkillID;
-		Sync.m_nLevel = nLevel;
-		Sync.m_nTime = nTime;
-		memcpy(Sync.m_MagicAttrib, pData, sizeof(KMagicAttrib) * nDataNum);
-		Sync.m_wLength = sizeof(Sync) - sizeof(KMagicAttrib) * (MAX_SKILL_STATE - nDataNum) - 1;
-		g_pServer->PackDataToClient(Player[m_nPlayerIdx].m_nNetConnectIdx, &Sync, Sync.m_wLength + 1);
+		Sync.SkillId = nSkillID;
+		Sync.Level = nLevel;
+		Sync.Time = nTime;
+		const KMagicAttrib* pAttrib = (const KMagicAttrib*)pData;
+		int nCount = 0;
+		for (int i = 0; i < nDataNum && i < MAX_SKILL_STATE; i++)
+		{
+			int nType = GetCurrentMagicAttribId(pAttrib[i].nAttribType);
+			if (nType < 0)
+				continue;
+			Sync.Attributes[nCount].Type = nType;
+			memcpy(Sync.Attributes[nCount].Value, pAttrib[i].nValue, sizeof(pAttrib[i].nValue));
+			nCount++;
+		}
+		Sync.Length = 14 + nCount * sizeof(GAME_STATE_ATTRIBUTE);
+		g_pServer->PackDataToClient(Player[m_nPlayerIdx].m_nNetConnectIdx, &Sync, Sync.Length + 1);
 	}
 #endif
 	KStateNode* pNode;
@@ -4122,20 +4228,22 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 			{
 				pNode->m_LeftTime = nTime;
 			}
-			else if (pNode->m_Level < nLevel)
+			else
 			{
-				pTemp = (KMagicAttrib *)pData;
+				// 先撤销完整旧状态，再替换等级、持续时间及属性。
+				for (int i = 0; i < MAX_SKILL_STATE; i++)
+					ModifyAttrib(nLauncher, &pNode->m_State[i]);
+				memset(pNode->m_State, 0, sizeof(pNode->m_State));
+				pTemp = (KMagicAttrib*)pData;
 				for (int i = 0; i < nDataNum; i++)
 				{
-					// 清除原技能的影响
-					ModifyAttrib(nLauncher, &pNode->m_State[i]);
-					// 把新等级下技能的影响计算到NPC身上
-					ModifyAttrib(nLauncher, pTemp);
-					pNode->m_State[i].nValue[0] = -pTemp->nValue[0];
-					pNode->m_State[i].nValue[1] = -pTemp->nValue[1];
-					pNode->m_State[i].nValue[2] = -pTemp->nValue[2];
-					pTemp++;
+					ModifyAttrib(nLauncher, &pTemp[i]);
+					pNode->m_State[i].nAttribType = pTemp[i].nAttribType;
+					for (int j = 0; j < 3; j++)
+						pNode->m_State[i].nValue[j] = -pTemp[i].nValue[j];
 				}
+				pNode->m_Level = nLevel;
+				pNode->m_LeftTime = nTime;
 			}
 			return;
 		}
@@ -4143,6 +4251,7 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 	}
 	// 没有在循环中返回，说明是新技能
 	pNode = new KStateNode;
+	memset(pNode->m_State, 0, sizeof(pNode->m_State));
 	pNode->m_SkillID = nSkillID;
 	pNode->m_Level = nLevel;
 	pNode->m_LeftTime = nTime;
@@ -4674,6 +4783,7 @@ void	KNpc::LoadDataFromTemplate(int nNpcTemplateId, int nLevel)
 #ifdef _SERVER	
 	m_Treasure		= pNpcTemp->m_Treasure;
 	m_SkillList		= pNpcTemp->m_SkillList;
+	m_SkillList.m_nNpcIndex = m_Index;
 	m_AiMode		= pNpcTemp->m_AiMode;
 	m_AiAddLifeTime	= 0;
 	m_pDropRate		= pNpcTemp->m_pItemDropRate;
@@ -4715,6 +4825,7 @@ void	KNpc::LoadDataFromTemplate(int nNpcTemplateId, int nLevel)
 	m_LifeReplenish			= pNpcTemp->m_LifeReplenish;
 	m_AttackRating			= pNpcTemp->m_AttackRating;
 	m_Defend				= pNpcTemp->m_Defend;
+	m_ExDefend = pNpcTemp->m_ExDefend;
 	m_PhysicsDamage			= pNpcTemp->m_PhysicsDamage;
 	m_RedLum				= pNpcTemp->m_RedLum;
 	m_GreenLum				= pNpcTemp->m_GreenLum;
@@ -4814,9 +4925,9 @@ void KNpc::DeathPunish(int nMode, int nBelongPlayer)
 			{
 				int nSubExp;
 				if (m_Level <= 10)
-					nSubExp = (PlayerSet.m_cLevelAdd.GetLevelExp(m_Level) * 2) / 100;
+					nSubExp = (PlayerSet.m_cLevelAdd.GetLevelExp(m_Level, m_Series) * 2) / 100;
 				else
-					nSubExp = (PlayerSet.m_cLevelAdd.GetLevelExp(m_Level) * 4) / 100;
+					nSubExp = (PlayerSet.m_cLevelAdd.GetLevelExp(m_Level, m_Series) * 4) / 100;
 
 				if (Player[m_nPlayerIdx].m_nExp >= nSubExp)
 					Player[m_nPlayerIdx].DirectAddExp( -nSubExp );
@@ -4861,7 +4972,7 @@ void KNpc::DeathPunish(int nMode, int nBelongPlayer)
 				nPKValue = MAX_DEATH_PUNISH_PK_VALUE;
 
 			// 经验减少
-			int		nLevelExp = PlayerSet.m_cLevelAdd.GetLevelExp(m_Level);
+			int		nLevelExp = PlayerSet.m_cLevelAdd.GetLevelExp(m_Level, m_Series);
 			Player[m_nPlayerIdx].DirectAddExp( -(nLevelExp * PlayerSet.m_sPKPunishParam[nPKValue].m_nExp / 100) );
 
 			// 钱减少
@@ -5010,6 +5121,10 @@ void KNpc::LoseSingleItem(int nBelongPlayer)
 	if (nMaxLevel > m_pDropRate->nMaxItemLevel)
 		nMaxLevel = m_pDropRate->nMaxItemLevel;
 
+	if (nMaxLevel < m_pDropRate->nMinItemLevel)
+		nMaxLevel = m_pDropRate->nMinItemLevel;
+	if (nMinLevel > m_pDropRate->nMaxItemLevel)
+		nMinLevel = m_pDropRate->nMaxItemLevel;
 	if (nMinLevel < m_pDropRate->nMinItemLevel)
 		nMinLevel = m_pDropRate->nMinItemLevel;
 
@@ -5331,11 +5446,12 @@ void	KNpc::BroadCastState()
 	if (m_RegionIndex < 0)
 		return;
 
-	NPC_SYNC_STATEINFO StateInfo;
-	StateInfo.ProtocolType	= (BYTE)s2c_syncnpcstate;
+	struct { BYTE ProtocolType; BYTE m_btStateInfo[8]; DWORD m_ID; } StateInfo;
+	memset(&StateInfo, 0, sizeof(StateInfo));
+	StateInfo.ProtocolType	= 0x8A;
 	StateInfo.m_ID			= m_dwID;
 	int i;
-	for (i = 0; i < MAX_NPC_RECORDER_STATE; i++)
+	for (i = 0; i < 8 && i < MAX_NPC_RECORDER_STATE; i++)
 		StateInfo.m_btStateInfo[i] = m_btStateInfo[i];
 
 	POINT	POff[8] = 
@@ -5350,12 +5466,12 @@ void	KNpc::BroadCastState()
 		{16, 32},
 	};
 	int nMaxCount = MAX_BROADCAST_COUNT;
-	CURREGION.BroadCast(&StateInfo, sizeof(NPC_SYNC_STATEINFO), nMaxCount, m_MapX, m_MapY);
+	CURREGION.BroadCast(&StateInfo, sizeof(StateInfo), nMaxCount, m_MapX, m_MapY);
 	for (i= 0; i < 8; i++)
 	{
 		if (CONREGIONIDX(i) == -1)
 			continue;
-		CONREGION(i).BroadCast(&StateInfo, sizeof(NPC_SYNC_STATEINFO), nMaxCount, m_MapX - POff[i].x, m_MapY - POff[i].y);
+		CONREGION(i).BroadCast(&StateInfo, sizeof(StateInfo), nMaxCount, m_MapX - POff[i].x, m_MapY - POff[i].y);
 	}
 }
 #endif
@@ -5422,6 +5538,7 @@ void	KNpc::RestoreNpcBaseInfo()
 	memset(&m_CurrentPoisonDamage, 0, sizeof(m_CurrentPoisonDamage));
 
 	m_CurrentAttackRating	= m_AttackRating;
+	m_CurrentExDefend = m_ExDefend;
 	m_CurrentDefend			= m_Defend;
 
 	m_CurrentFireResist		= m_FireResist;

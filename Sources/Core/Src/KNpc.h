@@ -259,6 +259,8 @@ public:
 	KMagicAttrib		m_CurrentLightDamage;	// Npc的当前电伤害
 	KMagicAttrib		m_CurrentPoisonDamage;	// Npc的当前毒伤害
 	int					m_CurrentAttackRating;	// Npc的当前命中率
+	int					m_ExDefend;
+	int					m_CurrentExDefend;
 	int					m_CurrentDefend;		// Npc的当前防御
 
 	int					m_CurrentFireResist;	// Npc的当前火抗性
@@ -619,6 +621,8 @@ public:
 	void				BroadCastState();								// 广播角色的状态信息,光环，头带等等效果
 	void				BroadCastRevive(int nType);
 	int					GetPlayerIdx();
+	int					GetSyncLifeRatio() const;
+	void				SyncDamage(int nDamage, BYTE bFlags);
 	void				CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL bIsMelee, BOOL bDoHurt = TRUE, BOOL bReturn = FALSE);
 	BOOL				ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR, BOOL bDoHurt);
 

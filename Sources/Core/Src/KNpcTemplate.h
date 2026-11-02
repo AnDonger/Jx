@@ -72,6 +72,7 @@ public:
 	int		m_LifeReplenish;
 	int		m_AttackRating;
 	int		m_Defend;
+	int		m_ExDefend;
 	KMagicAttrib		m_PhysicsDamage;
 	int		m_RedLum;
 	int		m_GreenLum;

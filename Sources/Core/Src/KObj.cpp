@@ -1227,28 +1227,28 @@ void	KObj::CastSkill(int nXpos, int nYpos)
 #ifdef _SERVER
 BOOL	KObj::SyncAdd(int nClient)
 {
-	OBJ_ADD_SYNC	cObjAdd;
-	int				nTempX, nTempY;
-
-	cObjAdd.ProtocolType = (BYTE)s2c_objadd;
-	cObjAdd.m_nID = m_nID;
-	cObjAdd.m_nDataID = m_nDataID;
-	cObjAdd.m_btDir = m_nDir;
-	cObjAdd.m_btState = m_nState;
-	cObjAdd.m_wCurFrame = m_cImage.m_nCurFrame;
-	SubWorld[m_nSubWorldID].Map2Mps(m_nRegionIdx, m_nMapX, m_nMapY, m_nOffX, m_nOffY, &nTempX, &nTempY);
-	cObjAdd.m_nXpos = nTempX;
-	cObjAdd.m_nYpos = nTempY;
-	cObjAdd.m_nMoneyNum = m_nMoneyNum;
-	cObjAdd.m_nItemID = m_nItemDataID;
-	cObjAdd.m_btItemWidth = m_nItemWidth;
-	cObjAdd.m_btItemHeight = m_nItemHeight;
-	cObjAdd.m_btColorID = this->m_nColorID;
-	cObjAdd.m_btFlag = 0;
-	strcpy(cObjAdd.m_szName, this->m_szName);
-	cObjAdd.m_wLength = sizeof(OBJ_ADD_SYNC) - 1 - sizeof(cObjAdd.m_szName) + strlen(cObjAdd.m_szName);
-
-	g_pServer->PackDataToClient(nClient, (BYTE*)&cObjAdd, cObjAdd.m_wLength + 1);
+	if (m_nRegionIdx < 0 || m_nSubWorldID < 0)
+		return FALSE;
+	GAME_OBJECT_ADD_SYNC Sync;
+	memset(&Sync, 0, sizeof(Sync));
+	Sync.ProtocolType = 0x4F;
+	Sync.ID = m_nID;
+	Sync.TemplateId = m_nDataID;
+	Sync.Direction = (BYTE)m_nDir;
+	Sync.State = (BYTE)m_nState;
+	Sync.Frame = (WORD)m_cImage.m_nCurFrame;
+	int nX, nY;
+	GetMpsPos(&nX, &nY);
+	Sync.MapX = nX;
+	Sync.MapY = nY;
+	Sync.Money = m_nMoneyNum;
+	Sync.ItemId = m_nItemDataID;
+	Sync.Width = (BYTE)m_nItemWidth;
+	Sync.Height = (BYTE)m_nItemHeight;
+	Sync.Color = (BYTE)m_nColorID;
+	g_StrCpyLen(Sync.Name, m_szName, sizeof(Sync.Name));
+	Sync.Length = sizeof(Sync) - sizeof(Sync.Name) + strlen(Sync.Name) - 1;
+	g_pServer->PackDataToClient(nClient, &Sync, Sync.Length + 1);
 
 	return TRUE;
 }

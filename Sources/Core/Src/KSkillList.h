@@ -119,6 +119,7 @@ public:
 #ifdef _SERVER
 	int		UpdateDBSkillList(BYTE *);
 	int		LoadPlayerSkill(int nSkillID, int nLevel);
+	void			ApplyPlayerPassiveSkills();
 	BOOL	LoadPlayerInitialSkills(int nSeries);
 	void	SetNpcSkill(int nSkillNo, int nSkillId, int nSkillLevel);//sometime , npc's AI SkillList may have same skills.IT ONLY BE USED FOR NPC(NO PLAYER)
 	void	RemoveNpcSkill(int nSkillNo);

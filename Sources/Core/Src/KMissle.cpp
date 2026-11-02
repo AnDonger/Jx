@@ -161,15 +161,23 @@ void KMissle::Release()
 #ifndef _SERVER	
 	g_ScenePlace.RemoveObject(CGOG_MISSLE, m_nMissleId, m_SceneID);
 	m_MissleRes.Clear();
-	m_nMissleId = -1;
-	m_nFollowNpcIdx = 0;
 #endif
 #ifdef _SERVER
 	if (m_pMagicAttribsData)
+	{
 		if (m_pMagicAttribsData->DelRef() == 0)
 			delete m_pMagicAttribsData;
 		m_pMagicAttribsData = NULL;
+	}
+	m_ulNextCalDamageTime = 0;
 #endif
+	// 服务端也必须释放实体标识，避免已结束的子弹继续参与逐帧处理。
+	m_nMissleId = -1;
+	m_nFollowNpcIdx = 0;
+	m_dwFollowNpcID = 0;
+	m_nLauncher = 0;
+	m_dwLauncherId = 0;
+	m_nRegionId = -1;
 }
 
 KMissle::~KMissle()

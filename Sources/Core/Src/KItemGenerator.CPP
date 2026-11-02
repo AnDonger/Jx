@@ -18,6 +18,22 @@ KItemGenerator	ItemGen;			//	装备生成器
 KItemGenerator::KItemGenerator()
 {
 	m_nCurrentVersion = -1;
+	m_uRandomSeed = 42;
+}
+
+// 当前客户端物品使用MSVC随机序列，不能沿用引擎旧随机序列。
+void KItemGenerator::SetRandomSeed(UINT uSeed)
+{
+	m_uRandomSeed = uSeed;
+}
+
+int KItemGenerator::GetRandomNumber(int nMin, int nMax)
+{
+	UINT nRange = (UINT)(nMax - nMin) + 1;
+	if (nRange == 0)
+		return nMin;
+	m_uRandomSeed = m_uRandomSeed * 214013U + 2531011U;
+	return nMin + (int)(((m_uRandomSeed >> 16) & 0x7fffU) % nRange);
 }
 
 KItemGenerator::~KItemGenerator()
@@ -143,15 +159,16 @@ BOOL KItemGenerator::Gen_Medicine(IN int nDetailType,
 	int nGameVersion = pItem->m_GeneratorParam.nVersion;
 #endif
 
-	const int i = nDetailType * 5 + nLevel - 1;	// 本公式由策划定义
 												// 等级数据从1开始，所以要减回来
 	const KBASICPROP_MEDICINE* pMed = NULL;
-	pMed = m_BPTLib.GetMedicineRecord(i);
+	pMed = m_BPTLib.FindMedicine(nDetailType, nLevel);
 	if (NULL == pMed)
 	{
 		_ASSERT(FALSE);
 		return bEC;
 	}
+	ZeroMemory(pItem->m_GeneratorParam.nGeneratorLevel, sizeof(pItem->m_GeneratorParam.nGeneratorLevel));
+	pItem->SetDurability(-1);
 	*pItem = *pMed;
 	return TRUE;
 }
@@ -240,16 +257,19 @@ BOOL KItemGenerator::Gen_Equipment(IN int nDetailType,
 	BOOL bEC = FALSE;
 #ifdef _SERVER	// 服务器版本
 	pItem->m_GeneratorParam.uRandomSeed = g_GetRandomSeed();
+	// 装备使用独立序列，同时推进引擎种子，避免连续生成时重复用同一种子。
+	g_Random(0xffffffffU);
 	if (pnaryMALevel)
 		memcpy(pItem->m_GeneratorParam.nGeneratorLevel, pnaryMALevel, sizeof(int) * 6);
 	else
 		ZeroMemory(pItem->m_GeneratorParam.nGeneratorLevel, sizeof(int) * 6);
 	pItem->m_GeneratorParam.nLuck = nLucky;
 #else
-	g_RandomSeed(pItem->m_GeneratorParam.uRandomSeed);
+	pItem->m_GeneratorParam.nLuck = nLucky;
 	if (pnaryMALevel)
 		memcpy(pItem->m_GeneratorParam.nGeneratorLevel, pnaryMALevel, sizeof(int) * 6);
 #endif
+	SetRandomSeed(pItem->m_GeneratorParam.uRandomSeed);
 	pItem->m_GeneratorParam.nVersion = nVersion == -1 ? m_nCurrentVersion : nVersion;
 	int nGameVersion = pItem->m_GeneratorParam.nVersion;
 
@@ -542,11 +562,11 @@ void KItemGenerator::GMA_ChooseMA(int nPos, int nLevel, int nLucky, KItemNormalA
 	pINA->nValue[2] = 0;
 
 	// 筛选出全部可用的魔法属性
-	int nDropRate = ::GetRandomNumber(0, 100) - nLucky;
+	int nDropRate = GetRandomNumber(0, 100) - nLucky;
 	int nCount = GMA_GetCandidateMA(nPos, nLevel, nDropRate);
 	if (nCount > 0)
 	{
-		int nFinal = ::GetRandomNumber(0, nCount);
+		int nFinal = GetRandomNumber(0, nCount);
 		int nMAi = m_GMA_naryCandidateMA[nFinal];
 		int nMA = m_GMA_naryMA[nPos][nMAi];
 		if (nMA == -1)	// 随机出重复的属性了
@@ -560,9 +580,9 @@ void KItemGenerator::GMA_ChooseMA(int nPos, int nLevel, int nLucky, KItemNormalA
 		{
 			const KMACP* pMACP = &(pMATF->m_MagicAttrib);
 			pINA->nAttribType = pMACP->nPropKind;
-			pINA->nValue[0] = ::GetRandomNumber(pMACP->aryRange[0].nMin, pMACP->aryRange[0].nMax);
-			pINA->nValue[1] = ::GetRandomNumber(pMACP->aryRange[1].nMin, pMACP->aryRange[1].nMax);
-			pINA->nValue[2] = ::GetRandomNumber(pMACP->aryRange[2].nMin, pMACP->aryRange[2].nMax);
+			pINA->nValue[0] = GetRandomNumber(pMACP->aryRange[0].nMin, pMACP->aryRange[0].nMax);
+			pINA->nValue[1] = GetRandomNumber(pMACP->aryRange[1].nMin, pMACP->aryRange[1].nMax);
+			pINA->nValue[2] = GetRandomNumber(pMACP->aryRange[2].nMin, pMACP->aryRange[2].nMax);
 		}
 	}
 }
@@ -613,10 +633,9 @@ BOOL KItemGenerator::GetMedicineCommonAttrib(IN int nDetailType, IN int nLevel, 
 		return FALSE;
 	}
 
-	const int i = nDetailType * 5 + nLevel - 1;
 
 	const KBASICPROP_MEDICINE* pMed = NULL;
-	pMed = m_BPTLib.GetMedicineRecord(i);
+	pMed = m_BPTLib.FindMedicine(nDetailType, nLevel);
 	if (NULL == pMed)
 	{
 		_ASSERT(FALSE);
@@ -740,9 +759,10 @@ BOOL KItemGenerator::Gen_ExistEquipment(IN int nDetailType,
 
 	BOOL bEC = FALSE;
 
-	g_RandomSeed(pItem->m_GeneratorParam.uRandomSeed);
+	pItem->m_GeneratorParam.nLuck = nLucky;
 	if (pnaryMALevel)
 		memcpy(pItem->m_GeneratorParam.nGeneratorLevel, pnaryMALevel, sizeof(int) * 6);
+	SetRandomSeed(pItem->m_GeneratorParam.uRandomSeed);
 	pItem->m_GeneratorParam.nVersion = nVersion == -1 ? m_nCurrentVersion : nVersion;
 	int nGameVersion = pItem->m_GeneratorParam.nVersion;
 

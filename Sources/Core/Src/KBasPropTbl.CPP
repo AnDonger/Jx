@@ -80,7 +80,7 @@ char*	TABFILE_EQUIPMENT[] =
 			失败时返回零
 ******************************************************************************/
 BOOL LoadRecord(IN KTabFile* pTF, IN int nRow,
-				IN OUT const PROPINFO* pPI, IN int cbFields)
+				IN OUT const PROPINFO* pPI, IN int cbFields, int nSkipColumn = 0)
 {
 	BOOL bEC = TRUE;
 
@@ -90,16 +90,19 @@ BOOL LoadRecord(IN KTabFile* pTF, IN int nRow,
 	// 逐个读入各项属性
 	for (int n = 0; n < cbFields; n++)
 	{
+		int nColumn = n + 1;
+		if (nSkipColumn > 0 && nColumn >= nSkipColumn)
+			nColumn++;
 		if (PI_VARTYPE_INT == (pPI+n)->m_nType)
 		{	// 读入 int 型数据
-			if (FALSE == pTF->GetInteger(nRow, n+1, -1, (pPI+n)->m_pData.m_pnData))
+			if (FALSE == pTF->GetInteger(nRow, nColumn, -1, (pPI+n)->m_pData.m_pnData))
 				{ _ASSERT(FALSE); bEC = FALSE; break; }
 		}
 		else
 		{	// 读入字符串型数据
 			_ASSERT(PI_VARTYPE_CHAR == (pPI+n)->m_nType);
 
-			if (FALSE == pTF->GetString(nRow, n+1, "", (pPI+n)->m_pData.m_pszBuf,
+			if (FALSE == pTF->GetString(nRow, nColumn, "", (pPI+n)->m_pData.m_pszBuf,
 										(pPI+n)->m_nBufSize))
 				{ _ASSERT(FALSE); bEC = FALSE; break; }
 		}
@@ -618,7 +621,7 @@ const KBASICPROP_MEDMATERIAL* KLibOfBPT::GetMedMaterial(int i) const
 ******************************************************************************/
 const KBASICPROP_MEDICINE* KLibOfBPT::FindMedicine(IN int nType, IN int nLevel) const
 {
-	return 0;//TODO: m_BPTMedicine.FindRecord(nType, nLevel);
+	return m_BPTMedicine.FindRecord(nType, nLevel);
 }
 
 /******************************************************************************
@@ -978,7 +981,11 @@ BOOL KBPT_Medicine::LoadRecord(int i, KTabFile* pTF)
 	};
 
 	// 逐个读入各项属性
-	return ::LoadRecord(pTF, i, aryPI, sizeof(aryPI)/ sizeof(aryPI[0]));
+	char szColumn[32];
+	pTF->GetString(1, 14, "", szColumn, sizeof(szColumn));
+	int nSkipColumn = (strcmp(szColumn, "负重") == 0 ||
+		strcmp(szColumn, "重量") == 0) ? 14 : 0;
+	return ::LoadRecord(pTF, i, aryPI, sizeof(aryPI) / sizeof(aryPI[0]), nSkipColumn);
 }
 
 /******************************************************************************

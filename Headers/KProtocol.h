@@ -254,6 +254,206 @@ struct GAME_ITEM_SYNC
 	DWORD unknown_9;
 };
 
+// 当前客户端战斗请求，字段与 VsFsbServer 的实际线格式对应。
+struct GAME_ITEM_COUNT_SYNC
+{
+	BYTE ProtocolType;
+	DWORD ItemID;
+	BYTE Count;
+	DWORD unknown_1;
+	BYTE unknown_2;
+};
+
+struct GAME_SKILL_COMMAND
+{
+	BYTE ProtocolType;
+	DWORD SimulationFrame;
+	WORD SkillId;
+	LONG TargetX;
+	LONG TargetY;
+	LONG unknown_1;
+	WORD MapX;
+	WORD MapY;
+	BYTE MapHigh;
+	WORD OffX;
+	WORD OffY;
+	WORD AimX;
+	WORD AimY;
+	BYTE AimHigh;
+	WORD TargetMapX;
+	WORD TargetMapY;
+	BYTE TargetMapHigh;
+	BYTE unknown_2;
+};
+
+struct GAME_USE_ITEM_COMMAND
+{
+	BYTE ProtocolType;
+	BYTE Place;
+	BYTE X;
+	BYTE Y;
+	DWORD ItemId;
+	BYTE UseMode;
+};
+
+struct GAME_PICKUP_COMMAND
+{
+	BYTE ProtocolType;
+	DWORD ObjectId;
+	BYTE Place;
+	BYTE X;
+	BYTE Y;
+	BYTE PickupMode;
+};
+
+// Current client 6FFC50: 94 + source position + count + fixed 1 + mode 0.
+struct GAME_SPLIT_ITEM_COMMAND
+{
+	BYTE ProtocolType;
+	BYTE Place;
+	BYTE X;
+	BYTE Y;
+	DWORD Count;
+	DWORD unknown_1;
+	BYTE Mode;
+};
+
+struct GAME_AURA_COMMAND
+{
+	BYTE ProtocolType;
+	DWORD SkillId;
+	DWORD EncodedCheck;
+};
+
+struct GAME_SKILL_CAST_SYNC
+{
+	BYTE ProtocolType;
+	DWORD ID;
+	WORD nSkillID;
+	BYTE nSkillLevel;
+	LONG nMpsX;
+	LONG nMpsY;
+	WORD MapX;
+	WORD MapY;
+	BYTE MapHigh;
+	WORD OffX;
+	WORD OffY;
+};
+
+struct GAME_AURA_SKILL_SYNC
+{
+	BYTE ProtocolType;
+	DWORD ID;
+	WORD nSkillID;
+	BYTE nSkillLevel;
+	LONG nMpsX;
+	LONG nMpsY;
+};
+
+struct GAME_PLAYER_LEVEL_UP_SYNC
+{
+	BYTE ProtocolType;
+	BYTE Level;
+	LONG LifeAdd;
+	LONG ManaAdd;
+	LONG LifeMax;
+	LONG ManaMax;
+	LONG AttributeAdd[4];
+	DWORD unknown_1;
+	DWORD unknown_2;
+};
+
+struct GAME_NPC_HURT_SYNC
+{
+	BYTE ProtocolType;
+	DWORD ID;
+	WORD unknown_1;
+	WORD HurtFrames;
+	WORD MapX;
+	WORD MapY;
+	BYTE MapHigh;
+	WORD OffX;
+	WORD OffY;
+};
+
+struct GAME_NPC_DEATH_SYNC
+{
+	BYTE ProtocolType;
+	DWORD ID;
+	BYTE DeathKind;
+	DWORD DeathExpLoss;
+	DWORD unknown_1;
+	WORD unknown_2;
+	WORD MapX;
+	WORD MapY;
+	BYTE MapHigh;
+	WORD OffX;
+	WORD OffY;
+	DWORD DeathSyncToken;
+};
+
+struct GAME_DAMAGE_SYNC
+{
+	BYTE ProtocolType;
+	BYTE DamageFlags;
+	LONG Damage;
+	DWORD ID;
+	BYTE LifeRatio;			// +10: 生命比例低八位。
+	BYTE PackedLife;			// +11: 比例高三位及当前阵营。
+	LONG LifeMax;
+};
+
+struct GAME_STATE_ATTRIBUTE
+{
+	LONG Type;
+	LONG Value[3];
+	DWORD unknown_1[9];
+};
+
+struct GAME_STATE_EFFECT_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	DWORD SkillId;
+	LONG Level;
+	LONG Time;
+	GAME_STATE_ATTRIBUTE Attributes[MAX_SKILL_STATE];
+};
+
+struct GAME_OBJECT_ADD_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE State;
+	LONG ID;
+	LONG TemplateId;
+	LONG MapX;
+	LONG MapY;
+	LONG Money;
+	LONG ItemId;
+	BYTE Direction;
+	BYTE Width;
+	WORD Frame;
+	BYTE Height;
+	BYTE Color;
+	BYTE Flags;
+	DWORD unknown_1;
+	char Name[80];
+};
+
+static_assert(sizeof(GAME_SKILL_COMMAND) == 39, "51 skill request");
+static_assert(sizeof(GAME_USE_ITEM_COMMAND) == 9, "61 item request");
+static_assert(sizeof(GAME_PICKUP_COMMAND) == 9, "62 pickup request");
+static_assert(sizeof(GAME_SPLIT_ITEM_COMMAND) == 13, "94 split request");
+static_assert(sizeof(GAME_AURA_COMMAND) == 9, "78 aura request");
+static_assert(sizeof(GAME_SKILL_CAST_SYNC) == 25, "5F skill cast");
+static_assert(sizeof(GAME_PLAYER_LEVEL_UP_SYNC) == 42, "71 level up");
+static_assert(sizeof(GAME_NPC_HURT_SYNC) == 18, "5B hurt");
+static_assert(sizeof(GAME_NPC_DEATH_SYNC) == 29, "5C death");
+static_assert(sizeof(GAME_DAMAGE_SYNC) == 16, "EA damage");
+static_assert(sizeof(GAME_STATE_ATTRIBUTE) == 52, "92 state attribute");
+static_assert(sizeof(GAME_OBJECT_ADD_SYNC) - 80 == 39, "4F object prefix");
+
 static_assert(sizeof(GAME_WORLD_SYNC) == 26, "49 map sync");
 static_assert(sizeof(GAME_NPC_SYNC) - 35 == 63, "4C entity prefix");
 static_assert(sizeof(GAME_PLAYER_SYNC) == 26, "4A appearance");
@@ -264,6 +464,8 @@ static_assert(sizeof(GAME_NPC_NORMAL_SYNC) == 29, "4D entity update");
 static_assert(sizeof(GAME_NPC_PLAYER_NORMAL_SYNC) == 24, "4E player position");
 static_assert(sizeof(GAME_SKILL_SYNC_DATA) == 9, "45 skill record");
 static_assert(sizeof(GAME_ITEM_SYNC) == 58, "CB item sync");
+static_assert(sizeof(GAME_AURA_SKILL_SYNC) == 16, "Aura skill sync");
+static_assert(sizeof(GAME_ITEM_COUNT_SYNC) == 11, "AD item count sync");
 static_assert(sizeof(GAME_TONG_SELF_INFO_SYNC) == 104, "FD/4 guild self");
 
 typedef struct

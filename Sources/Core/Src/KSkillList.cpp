@@ -575,6 +575,21 @@ int KSkillList::LoadPlayerSkill(int nSkillID, int nLevel)
 	return nIndex;
 }
 
+void KSkillList::ApplyPlayerPassiveSkills()
+{
+	for (int i = 1; i < MAX_NPCSKILL; i++)
+	{
+		// 与客户端一致：状态3表示已启用，1和2仅显示在技能列表中。
+		if (m_Skills[i].SkillId <= 0 || m_Skills[i].CurrentSkillLevel <= 0 ||
+			m_Skills[i].SkillStatus != 3)
+			continue;
+		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId,
+			m_Skills[i].CurrentSkillLevel);
+		if (pSkill && pSkill->GetSkillStyle() == SKILL_SS_PassivityNpcState)
+			pSkill->ApplyStateSkill(m_nNpcIndex);
+	}
+}
+
 BOOL KSkillList::LoadPlayerInitialSkills(int nSeries)
 {
 	static const char *szSections[] = { "Knight", "Enchanter", "Monstrous" };

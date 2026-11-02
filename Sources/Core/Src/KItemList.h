@@ -98,6 +98,10 @@ public:
 	void		RecoverTrade();
 	void		StartTrade();
 #ifdef	_SERVER
+	BOOL		AddPickupItem(int nIdx, int nX, int nY);
+	void		SyncItemCount(int nIdx);
+	void		SyncItem(int nIdx, BOOL bRefresh = FALSE);
+	BOOL		SplitItem(ItemPos* pSource, DWORD dwCount);
 	void		Abrade(int nType);
 	void		TradeMoveMoney(int nMoney);			// 调用此接口必须保证传入的nMoney是一个有效数(正数且不超过所有钱数)
 	void		SendMoneySync();					// 服务器发money同步信息给客户端

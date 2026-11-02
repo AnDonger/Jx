@@ -24,6 +24,7 @@ private:
 	void	LightingEnhanceP(KNpc* pNpc, void* pData);
 	void	FireEnhanceP(KNpc* pNpc, void* pData);
 	void	ColdEnhanceP(KNpc* pNpc, void* pData);
+	void	ExDefenseV(KNpc* pNpc, void* pData);
 	void	ArmorDefenseV(KNpc* pNpc, void* pData);
 	void	LifeMaxV(KNpc* pNpc, void* pData);
 	void	LifeMaxP(KNpc* pNpc, void* pData);

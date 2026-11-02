@@ -247,6 +247,11 @@ void KNpcTemplate::InitNpcLevelData(KTabFile * pKindFile, int nNpcTemplateId, KL
 		g_NpcSetting.GetFloat(nNpcTempRow, "DefenseParam2", 0, &nParam2);
 		g_NpcSetting.GetFloat(nNpcTempRow, "DefenseParam3", 0, &nParam3);
 		m_Defend = nParam *GetNpcLevelDataFromScript(pLevelScript, "Defense", nLevel, nParam1, nParam2, nParam3) / 100;
+		g_NpcSetting.GetFloat(nNpcTempRow, "ExDefenseParam", 0, &nParam);
+		g_NpcSetting.GetFloat(nNpcTempRow, "ExDefenseParam1", 0, &nParam1);
+		g_NpcSetting.GetFloat(nNpcTempRow, "ExDefenseParam2", 0, &nParam2);
+		g_NpcSetting.GetFloat(nNpcTempRow, "ExDefenseParam3", 0, &nParam3);
+		m_ExDefend = nParam * GetNpcLevelDataFromScript(pLevelScript, "ExDefense", nLevel, nParam1, nParam2, nParam3) / 100;
 
 
 		g_NpcSetting.GetFloat(nNpcTempRow, "MinDamageParam", 1, &nParam);

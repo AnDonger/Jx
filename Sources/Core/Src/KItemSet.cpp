@@ -173,26 +173,33 @@ int KItemSet::Add(int nItemGenre, int nSeries,
 
 	pItem->m_GeneratorParam.nVersion = nVersion;
 	pItem->m_GeneratorParam.uRandomSeed = nRandomSeed;
+	BOOL bGenerated = FALSE;
 	switch(nItemGenre)
 	{
 	case item_equip:			// 装备类
-		ItemGen.Gen_Equipment(nDetailType, nParticularType, nSeries, nLevel, pnMagicLevel, nLuck, nVersion, pItem);
+		bGenerated = ItemGen.Gen_Equipment(nDetailType, nParticularType, nSeries, nLevel, pnMagicLevel, nLuck, nVersion, pItem);
 		break;
 	case item_medicine:			// 药品类
-		ItemGen.Gen_Medicine(nDetailType, nLevel, nVersion, pItem);
+		bGenerated = ItemGen.Gen_Medicine(nDetailType, nLevel, nVersion, pItem);
 		break;
 	case item_mine:				// 矿石类
 		break;
 	case item_materials:		// 药材类
 		break;
 	case item_task:				// 默认是任务类
-		ItemGen.Gen_Quest(nDetailType, pItem);
+		bGenerated = ItemGen.Gen_Quest(nDetailType, pItem);
 		break;
 	case item_townportal:
-		ItemGen.Gen_TownPortal(pItem);
+		bGenerated = ItemGen.Gen_TownPortal(pItem);
 		break;
 	default:
 		break;
+	}
+
+	if (!bGenerated)
+	{
+		pItem->Remove();
+		return 0;
 	}
 
 #ifdef _SERVER

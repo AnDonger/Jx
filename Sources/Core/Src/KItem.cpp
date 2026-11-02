@@ -4,6 +4,7 @@
 #include "KNpc.h"
 #include "KItem.h"
 #include "KItemSet.h"
+#include "KItemGenerator.h"
 #ifndef _STANDALONE
 #include "../../../lib/S3DBInterface.h"
 #else
@@ -28,6 +29,7 @@ KItem::KItem()
 	::memset(m_aryMagicAttrib,   0, sizeof(m_aryMagicAttrib));
 	::memset(&m_GeneratorParam,	 0, sizeof(m_GeneratorParam));
 	m_nCurrentDur = -1;
+	m_nStackCount = 1;
 #ifndef _SERVER
 	::memset(&m_Image,   0, sizeof(KRUImage));
 #endif
@@ -231,6 +233,7 @@ BOOL KItem::SetAttrib_CBR(IN const KBASICPROP_EQUIPMENT* pData)
 
 BOOL KItem::SetAttrib_Base(const KEQCP_BASIC* pBasic)
 {
+	m_nCurrentDur = -1;
 	for (int i = 0;
 		 i < sizeof(m_aryBaseAttrib)/sizeof(m_aryBaseAttrib[0]); i++)
 	{
@@ -239,7 +242,14 @@ BOOL KItem::SetAttrib_Base(const KEQCP_BASIC* pBasic)
 		pDst = &(m_aryBaseAttrib[i]);
 		pSrc = &(pBasic[i]);
 		pDst->nAttribType = pSrc->nType;
-		pDst->nValue[0] = ::GetRandomNumber(pSrc->sRange.nMin, pSrc->sRange.nMax);
+		// 当前客户端前五项为基础属性，后五项为固定附加属性。
+		// Luck为0时基础属性取最小值；非0时按客户端种子生成。
+		if (i >= 5)
+			pDst->nValue[0] = pSrc->sRange.nMax;
+		else if (m_GeneratorParam.nLuck == 0)
+			pDst->nValue[0] = pSrc->sRange.nMin;
+		else
+			pDst->nValue[0] = ItemGen.GetRandomNumber(pSrc->sRange.nMin, pSrc->sRange.nMax);
 		pDst->nValue[1] = 0;	// RESERVED
 		pDst->nValue[2] = 0;	// RESERVED
 		if (pDst->nAttribType == magic_durability_v)
@@ -599,9 +609,49 @@ BOOL KItem::Gen_Equipment_Unique(const KBASICPROP_EQUIPMENT* pEqu,
 	return TRUE;
 }
 
+int KItem::GetMaxStackCount() const
+{
+	if (m_CommonAttrib.bStack <= 0)
+		return 1;
+	// 原物品表“是否叠加”可直接填写数量；旧表的1兼容布尔标记。
+	if (m_CommonAttrib.bStack == 1 || m_CommonAttrib.bStack > 255)
+		return 255;
+	return m_CommonAttrib.bStack;
+}
+
+BOOL KItem::CanStackWith(const KItem& Other) const
+{
+	if (GetMaxStackCount() <= 1 || Other.GetMaxStackCount() != GetMaxStackCount() ||
+		GetGenre() == item_equip || GetGenre() != Other.GetGenre() ||
+		GetDetailType() != Other.GetDetailType() || GetSeries() != Other.GetSeries() ||
+		m_CommonAttrib.nParticularType != Other.m_CommonAttrib.nParticularType ||
+		m_CommonAttrib.nLevel != Other.m_CommonAttrib.nLevel ||
+		m_CommonAttrib.nWidth != Other.m_CommonAttrib.nWidth ||
+		m_CommonAttrib.nHeight != Other.m_CommonAttrib.nHeight ||
+		m_GeneratorParam.nVersion != Other.m_GeneratorParam.nVersion ||
+		m_GeneratorParam.nLuck != Other.m_GeneratorParam.nLuck ||
+		m_nCurrentDur != Other.m_nCurrentDur)
+		return FALSE;
+	// 相同表项仍须核对效果，避免把不同属性的消耗品合并。
+	return memcmp(m_aryBaseAttrib, Other.m_aryBaseAttrib, sizeof(m_aryBaseAttrib)) == 0 &&
+		memcmp(m_aryRequireAttrib, Other.m_aryRequireAttrib, sizeof(m_aryRequireAttrib)) == 0 &&
+		memcmp(m_aryMagicAttrib, Other.m_aryMagicAttrib, sizeof(m_aryMagicAttrib)) == 0 &&
+		memcmp(m_GeneratorParam.nGeneratorLevel, Other.m_GeneratorParam.nGeneratorLevel,
+			sizeof(m_GeneratorParam.nGeneratorLevel)) == 0;
+}
+
+BOOL KItem::SetStackCount(int nCount)
+{
+	if (nCount < 1 || nCount > GetMaxStackCount())
+		return FALSE;
+	m_nStackCount = nCount;
+	return TRUE;
+}
+
 void KItem::Remove()
 {
 	m_nIndex = 0;
+	m_nStackCount = 1;
 }
 
 BOOL KItem::SetBaseAttrib(IN const KItemNormalAttrib* pAttrib)

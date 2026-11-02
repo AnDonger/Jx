@@ -31,6 +31,7 @@ public:
 protected:
 	KLibOfBPT	m_BPTLib;
 	int			m_nCurrentVersion;
+	UINT		m_uRandomSeed;
 	std::map<int, KLibOfBPT*> m_VersionLibraries;
 
 // 以下是辅助成员变量
@@ -44,6 +45,8 @@ protected:
 // 以下是对外接口
 public:
 	BOOL Init();
+	void SetRandomSeed(UINT uSeed);
+	int GetRandomNumber(int nMin, int nMax);
 	BOOL Gen_Item(IN int, IN int, IN int, IN int, IN OUT KItem*);
 	BOOL Gen_Quest(IN int, IN OUT KItem*);
 	BOOL Gen_TownPortal(IN OUT KItem*);

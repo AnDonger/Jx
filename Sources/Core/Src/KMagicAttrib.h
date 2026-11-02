@@ -178,8 +178,11 @@ enum MAGIC_ATTRIB
 	magic_magicenhance_p,
 	magic_attackratingenhance_v,
 	magic_attackratingenhance_p,
+	magic_addexdefense_v,
 	magic_normal_end,
 };
+
+int GetCurrentMagicAttribId(int nAttrib);
 
 extern const char MAGIC_ATTRIB_STRING[magic_normal_end + 1][100] ; 
 

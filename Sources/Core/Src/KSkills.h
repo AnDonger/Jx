@@ -147,6 +147,7 @@ public:
 #endif
 
 	const char * GetSkillName(){return m_szName;};
+	BOOL				ApplyStateSkill(int nLauncher) const;
 	int					GetSkillStyle(){ return m_eSkillStyle;};
 	BOOL				GetInfoFromTabFile(int nCol);
 	BOOL				GetInfoFromTabFile(KITabFile *pSkillsSettingFile, int nRow);

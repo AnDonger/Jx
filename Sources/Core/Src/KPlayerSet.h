@@ -25,7 +25,27 @@ typedef struct
 
 class KLevelAdd
 {
+public:
+	enum ATTRIBUTE_COEFFICIENT
+	{
+		PhysicsDamageMin,
+		PhysicsDamageMax,
+		MagicDamageMin,
+		MagicDamageMax,
+		AttackRating,
+		DefenceRating,
+		MaxLife,
+		MaxMana,
+		AttributeCoefficientCount,
+	};
 private:
+	BOOL	m_bBaseNumerical;
+	char	m_cAttributeOperator[AttributeCoefficientCount];
+	int		m_nAttributeCoefficient[AttributeCoefficientCount][3];
+	int		m_nHurtPerDefense;
+	BOOL	m_bClassLevelData[3];
+	int		m_nClassLevelExp[3][MAX_LEVEL + 1];
+	int		m_nClassLevelAttribute[3][MAX_LEVEL][4];
 	int		m_nLevelExp[MAX_LEVEL];				// 升级经验
 	int		m_nLifePerLevel[MAX_SERIES];			// 每个系升级加生命点
 	int		m_nStaminaPerLevel[MAX_SERIES];			// 每个系升级加体力点
@@ -42,7 +62,12 @@ private:
 public:
 	KLevelAdd();
 	BOOL		Init();
-	int			GetLevelExp(int nLevel);
+	int			GetLevelExp(int nLevel, int nClass = 0);
+	BOOL		HasClassLevelData(int nClass);
+	BOOL		GetLevelAttribute(int nClass, int nLevel, int* pAttribute);
+	BOOL		HasBaseNumerical() { return m_bBaseNumerical; }
+	int			GetAttributeValue(int nAttribute, int nClass, int nValue);
+	int			GetHurtPerDefense() { return m_nHurtPerDefense; }
 	int			GetLifePerLevel(int nSeries);
 	int			GetStaminaPerLevel(int nSeries);
 	int			GetManaPerLevel(int nSeries);

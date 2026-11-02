@@ -50,6 +50,10 @@ KSkill::KSkill()
 	
     // add by FreewayChen in 2003.6.6
     m_nImmediateAttribsNum = m_nStateAttribsNum = m_nMissleAttribsNum = m_nDamageAttribsNum = 0;
+	memset(m_DamageAttribs, 0, sizeof(m_DamageAttribs));
+	memset(m_StateAttribs, 0, sizeof(m_StateAttribs));
+	memset(m_ImmediateAttribs, 0, sizeof(m_ImmediateAttribs));
+	memset(m_MissleAttribs, 0, sizeof(m_MissleAttribs));
 	m_nSkillCostType = attrib_mana;
     m_nWaitTime = 0;
 	m_nEquiptLimited = 0;
@@ -168,14 +172,6 @@ relationisvalid:
 
 	if (Npc[nLauncher].IsPlayer())
 	{
-		if (IsPhysical())
-		{
-			int nWeapoinSkill = Npc[nLauncher].GetCurActiveWeaponSkill();
-			if ((DWORD)nWeapoinSkill != m_nId)
-			{
-				return FALSE;
-			}
-		}
 
 		//-2表示技能不受当前装备的限制,
 		//-1表示空手限制
@@ -255,6 +251,23 @@ relationisvalid:
 		  }
 		*/
 	}
+#ifdef _SERVER
+	if (nParam1 == -1)
+	{
+		if (Npc[nParam2].m_RegionIndex < 0 || Npc[nParam2].m_CurrentLife <= 0 ||
+			Npc[nParam2].m_SubWorldIndex != Npc[nLauncher].m_SubWorldIndex ||
+			NpcSet.GetDistance(nLauncher, nParam2) > GetAttackRadius())
+			return FALSE;
+	}
+	else
+	{
+		int nX, nY;
+		Npc[nLauncher].GetMpsPos(&nX, &nY);
+		if (nParam1 < 0 || nParam2 < 0 ||
+			g_GetDistance(nX, nY, nParam1, nParam2) > GetAttackRadius())
+			return FALSE;
+	}
+#endif
 	return TRUE;
 }
 
@@ -363,6 +376,7 @@ BOOL	KSkill::Cast(int nLauncher, int nParam1, int nParam2, int nWaitTime, eSkill
 	switch(m_eSkillStyle)
 	{
 		
+	case	SKILL_SS_Attack:
 	case	SKILL_SS_Missles:				//发子弹
 		{
 			CastMissles(nLauncher, nParam1, nParam2, nWaitTime, eLauncherType);
@@ -754,6 +768,13 @@ BOOL	KSkill::CastMissles(int nLauncher, int nParam1, int nParam2, int nWaitTime 
 							
 							CastExtractiveLineMissle(&SkillParam, nDir, nSrcPX, nSrcPY, nCos, nSin, nDesPX, nDesPY);
 						}
+						else if (m_bBaseSkill && m_bTargetOnly && nTargetId > 0 &&
+							nTargetId < MAX_NPC &&
+							g_MisslesLib[m_nChildSkillId].m_eMoveKind == MISSLE_MMK_Stand)
+						{
+							// 定点普通攻击的静止子弹应在目标处产生。
+							CastLine(&SkillParam, nDir, nDesPX, nDesPY);
+						}
 						else
 							CastLine(&SkillParam, nDir, nSrcPX,nSrcPY);
 					}break;
@@ -1107,6 +1128,9 @@ int KSkill::CastZone(TOrdinSkillParam * pSkillParam , int nDir, int nRefPX, int 
 					Missle[nMissleIndex].m_nDirIndex		= g_Dir2DirIndex(nDir, MaxMissleDir);
 					CreateMissle(nLauncher, m_nChildSkillId, nMissleIndex);
 					Missle[nMissleIndex].m_nFollowNpcIdx	= pSkillParam->nTargetId;
+					Missle[nMissleIndex].m_dwFollowNpcID =
+						(pSkillParam->nTargetId > 0 && pSkillParam->nTargetId < MAX_NPC) ?
+						Npc[pSkillParam->nTargetId].m_dwID : 0;
 					Missle[nMissleIndex].m_dwBornTime		= SubWorld[nSubWorldId].m_dwCurrentTime;
 					Missle[nMissleIndex].m_nSubWorldId		= nSubWorldId;
 					Missle[nMissleIndex].m_nLauncher		= nLauncher;
@@ -1212,6 +1236,9 @@ int		KSkill::CastLine(TOrdinSkillParam *pSkillParam, int nDir, int nRefPX, int n
 			Missle[nMissleIndex].m_nDirIndex		= nDirIndex;
 			CreateMissle(nLauncher, m_nChildSkillId, nMissleIndex);
 			Missle[nMissleIndex].m_nFollowNpcIdx	= pSkillParam->nTargetId;
+			Missle[nMissleIndex].m_dwFollowNpcID =
+				(pSkillParam->nTargetId > 0 && pSkillParam->nTargetId < MAX_NPC) ?
+				Npc[pSkillParam->nTargetId].m_dwID : 0;
 			Missle[nMissleIndex].m_dwBornTime		= SubWorld[nSubWorldId].m_dwCurrentTime;
 			Missle[nMissleIndex].m_nSubWorldId		= nSubWorldId;
 			Missle[nMissleIndex].m_nLauncher		= nLauncher;
@@ -1311,6 +1338,9 @@ int		KSkill::CastExtractiveLineMissle(TOrdinSkillParam* pSkillParam,  int nDir,i
 			}
 			
 			Missle[nMissleIndex].m_nFollowNpcIdx	= pSkillParam->nTargetId;
+			Missle[nMissleIndex].m_dwFollowNpcID =
+				(pSkillParam->nTargetId > 0 && pSkillParam->nTargetId < MAX_NPC) ?
+				Npc[pSkillParam->nTargetId].m_dwID : 0;
 			Missle[nMissleIndex].m_dwBornTime		= SubWorld[nSubWorldId].m_dwCurrentTime;
 			Missle[nMissleIndex].m_nSubWorldId		= nSubWorldId;
 			Missle[nMissleIndex].m_nLauncher		= nLauncher;
@@ -1457,6 +1487,9 @@ int KSkill::CastWall(TOrdinSkillParam * pSkillParam,  int nDir , int nRefPX , in
 			Missle[nMissleIndex].m_nSubWorldId		= nSubWorldId;
 			CreateMissle(nLauncher, m_nChildSkillId, nMissleIndex);
 			Missle[nMissleIndex].m_nFollowNpcIdx	= pSkillParam->nTargetId;
+			Missle[nMissleIndex].m_dwFollowNpcID =
+				(pSkillParam->nTargetId > 0 && pSkillParam->nTargetId < MAX_NPC) ?
+				Npc[pSkillParam->nTargetId].m_dwID : 0;
 			
 			if (pSkillParam->nTargetId)
 				Missle[nMissleIndex].m_dwFollowNpcID	= Npc[pSkillParam->nTargetId].m_dwID;
@@ -1585,6 +1618,9 @@ int		KSkill::CastCircle(TOrdinSkillParam * pSkillParam, int nDir, int nRefPX, in
 			CreateMissle(nLauncher, m_nChildSkillId, nMissleIndex);
 			
 			Missle[nMissleIndex].m_nFollowNpcIdx	= pSkillParam->nTargetId;
+			Missle[nMissleIndex].m_dwFollowNpcID =
+				(pSkillParam->nTargetId > 0 && pSkillParam->nTargetId < MAX_NPC) ?
+				Npc[pSkillParam->nTargetId].m_dwID : 0;
 			Missle[nMissleIndex].m_dwBornTime		= SubWorld[nSubWorldId].m_dwCurrentTime;
 			Missle[nMissleIndex].m_nSubWorldId		= nSubWorldId;
 			Missle[nMissleIndex].m_nLauncher		= nLauncher;
@@ -2050,6 +2086,10 @@ BOOL	KSkill::GetInfoFromTabFile(KITabFile *pSkillsSettingFile, int nRow)
 ****************************************************************************/
 void		KSkill::LoadSkillLevelData(unsigned long  nLevel /* =0*/, int nParam)
 {
+	memset(m_DamageAttribs, 0, sizeof(m_DamageAttribs));
+	memset(m_StateAttribs, 0, sizeof(m_StateAttribs));
+	memset(m_ImmediateAttribs, 0, sizeof(m_ImmediateAttribs));
+	memset(m_MissleAttribs, 0, sizeof(m_MissleAttribs));
 	m_nMissleAttribsNum = 0;
 	m_nDamageAttribsNum = 0;
 	m_nImmediateAttribsNum = 0;
@@ -2149,7 +2189,8 @@ KMissleMagicAttribsData* KSkill::CreateMissleMagicAttribsData(int nLauncher)  co
 	pMissleMagicAttribsData->m_pImmediateAttribs = (KMagicAttrib *)m_ImmediateAttribs;
 	pMissleMagicAttribsData->m_nImmediateMagicAttribsNum = m_nImmediateAttribsNum;
 	
-	KMagicAttrib * pDamageAttribs =  new KMagicAttrib[MAX_MISSLE_DAMAGEATTRIB];
+	KMagicAttrib * pDamageAttribs = new KMagicAttrib[MAX_MISSLE_DAMAGEATTRIB];
+	memset(pDamageAttribs, 0, sizeof(KMagicAttrib) * MAX_MISSLE_DAMAGEATTRIB);
 	pMissleMagicAttribsData->m_nDamageMagicAttribsNum = m_nDamageAttribsNum;
 	
 	//根据玩家的基本属性，确定子弹的伤害
@@ -2251,6 +2292,17 @@ int KSkill::GetSkillIdFromName(char * szSkillName)
 // Comments		:
 // Author		: RomanDou
 *****************************************************************************/
+BOOL KSkill::ApplyStateSkill(int nLauncher) const
+{
+	if (nLauncher > 0 && nLauncher < MAX_NPC &&
+		m_eSkillStyle == SKILL_SS_PassivityNpcState && m_nStateAttribsNum > 0)
+		return CastPassivitySkill(nLauncher, -1, nLauncher, 0);
+	if (nLauncher <= 0 || nLauncher >= MAX_NPC || m_nStateAttribsNum <= 0 ||
+		(!m_bTargetSelf && !m_bTargetAlly) || m_bTargetEnemy)
+		return FALSE;
+	return CastInitiativeSkill(nLauncher, -1, nLauncher, 0);
+}
+
 BOOL KSkill::CastInitiativeSkill(int nLauncher, int nParam1, int nParam2, int nWaitTime)  const 
 {
 	
@@ -2290,21 +2342,12 @@ BOOL KSkill::CastInitiativeSkill(int nLauncher, int nParam1, int nParam2, int nW
 	
 lab_processdamage:			
 	
-	KMissleMagicAttribsData * pAttribsData = CreateMissleMagicAttribsData(nLauncher);
-	if (pAttribsData) 
-	{
-		if (Npc[nParam2].ReceiveDamage(nLauncher, m_bIsMelee, pAttribsData->m_pDamageMagicAttribs, m_bUseAttackRate, m_bDoHurt))
-		{		
-			if (pAttribsData->m_nStateMagicAttribsNum > 0)
-				Npc[nParam2].SetStateSkillEffect(nLauncher, m_nId, m_ulLevel, pAttribsData->m_pStateMagicAttribs, pAttribsData->m_nStateMagicAttribsNum, pAttribsData->m_pStateMagicAttribs[0].nValue[1]);
-			
-			if (pAttribsData->m_nImmediateMagicAttribsNum > 0)
-				Npc[nParam2].SetImmediatelySkillEffect(nLauncher, pAttribsData->m_pImmediateAttribs, pAttribsData->m_nImmediateMagicAttribsNum);
-		}
-		return TRUE;
-	}
-	if (pAttribsData->DelRef() == 0)
-		delete pAttribsData;
+	if (m_nStateAttribsNum > 0)
+		Npc[nParam2].SetStateSkillEffect(nLauncher, m_nId, m_ulLevel,
+			(void*)m_StateAttribs, m_nStateAttribsNum, m_StateAttribs[0].nValue[1]);
+	if (m_nImmediateAttribsNum > 0)
+		Npc[nParam2].SetImmediatelySkillEffect(nLauncher,
+			(void*)m_ImmediateAttribs, m_nImmediateAttribsNum);
 #endif //_SERVER
 	return TRUE;
 }

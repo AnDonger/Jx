@@ -107,7 +107,8 @@ enum eSKillStyle
 		SKILL_SS_Mining,				//	采矿类		本技能用于采矿随机生成矿石
 		SKILL_SS_RepairWeapon,			//	修复类		本技能用于修复装备
 		SKILL_SS_Capture,				//	捕捉类		本技能用于捕捉动物Npc
-		SKILL_SS_Thief,					//	偷窃类
+		SKILL_SS_Attack = 15,				// 当前资源的普通攻击、实体目标攻击
+		SKILL_SS_Thief = 13,					//	偷窃类
 };
 
 

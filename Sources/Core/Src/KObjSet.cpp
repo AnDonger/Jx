@@ -243,29 +243,29 @@ int		KObjSet::Add(int nDataID, KMapPos MapPos, KObjItemInfo sItemInfo)
 	if (sItemInfo.m_szName[0] && strlen(sItemInfo.m_szName) < 32)
 		strcpy(Object[nAddNo].m_szName, sItemInfo.m_szName);
 
-	OBJ_ADD_SYNC	cObjAdd;
-	int				i, nTempX, nTempY;
-	cObjAdd.ProtocolType = (BYTE)s2c_objadd;
-	cObjAdd.m_nID = Object[nAddNo].m_nID;
-	cObjAdd.m_nDataID = Object[nAddNo].m_nDataID;
-	cObjAdd.m_btDir = Object[nAddNo].m_nDir;
-	cObjAdd.m_wCurFrame = Object[nAddNo].m_cImage.m_nCurFrame;
-	cObjAdd.m_btState = Object[nAddNo].m_nState;
-	SubWorld[MapPos.nSubWorld].Map2Mps(MapPos.nRegion, MapPos.nMapX, MapPos.nMapY, MapPos.nOffX, MapPos.nOffY, &nTempX, &nTempY);
-	cObjAdd.m_nXpos = nTempX;
-	cObjAdd.m_nYpos = nTempY;
-	cObjAdd.m_nMoneyNum = sItemInfo.m_nMoneyNum;
-	cObjAdd.m_nItemID = sItemInfo.m_nItemID;
-	cObjAdd.m_btItemWidth = sItemInfo.m_nItemWidth;
-	cObjAdd.m_btItemHeight = sItemInfo.m_nItemHeight;
-	cObjAdd.m_btColorID = sItemInfo.m_nColorID;
-	cObjAdd.m_btFlag = 0;
+	GAME_OBJECT_ADD_SYNC cObjAdd;
+	memset(&cObjAdd, 0, sizeof(cObjAdd));
+	int i, nTempX, nTempY;
+	cObjAdd.ProtocolType = 0x4F;
+	cObjAdd.ID = Object[nAddNo].m_nID;
+	cObjAdd.TemplateId = Object[nAddNo].m_nDataID;
+	cObjAdd.Direction = (BYTE)Object[nAddNo].m_nDir;
+	cObjAdd.Frame = (WORD)Object[nAddNo].m_cImage.m_nCurFrame;
+	cObjAdd.State = (BYTE)Object[nAddNo].m_nState;
+	Object[nAddNo].GetMpsPos(&nTempX, &nTempY);
+	cObjAdd.MapX = nTempX;
+	cObjAdd.MapY = nTempY;
+	cObjAdd.Money = sItemInfo.m_nMoneyNum;
+	cObjAdd.ItemId = sItemInfo.m_nItemID;
+	cObjAdd.Width = (BYTE)sItemInfo.m_nItemWidth;
+	cObjAdd.Height = (BYTE)sItemInfo.m_nItemHeight;
+	cObjAdd.Color = (BYTE)sItemInfo.m_nColorID;
 	if (sItemInfo.m_nSoundFlag)
-		cObjAdd.m_btFlag |= 0x01;
+		cObjAdd.Flags |= 1;
 	if (sItemInfo.m_nMovieFlag)
-		cObjAdd.m_btFlag |= 0x02;
-	strcpy(cObjAdd.m_szName, Object[nAddNo].m_szName);
-	cObjAdd.m_wLength = sizeof(OBJ_ADD_SYNC) - 1 - sizeof(cObjAdd.m_szName) + strlen(cObjAdd.m_szName);
+		cObjAdd.Flags |= 2;
+	g_StrCpyLen(cObjAdd.Name, Object[nAddNo].m_szName, sizeof(cObjAdd.Name));
+	cObjAdd.Length = sizeof(cObjAdd) - sizeof(cObjAdd.Name) + strlen(cObjAdd.Name) - 1;
 
 	POINT	POff[8] = 
 	{
@@ -279,14 +279,14 @@ int		KObjSet::Add(int nDataID, KMapPos MapPos, KObjItemInfo sItemInfo)
 		{16, 32},
 	};
 	int nMaxCount = MAX_BROADCAST_COUNT;
-	SubWorld[MapPos.nSubWorld].m_Region[MapPos.nRegion].BroadCast((BYTE*)&cObjAdd, cObjAdd.m_wLength + 1, nMaxCount, Object[nAddNo].m_nMapX, Object[nAddNo].m_nMapY);
+	SubWorld[MapPos.nSubWorld].m_Region[MapPos.nRegion].BroadCast((BYTE*)&cObjAdd, cObjAdd.Length + 1, nMaxCount, Object[nAddNo].m_nMapX, Object[nAddNo].m_nMapY);
 	int nConRegion;
 	for (i = 0; i < 8; i++)
 	{
 		nConRegion = SubWorld[MapPos.nSubWorld].m_Region[MapPos.nRegion].m_nConnectRegion[i];
 		if (nConRegion == -1)
 			continue;
-		SubWorld[MapPos.nSubWorld].m_Region[nConRegion].BroadCast((BYTE*)&cObjAdd, cObjAdd.m_wLength + 1, nMaxCount, Object[nAddNo].m_nMapX - POff[i].x, Object[nAddNo].m_nMapY - POff[i].y);
+		SubWorld[MapPos.nSubWorld].m_Region[nConRegion].BroadCast((BYTE*)&cObjAdd, cObjAdd.Length + 1, nMaxCount, Object[nAddNo].m_nMapX - POff[i].x, Object[nAddNo].m_nMapY - POff[i].y);
 	}
 
 	SubWorld[MapPos.nSubWorld].m_Region[MapPos.nRegion].AddObj(nAddNo);// m_WorldMessage.Send(GWM_OBJ_ADD, MapPos.nRegion, nAddNo);

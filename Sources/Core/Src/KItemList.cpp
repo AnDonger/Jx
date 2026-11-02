@@ -180,6 +180,165 @@ int KItemList::EquipmentPartToClientSlot(int nPart)
 	}
 }
 
+#ifdef _SERVER
+void KItemList::SyncItem(int nIdx, BOOL bRefresh)
+{
+	int nList = FindSame(nIdx);
+	if (!nList)
+		return;
+	if (bRefresh)
+	{
+		ITEM_REMOVE_SYNC Remove;
+		Remove.ProtocolType = s2c_removeitem;
+		Remove.m_ID = Item[nIdx].GetID();
+		g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &Remove, sizeof(Remove));
+	}
+
+	GAME_ITEM_SYNC	sItem;
+	memset(&sItem, 0, sizeof(sItem));
+	sItem.Count = (BYTE)Item[nIdx].GetStackCount();
+	sItem.ProtocolType = 0x75;
+	sItem.m_ID = Item[nIdx].GetID();
+	sItem.m_Genre = Item[nIdx].GetGenre();
+	sItem.m_Detail = Item[nIdx].GetDetailType();
+	sItem.m_Particur = Item[nIdx].GetParticular();
+	sItem.m_Series = Item[nIdx].GetSeries();
+	sItem.m_Level = Item[nIdx].GetLevel();
+	sItem.m_Luck = Item[nIdx].m_GeneratorParam.nLuck;
+	sItem.m_btPlace = m_Items[nList].nPlace;
+	sItem.m_btX = m_Items[nList].nPlace == pos_equip ?
+		EquipmentPartToClientSlot(m_Items[nList].nX) : m_Items[nList].nX;
+	sItem.m_btY = m_Items[nList].nY;
+	for (int j = 0; j < 6; j++)
+		sItem.m_MagicLevel[j] = (BYTE)Item[nIdx].m_GeneratorParam.nGeneratorLevel[j];
+	sItem.m_RandomSeed = Item[nIdx].m_GeneratorParam.uRandomSeed;
+	sItem.m_Version = Item[nIdx].m_GeneratorParam.nVersion;
+	sItem.m_Durability = Item[nIdx].GetDurability();
+	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC) - sizeof(sItem.unknown_9));
+}
+
+void KItemList::SyncItemCount(int nIdx)
+{
+	GAME_ITEM_COUNT_SYNC Count;
+	memset(&Count, 0, sizeof(Count));
+	Count.ProtocolType = 0xAD;
+	Count.ItemID = Item[nIdx].GetID();
+	Count.Count = (BYTE)Item[nIdx].GetStackCount();
+	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &Count, sizeof(Count));
+}
+
+BOOL KItemList::SplitItem(ItemPos* pSource, DWORD dwCount)
+{
+	if (!pSource || m_Hand || !dwCount || Player[m_PlayerIdx].CheckTrading())
+		return FALSE;
+	if (pSource->nPlace != pos_equiproom && pSource->nPlace != pos_repositoryroom)
+		return FALSE;
+
+	int nRoom = pSource->nPlace == pos_equiproom ? room_equipment : room_repository;
+	int nSource = m_Room[nRoom].FindItem(pSource->nX, pSource->nY);
+	int nList = nSource > 0 ? FindSame(nSource) : 0;
+	if (!nList || m_Items[nList].nPlace != pSource->nPlace ||
+		m_Items[nList].nX != pSource->nX || m_Items[nList].nY != pSource->nY)
+		return FALSE;
+	int nCount = Item[nSource].GetStackCount();
+	if (Item[nSource].GetMaxStackCount() <= 1 || dwCount > (DWORD)nCount)
+		return FALSE;
+
+	if (dwCount == (DWORD)nCount)
+	{
+		ExchangeItem(pSource, pSource);
+		return m_Hand == nSource;
+	}
+	if (!FindFree())
+		return FALSE;
+
+	// Copy the instance, preserving its resource version and attributes; Add assigns a new ID.
+	int nSplit = ItemSet.Add(&Item[nSource]);
+	if (!nSplit)
+		return FALSE;
+	Item[nSplit].SetStackCount((int)dwCount);
+	Item[nSource].SetStackCount(nCount - (int)dwCount);
+	if (!Add(nSplit, pos_hand, 0, 0))
+	{
+		Item[nSource].SetStackCount(nCount);
+		ItemSet.Remove(nSplit);
+		return FALSE;
+	}
+
+	// 75 creates the separate mouse stack; AD refreshes the quantity remaining in the source cell.
+	SyncItemCount(nSource);
+	SyncItemCount(nSplit);
+	return TRUE;
+}
+
+BOOL KItemList::AddPickupItem(int nIdx, int nX, int nY)
+{
+	if (nIdx <= 0 || nIdx >= MAX_ITEM || !Item[nIdx].GetID() || FindSame(nIdx))
+		return FALSE;
+
+	int nCount = Item[nIdx].GetStackCount();
+	int nRemaining = nCount;
+	int nList = m_UseIdx.GetNext(0);
+	while (nList && nRemaining > 0)
+	{
+		int nTarget = m_Items[nList].nIdx;
+		if (m_Items[nList].nPlace == pos_equiproom && Item[nTarget].CanStackWith(Item[nIdx]))
+		{
+			int nFree = Item[nTarget].GetMaxStackCount() - Item[nTarget].GetStackCount();
+			if (nFree > nRemaining)
+				nFree = nRemaining;
+			nRemaining -= nFree;
+		}
+		nList = m_UseIdx.GetNext(nList);
+	}
+
+	// 先确认余量能完整入包；失败时不改数量，地面物品保持原状。
+	if (nRemaining > 0)
+	{
+		if (!FindFree())
+			return FALSE;
+		if (!m_Room[room_equipment].CheckRoom(nX, nY, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
+		{
+			POINT Pos;
+			if (!m_Room[room_equipment].FindRoom(Item[nIdx].GetWidth(), Item[nIdx].GetHeight(), &Pos))
+				return FALSE;
+			nX = Pos.x;
+			nY = Pos.y;
+		}
+		Item[nIdx].SetStackCount(nRemaining);
+		if (!Add(nIdx, pos_equiproom, nX, nY))
+		{
+			Item[nIdx].SetStackCount(nCount);
+			return FALSE;
+		}
+	}
+
+	int nToStack = nCount - nRemaining;
+	nList = m_UseIdx.GetNext(0);
+	while (nList && nToStack > 0)
+	{
+		int nTarget = m_Items[nList].nIdx;
+		if (nTarget != nIdx && m_Items[nList].nPlace == pos_equiproom &&
+			Item[nTarget].CanStackWith(Item[nIdx]))
+		{
+			int nFree = Item[nTarget].GetMaxStackCount() - Item[nTarget].GetStackCount();
+			if (nFree > nToStack)
+				nFree = nToStack;
+			if (nFree > 0)
+			{
+				Item[nTarget].SetStackCount(Item[nTarget].GetStackCount() + nFree);
+				SyncItemCount(nTarget);
+				nToStack -= nFree;
+			}
+		}
+		nList = m_UseIdx.GetNext(nList);
+	}
+	if (!nRemaining)
+		ItemSet.Remove(nIdx);
+	return TRUE;
+}
+#endif
+
 int KItemList::Add(int nIdx, int nPlace, int nX, int nY)
 {
 	if (nIdx <= 0)
@@ -263,27 +422,7 @@ int KItemList::Add(int nIdx, int nPlace, int nX, int nY)
 		Equip(m_Items[i].nIdx, nX);
 	}
 #ifdef _SERVER
-	GAME_ITEM_SYNC	sItem;
-	memset(&sItem, 0, sizeof(sItem));
-	sItem.Count = 1;
-	sItem.ProtocolType = 0xCB;
-	sItem.m_ID = Item[nIdx].GetID();
-	sItem.m_Genre = Item[nIdx].GetGenre();
-	sItem.m_Detail = Item[nIdx].GetDetailType();
-	sItem.m_Particur = Item[nIdx].GetParticular();
-	sItem.m_Series = Item[nIdx].GetSeries();
-	sItem.m_Level = Item[nIdx].GetLevel();
-	sItem.m_Luck = Item[nIdx].m_GeneratorParam.nLuck;
-	sItem.m_btPlace = m_Items[i].nPlace;
-	sItem.m_btX = m_Items[i].nPlace == pos_equip ?
-		EquipmentPartToClientSlot(m_Items[i].nX) : m_Items[i].nX;
-	sItem.m_btY = m_Items[i].nY;
-	for (int j = 0; j < 6; j++)
-		sItem.m_MagicLevel[j] = (BYTE)Item[nIdx].m_GeneratorParam.nGeneratorLevel[j];
-	sItem.m_RandomSeed = Item[nIdx].m_GeneratorParam.uRandomSeed;
-	sItem.m_Version = Item[nIdx].m_GeneratorParam.nVersion;
-	sItem.m_Durability = Item[nIdx].GetDurability();
-	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC));
+	SyncItem(nIdx);
 #endif
 
 #ifndef _SERVER
@@ -1092,6 +1231,11 @@ BOOL KItemList::EatMecidine(int nIdx)
 	if (m_PlayerIdx <= 0)
 		return FALSE;
 
+	if (nIdx <= 0 || nIdx >= MAX_ITEM || !FindSame(nIdx))
+		return FALSE;
+	if (Player[m_PlayerIdx].CheckTrading() ||
+		Npc[Player[m_PlayerIdx].m_nIndex].m_CurrentLife <= 0)
+		return FALSE;
 	int nNpcIdx = Player[m_PlayerIdx].m_nIndex;
 	int nGenre = Item[nIdx].GetGenre();
 
@@ -1120,8 +1264,16 @@ BOOL KItemList::EatMecidine(int nIdx)
 #endif
 	}
 #ifdef _SERVER
-	Remove(nIdx);
-	ItemSet.Remove(nIdx);
+	if (Item[nIdx].GetStackCount() > 1)
+	{
+		Item[nIdx].SetStackCount(Item[nIdx].GetStackCount() - 1);
+		SyncItemCount(nIdx);
+	}
+	else
+	{
+		Remove(nIdx);
+		ItemSet.Remove(nIdx);
+	}
 #endif
 	if (Npc[Player[m_PlayerIdx].m_nIndex].m_Doing == do_sit)
 	{
@@ -1379,6 +1531,48 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 	sMove.m_btUpPos = DesPos->nPlace;
 	sMove.m_btUpX = DesPos->nX;
 	sMove.m_btUpY = DesPos->nY;
+	// Quantity-only AD does not redraw the client cell. Recreate affected client entries
+	// through the existing remove/add notifications, without running its implicit 78 merge.
+	if (m_Hand && SrcPos->nX == DesPos->nX && SrcPos->nY == DesPos->nY &&
+		(SrcPos->nPlace == pos_equiproom || SrcPos->nPlace == pos_repositoryroom ||
+		SrcPos->nPlace == pos_immediacy))
+	{
+		int nRoom = room_equipment;
+		if (SrcPos->nPlace == pos_repositoryroom)
+			nRoom = room_repository;
+		else if (SrcPos->nPlace == pos_immediacy)
+			nRoom = room_immediacy;
+		int nTarget = m_Room[nRoom].FindItem(SrcPos->nX, SrcPos->nY);
+		if (nTarget > 0 && Item[nTarget].GetMaxStackCount() > 1 &&
+			Item[m_Hand].GetMaxStackCount() > 1 &&
+			Item[nTarget].GetGenre() == Item[m_Hand].GetGenre() &&
+			Item[nTarget].GetDetailType() == Item[m_Hand].GetDetailType() &&
+			Item[nTarget].GetParticular() == Item[m_Hand].GetParticular())
+		{
+			if (!Item[nTarget].CanStackWith(Item[m_Hand]))
+				return;
+			int nTransfer = Item[nTarget].GetMaxStackCount() - Item[nTarget].GetStackCount();
+			if (nTransfer > Item[m_Hand].GetStackCount())
+				nTransfer = Item[m_Hand].GetStackCount();
+			if (nTransfer <= 0)
+				return;
+			int nRemaining = Item[m_Hand].GetStackCount() - nTransfer;
+			Item[nTarget].SetStackCount(Item[nTarget].GetStackCount() + nTransfer);
+			if (nRemaining > 0)
+			{
+				Item[m_Hand].SetStackCount(nRemaining);
+				SyncItem(m_Hand, TRUE);
+			}
+			else
+			{
+				int nRemoved = m_Hand;
+				Remove(nRemoved);
+				ItemSet.Remove(nRemoved);
+			}
+			SyncItem(nTarget, TRUE);
+			return;
+		}
+	}
 	// Exchange requests and replies use current client slots; the equipment logic uses ITEM_PART.
 	ItemPos SrcEquipmentPos = *SrcPos;
 	ItemPos DesEquipmentPos = *DesPos;
@@ -1653,8 +1847,8 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 				}
 				// 手上的东西放在了交易栏
 				GAME_ITEM_SYNC	sItem;
-	memset(&sItem, 0, sizeof(sItem));
-	sItem.Count = 1;
+				memset(&sItem, 0, sizeof(sItem));
+				sItem.Count = (BYTE)Item[m_Hand].GetStackCount();
 				sItem.ProtocolType = 0xCB;
 				sItem.m_ID = Item[m_Hand].GetID();
 				sItem.m_Genre = Item[m_Hand].GetGenre();
@@ -1710,6 +1904,13 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 	}
 
 
+#ifdef _SERVER
+	// 拿起、放下和交换后同步实际数量；78只携带位置，不携带数量。
+	if (nTempHand > 0 && FindSame(nTempHand))
+		SyncItemCount(nTempHand);
+	if (m_Hand > 0 && m_Hand != nTempHand && FindSame(m_Hand))
+		SyncItemCount(m_Hand);
+#endif
 #ifndef _SERVER
 	// Notify to Menu
 	if (m_Hand != nTempHand)	// 交换成功了

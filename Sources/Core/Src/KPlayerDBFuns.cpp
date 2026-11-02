@@ -29,6 +29,48 @@
 
 
 
+// 可选物品数量扩展位于标准物品记录后、好友区前；不占用旧记录未知字段。
+// 旧存档没有扩展时，每件数量为 1。所有扩展均受角色区间和版本校验。
+struct PLAYER_ITEM_COUNT_HEADER
+{
+	DWORD Magic;
+	DWORD Version;
+	DWORD ItemCount;
+};
+
+static const DWORD PLAYER_ITEM_COUNT_MAGIC = 0x314B5453;
+
+static BOOL GetPlayerItemCounts(const TRoleData* pRoleData, const BYTE** ppCounts)
+{
+	*ppCounts = NULL;
+	if (pRoleData->nItemCount < 0 || pRoleData->nItemCount >= MAX_PLAYER_ITEM ||
+		pRoleData->dwItemOffset < 0 || pRoleData->dwFriendOffset < 0)
+		return FALSE;
+	DWORD nEnd = (DWORD)pRoleData->dwItemOffset +
+		(DWORD)pRoleData->nItemCount * sizeof(TDBItemData);
+	if (nEnd > (DWORD)pRoleData->dwFriendOffset ||
+		(DWORD)pRoleData->dwFriendOffset > pRoleData->dwDataLen)
+		return FALSE;
+	DWORD nExtra = pRoleData->dwFriendOffset - nEnd;
+	if (nExtra == 0)
+		return TRUE;
+	if (nExtra != sizeof(PLAYER_ITEM_COUNT_HEADER) + (DWORD)pRoleData->nItemCount)
+		return FALSE;
+	PLAYER_ITEM_COUNT_HEADER Header;
+	memcpy(&Header, (const BYTE*)pRoleData + nEnd, sizeof(Header));
+	if (Header.Magic != PLAYER_ITEM_COUNT_MAGIC || Header.Version != 1 ||
+		Header.ItemCount != (DWORD)pRoleData->nItemCount)
+		return FALSE;
+	const BYTE* pCounts = (const BYTE*)pRoleData + nEnd + sizeof(Header);
+	for (int i = 0; i < pRoleData->nItemCount; i++)
+	{
+		if (pCounts[i] == 0)
+			return FALSE;
+	}
+	*ppCounts = pCounts;
+	return TRUE;
+}
+
 KList g_DBMsgList;
 
 int KPlayer::AddDBPlayer(char * szPlayerName, int sex, DWORD * pdwID)
@@ -183,6 +225,15 @@ int KPlayer::LoadDBPlayerInfo(BYTE *pPlayerInfo, int &nStep, unsigned int &nPara
 		// 玩家的装备列表
 		if ((nRet = LoadPlayerItemList(pPlayerInfo, m_pCurStatusOffset, nParam)) == 1)
 		{
+			// 装备和已启用被动技能加载完成后，再限制旧存档中的当前血蓝。
+			// 仅裁掉超过上限的值，受伤角色不会因重登回满。
+			KNpc& PlayerNpc = Npc[m_nIndex];
+			if (PlayerNpc.m_CurrentLife > PlayerNpc.m_CurrentLifeMax)
+				PlayerNpc.m_CurrentLife = PlayerNpc.m_CurrentLifeMax;
+			if (PlayerNpc.m_CurrentMana > PlayerNpc.m_CurrentManaMax)
+				PlayerNpc.m_CurrentMana = PlayerNpc.m_CurrentManaMax;
+			if (PlayerNpc.m_CurrentStamina > PlayerNpc.m_CurrentStaminaMax)
+				PlayerNpc.m_CurrentStamina = PlayerNpc.m_CurrentStaminaMax;
 			m_bFinishLoading = TRUE;
 			nRetValue = SendSyncData(nStep, nParam);
 			nStep++;
@@ -231,7 +282,8 @@ int KPlayer::UpdateDBPlayerInfo(BYTE* pPlayerInfo)
 	SavePlayerTaskList(pPlayerInfo);
 
 	// 玩家的物品列表
-	SavePlayerItemList(pPlayerInfo);
+	if (SavePlayerItemList(pPlayerInfo) != 1)
+		return -1;
 
 	//玩家的好友列表//
 //	SavePlayerFriendList(pPlayerInfo);
@@ -355,7 +407,7 @@ label_retry:
 
 	//玩家等级信息
 	m_nExp			= pRoleData->BaseInfo.fightexp;
-	m_nNextLevelExp = PlayerSet.m_cLevelAdd.GetLevelExp(pNpc->m_Level);
+	m_nNextLevelExp = PlayerSet.m_cLevelAdd.GetLevelExp(pNpc->m_Level, pRoleData->BaseInfo.ifiveprop);
 	m_dwLeadLevel	= pRoleData->BaseInfo.ileadlevel;
 	m_dwLeadExp		= pRoleData->BaseInfo.ileadexp;
 
@@ -439,6 +491,12 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 {
 	KASSERT(pRoleBuffer);
 	
+	const BYTE* pCounts = NULL;
+	if (!GetPlayerItemCounts((const TRoleData*)pRoleBuffer, &pCounts))
+	{
+		g_DebugLog("[Item] Invalid saved item count block: role=%s", m_PlayerName);
+		return -1;
+	}
 	int nItemCount = ((TRoleData *)pRoleBuffer)->nItemCount;
 	TDBItemData * pItemData = (TDBItemData *)pItemBuffer;
 	
@@ -583,6 +641,19 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 			NewItem.SetDurability(NewItem.GetMaxDurability());
 		}
 
+		// 旧生成算法可能将当前耐久保存为高于客户端上限的数值。
+		if (nItemClass == item_equip && NewItem.GetMaxDurability() >= 0 &&
+			NewItem.GetDurability() > NewItem.GetMaxDurability())
+		{
+			NewItem.SetDurability(NewItem.GetMaxDurability());
+		}
+
+		if (!NewItem.SetStackCount(pCounts ? pCounts[i] : 1))
+		{
+			g_DebugLog("[Item] Invalid saved stack count: role=%s, item=%d", m_PlayerName, i);
+			return -1;
+		}
+
 		pItemData ++;
 		
 		int nIndex = ItemSet.Add(&NewItem);
@@ -651,6 +722,7 @@ int	KPlayer::LoadPlayerFightSkillList(BYTE * pRoleBuffer, BYTE * &pFightBuffer, 
 	// For existing roles, add missing initial skills without changing learned levels.
 	if (!Npc[m_nIndex].m_SkillList.LoadPlayerInitialSkills(Npc[m_nIndex].m_Series))
 		return -1;
+	Npc[m_nIndex].m_SkillList.ApplyPlayerPassiveSkills();
 	return 1;
 }
 
@@ -881,6 +953,8 @@ int	KPlayer::SavePlayerItemList(BYTE * pRoleBuffer)
 
 	TDBItemData * pItemData = (TDBItemData*) ((BYTE*)pRoleData +  pRoleData->dwItemOffset);
 
+	BYTE Counts[MAX_PLAYER_ITEM];
+
 	int	nItemCount = 0;
 	char szSection[100];
 	char szKey[100];
@@ -919,14 +993,36 @@ int	KPlayer::SavePlayerItemList(BYTE * pRoleBuffer)
 		pItemData->iidentify = 0;
 		//*****************************************************************************8
 
+		Counts[nItemCount] = (BYTE)Item[nItemIndex].GetStackCount();
+
 		pItemData++;
 		nItemCount ++;
 	}
 	
 	pRoleData->nItemCount = nItemCount;
 	
-	pRoleData->dwFriendOffset = (BYTE *)pItemData - (BYTE * )pRoleData;
-	pRoleData->dwDataLen = (BYTE*)pItemData - (BYTE*)pRoleBuffer;
+	BYTE* pEnd = (BYTE*)pItemData;
+	BOOL bHasStack = FALSE;
+	for (int i = 0; i < nItemCount; i++)
+	{
+		if (Counts[i] > 1)
+			bHasStack = TRUE;
+	}
+	if (bHasStack)
+	{
+		if (pEnd - pRoleBuffer + sizeof(PLAYER_ITEM_COUNT_HEADER) + nItemCount >= sizeof(m_SaveBuffer))
+			return -1;
+		PLAYER_ITEM_COUNT_HEADER Header;
+		Header.Magic = PLAYER_ITEM_COUNT_MAGIC;
+		Header.Version = 1;
+		Header.ItemCount = nItemCount;
+		memcpy(pEnd, &Header, sizeof(Header));
+		pEnd += sizeof(Header);
+		memcpy(pEnd, Counts, nItemCount);
+		pEnd += nItemCount;
+	}
+	pRoleData->dwFriendOffset = pEnd - pRoleBuffer;
+	pRoleData->dwDataLen = pEnd - pRoleBuffer;
 	return 1;
 }
 

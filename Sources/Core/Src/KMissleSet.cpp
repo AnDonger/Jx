@@ -102,7 +102,7 @@ int	KMissleSet::CreateMissile(int nSkillId, int nMissleId, int nLauncher,  int n
 *****************************************************************************/
 int KMissleSet::Activate()
 {
-	for (int i = 1;i <= MAX_MISSLE;i ++)
+	for (int i = 1; i < MAX_MISSLE; i++)
 	{
 		Missle[i].Activate();
 	}

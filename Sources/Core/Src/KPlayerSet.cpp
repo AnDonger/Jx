@@ -512,6 +512,13 @@ void KPlayerSet::ProcessClientMessage(int nIndex, const char* pChar, int nSize)
 //---------------------------------------------------------------------------
 KLevelAdd::KLevelAdd()
 {
+	m_bBaseNumerical = FALSE;
+	m_nHurtPerDefense = 1;
+	memset(m_cAttributeOperator, 0, sizeof(m_cAttributeOperator));
+	memset(m_nAttributeCoefficient, 0, sizeof(m_nAttributeCoefficient));
+	memset(m_bClassLevelData, 0, sizeof(m_bClassLevelData));
+	memset(m_nClassLevelExp, 0, sizeof(m_nClassLevelExp));
+	memset(m_nClassLevelAttribute, 0, sizeof(m_nClassLevelAttribute));
 	memset(m_nLevelExp, 0, sizeof(int) * MAX_LEVEL);
 	memset(m_nLifePerLevel, 0, sizeof(int) * series_num);
 	memset(m_nManaPerLevel, 0, sizeof(int) * series_num);
@@ -554,6 +561,66 @@ BOOL	KLevelAdd::Init()
 		LevelAdd.GetInteger(i + 2, 13, 0, &m_nPhysicsResistPerLevel[i]);
 	}
 
+	KIniFile Numerical;
+	if (Numerical.Load("\\settings\\npc\\player\\basenumcalc.ini"))
+	{
+		static const char* pszNames[AttributeCoefficientCount] =
+		{
+			"BasePhysicsDamageMinC", "BasePhysicsDamageMaxC",
+			"BaseMagicDamageMinC", "BaseMagicDamageMaxC",
+			"AttackRatingC", "DefenceRatingC", "MaxLifeC", "MaxManaC",
+		};
+		m_bBaseNumerical = TRUE;
+		for (i = 0; i < AttributeCoefficientCount; i++)
+		{
+			char szValue[100];
+			Numerical.GetString("Attr2State", pszNames[i], "", szValue, sizeof(szValue));
+			int* pValue = m_nAttributeCoefficient[i];
+			if (sscanf(szValue, "%c:%d,%d,%d", &m_cAttributeOperator[i],
+				&pValue[0], &pValue[1], &pValue[2]) != 4 ||
+				(m_cAttributeOperator[i] != '*' && m_cAttributeOperator[i] != '/') ||
+				pValue[0] <= 0 || pValue[1] <= 0 || pValue[2] <= 0)
+			{
+				m_bBaseNumerical = FALSE;
+				g_DebugLog("[Player] Invalid base numerical coefficient: %s", pszNames[i]);
+				return FALSE;
+			}
+		}
+		Numerical.GetInteger("Settings", "HurtPreDefense", 1, &m_nHurtPerDefense);
+		if (m_nHurtPerDefense <= 0)
+			return FALSE;
+		for (i = 0; i < 3; i++)
+		{
+			m_nLifePerVitality[i] = GetAttributeValue(MaxLife, i, 1);
+			m_nManaPerEnergy[i] = GetAttributeValue(MaxMana, i, 1);
+		}
+	}
+
+	static char* pszClassFiles[3] =
+	{
+		"\\settings\\npc\\player\\甲士升级点数设定.txt",
+		"\\settings\\npc\\player\\术士升级点数设定.txt",
+		"\\settings\\npc\\player\\异人升级点数设定.txt",
+	};
+	for (i = 0; i < 3; i++)
+	{
+		KTabFile ClassLevel;
+		if (!ClassLevel.Load(pszClassFiles[i]))
+			continue;
+		for (int nLevel = 0; nLevel <= MAX_LEVEL; nLevel++)
+		{
+			ClassLevel.GetInteger(nLevel + 2, "exp", 0, &m_nClassLevelExp[i][nLevel]);
+			if (nLevel < MAX_LEVEL)
+			{
+				static char* pszColumns[4] = {"str", "dex", "con", "int"};
+				for (int j = 0; j < 4; j++)
+					ClassLevel.GetInteger(nLevel + 2, pszColumns[j], 0,
+						&m_nClassLevelAttribute[i][nLevel][j]);
+			}
+		}
+		m_bClassLevelData[i] = TRUE;
+	}
+
 	return TRUE;
 }
 
@@ -561,11 +628,37 @@ BOOL	KLevelAdd::Init()
 //	功能：获得某等级的升级经验
 //	参数：nLevel  目标等级
 //---------------------------------------------------------------------------
-int		KLevelAdd::GetLevelExp(int nLevel)
+int		KLevelAdd::GetLevelExp(int nLevel, int nClass)
 {
 	if (nLevel < 1 || nLevel > MAX_LEVEL)
 		return 0;
+	if (HasClassLevelData(nClass))
+		return m_nClassLevelExp[nClass][nLevel];
 	return m_nLevelExp[nLevel - 1];
+}
+
+BOOL KLevelAdd::HasClassLevelData(int nClass)
+{
+	return nClass >= 0 && nClass < 3 && m_bClassLevelData[nClass];
+}
+
+BOOL KLevelAdd::GetLevelAttribute(int nClass, int nLevel, int* pAttribute)
+{
+	if (!HasClassLevelData(nClass) || nLevel < 1 || nLevel > MAX_LEVEL || !pAttribute)
+		return FALSE;
+	memcpy(pAttribute, m_nClassLevelAttribute[nClass][nLevel - 1], sizeof(int) * 4);
+	return TRUE;
+}
+
+int KLevelAdd::GetAttributeValue(int nAttribute, int nClass, int nValue)
+{
+	if (!m_bBaseNumerical || nClass < 0 || nClass >= 3 ||
+		nAttribute < 0 || nAttribute >= AttributeCoefficientCount)
+		return 0;
+	int nCoefficient = m_nAttributeCoefficient[nAttribute][nClass];
+	if (m_cAttributeOperator[nAttribute] == '*')
+		return nValue * nCoefficient;
+	return nCoefficient > 0 ? nValue / nCoefficient : 0;
 }
 
 //---------------------------------------------------------------------------

@@ -52,7 +52,7 @@ extern int LuaGetNpcTalk(Lua_State *L);
 
 #define		PLAYER_LEVEL_1_EXP				48
 #define		PLAYER_LEVEL_ADD_ATTRIBUTE		5
-#define		PLAYER_LEVEL_ADD_SKILL			1
+#define		PLAYER_LEVEL_ADD_SKILL			3
 #define		PLAYER_SHARE_EXP_DISTANCE		768
 #define		PLAYER_TEAM_EXP_ADD				50
 
@@ -828,7 +828,7 @@ BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 			sSync.Dexterity = (WORD)m_nDexterity;
 			sSync.Vitality = (WORD)m_nVitality;
 			sSync.Energy = (WORD)m_nEngergy;
-			sSync.Defense = (WORD)Npc[m_nIndex].m_Defend;
+			sSync.Defense = (WORD)Npc[m_nIndex].m_ExDefend;
 			sSync.Exp = m_nExp;
 			sSync.WorldRank = (WORD)m_nWorldStat;
 			sSync.Money = m_ItemList.GetMoney(room_equipment);
@@ -1801,7 +1801,7 @@ void	KPlayer::AddBaseStrength(int nData)
 		SetNpcPhysicsDamage();
 		// 把当前力量传给客户端
 		PLAYER_ATTRIBUTE_SYNC	sSync;
-		sSync.ProtocolType = s2c_playersyncattribute;
+		sSync.ProtocolType = 0x73;
 		sSync.m_btAttribute = 0;
 		sSync.m_nBasePoint = m_nStrength;
 		sSync.m_nCurPoint = m_nCurStrength;
@@ -1830,7 +1830,7 @@ void	KPlayer::AddBaseDexterity(int nData)
 		
 		// 把当前力量传给客户端
 		PLAYER_ATTRIBUTE_SYNC	sSync;
-		sSync.ProtocolType = s2c_playersyncattribute;
+		sSync.ProtocolType = 0x73;
 		sSync.m_btAttribute = 1;
 		sSync.m_nBasePoint = m_nDexterity;
 		sSync.m_nCurPoint = m_nCurDexterity;
@@ -1858,7 +1858,7 @@ void	KPlayer::AddBaseVitality(int nData)
 		
 		// 把当前力量传给客户端
 		PLAYER_ATTRIBUTE_SYNC	sSync;
-		sSync.ProtocolType = s2c_playersyncattribute;
+		sSync.ProtocolType = 0x73;
 		sSync.m_btAttribute = 2;
 		sSync.m_nBasePoint = m_nVitality;
 		sSync.m_nCurPoint = m_nCurVitality;
@@ -1885,7 +1885,7 @@ void	KPlayer::AddBaseEngergy(int nData)
 		
 		// 把当前力量传给客户端
 		PLAYER_ATTRIBUTE_SYNC	sSync;
-		sSync.ProtocolType = s2c_playersyncattribute;
+		sSync.ProtocolType = 0x73;
 		sSync.m_btAttribute = 3;
 		sSync.m_nBasePoint = m_nEngergy;
 		sSync.m_nCurPoint = m_nCurEngergy;
@@ -1918,10 +1918,15 @@ return;
 	*/
 	m_nCurDexterity += nData;
 	
-	int nRating = nData * 4;
+	int nClass = Npc[m_nIndex].m_Series;
+	int nRating = PlayerSet.m_cLevelAdd.HasBaseNumerical() ?
+		PlayerSet.m_cLevelAdd.GetAttributeValue(KLevelAdd::AttackRating, nClass, m_nCurDexterity) -
+		PlayerSet.m_cLevelAdd.GetAttributeValue(KLevelAdd::AttackRating, nClass, m_nCurDexterity - nData) : nData * 4;
 	Npc[m_nIndex].m_CurrentAttackRating += nRating;
 	
-	int nDefence = nData / 4;
+	int nDefence = PlayerSet.m_cLevelAdd.HasBaseNumerical() ?
+		PlayerSet.m_cLevelAdd.GetAttributeValue(KLevelAdd::DefenceRating, nClass, m_nCurDexterity) -
+		PlayerSet.m_cLevelAdd.GetAttributeValue(KLevelAdd::DefenceRating, nClass, m_nCurDexterity - nData) : nData / 4;
 	Npc[m_nIndex].m_CurrentDefend += nDefence;
 	
 	SetNpcPhysicsDamage();
@@ -1970,35 +1975,29 @@ void	KPlayer::AddBaseLucky(int nData)
 //-------------------------------------------------------------------------
 //	功能：由当前力量计算对应npc的物理伤害(PhysicsDamage)
 //-------------------------------------------------------------------------
-void	KPlayer::SetNpcPhysicsDamage()
+void KPlayer::SetNpcPhysicsDamage()
 {
-	int		nMinDamage, nMaxDamage;
+	int nMinDamage, nMaxDamage;
 	m_ItemList.GetWeaponDamage(&nMinDamage, &nMaxDamage);
-	
-	if (m_ItemList.GetWeaponType() == equip_meleeweapon)	// (当前装备是近身武器)
+	if (PlayerSet.m_cLevelAdd.HasBaseNumerical())
 	{
-	/*		nMinDamage = nMinDamage * (m_nCurStrength + STRENGTH_SET_DAMAGE_VALUE) / STRENGTH_SET_DAMAGE_VALUE;
-	nMaxDamage = nMaxDamage * (m_nCurStrength + STRENGTH_SET_DAMAGE_VALUE) / STRENGTH_SET_DAMAGE_VALUE;
-		*/
-		// 数值计算方法修改（孙英要求） by Spe 03/06/11
+		int nClass = Npc[m_nIndex].m_Series;
+		int nMinType = nClass == 0 ? KLevelAdd::PhysicsDamageMin : KLevelAdd::MagicDamageMin;
+		int nMaxType = nClass == 0 ? KLevelAdd::PhysicsDamageMax : KLevelAdd::MagicDamageMax;
+		nMinDamage += PlayerSet.m_cLevelAdd.GetAttributeValue(nMinType, nClass, m_nCurStrength);
+		nMaxDamage += PlayerSet.m_cLevelAdd.GetAttributeValue(nMaxType, nClass, m_nCurStrength);
+	}
+	else if (m_ItemList.GetWeaponType() == equip_meleeweapon)
+	{
 		nMinDamage += m_nCurStrength / STRENGTH_SET_DAMAGE_VALUE;
 		nMaxDamage += m_nCurStrength / STRENGTH_SET_DAMAGE_VALUE;
-		Npc[m_nIndex].SetPhysicsDamage(nMinDamage, nMaxDamage);
 	}
-	else if (m_ItemList.GetWeaponType() == equip_rangeweapon)	// (当前装备是远程武器)
+	else if (m_ItemList.GetWeaponType() == equip_rangeweapon)
 	{
-	/*		nMinDamage = nMinDamage * (m_nCurDexterity + DEXTERITY_SET_DAMAGE_VALUE) / DEXTERITY_SET_DAMAGE_VALUE;
-	nMaxDamage = nMaxDamage * (m_nCurDexterity + DEXTERITY_SET_DAMAGE_VALUE) / DEXTERITY_SET_DAMAGE_VALUE;
-		*/
-		// 数值计算方法修改（孙英要求） by Spe 03/06/11
 		nMinDamage += m_nCurDexterity / DEXTERITY_SET_DAMAGE_VALUE;
 		nMaxDamage += m_nCurDexterity / DEXTERITY_SET_DAMAGE_VALUE;
-		Npc[m_nIndex].SetPhysicsDamage(nMinDamage, nMaxDamage);
 	}
-	else
-	{
-		Npc[m_nIndex].SetPhysicsDamage(nMinDamage, nMaxDamage);
-	}
+	Npc[m_nIndex].SetPhysicsDamage(nMinDamage, nMaxDamage);
 }
 
 //-------------------------------------------------------------------------
@@ -2008,7 +2007,9 @@ void	KPlayer::SetNpcAttackRating()
 {
 	int		nRating;
 	
-	nRating = m_nDexterity * 4 - 28;
+	nRating = PlayerSet.m_cLevelAdd.HasBaseNumerical() ?
+		PlayerSet.m_cLevelAdd.GetAttributeValue(KLevelAdd::AttackRating,
+			Npc[m_nIndex].m_Series, m_nDexterity) : m_nDexterity * 4 - 28;
 	Npc[m_nIndex].SetBaseAttackRating(nRating);
 }
 
@@ -2019,7 +2020,9 @@ void	KPlayer::SetNpcDefence()
 {
 	int		nDefence;
 	
-	nDefence = m_nDexterity / 4;
+	nDefence = PlayerSet.m_cLevelAdd.HasBaseNumerical() ?
+		PlayerSet.m_cLevelAdd.GetAttributeValue(KLevelAdd::DefenceRating,
+			Npc[m_nIndex].m_Series, m_nDexterity) : m_nDexterity / 4;
 	Npc[m_nIndex].SetBaseDefence(nDefence);
 }
 
@@ -2253,14 +2256,14 @@ void	KPlayer::AddSelfExp(int nExp, int nTarLevel)
 	m_nExp += nGetExp;
 	g_DebugLog("[数值]%s实际增加经验%d点", Npc[m_nIndex].Name, nGetExp);
 #ifdef _SERVER
-	if (m_nExp >= m_nNextLevelExp)	// 升级
+	while (m_nNextLevelExp > 0 && m_nExp >= m_nNextLevelExp &&
+		Npc[m_nIndex].m_Level < MAX_LEVEL)	// 升级
 	{
 		LevelUp();
 	}
-	else								// 同步经验
 	{
 		PLAYER_EXP_SYNC	sSyncExp;
-		sSyncExp.ProtocolType = (BYTE)s2c_playerexp;
+		sSyncExp.ProtocolType = 0x61;
 		sSyncExp.m_nExp = m_nExp;
 		g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSyncExp, sizeof(PLAYER_EXP_SYNC));
 	}
@@ -2282,14 +2285,14 @@ void	KPlayer::DirectAddExp(int nExp)
 			m_nExp = -m_nNextLevelExp;
 	}
 #ifdef _SERVER
-	if (m_nExp >= m_nNextLevelExp)	// 升级
+	while (m_nNextLevelExp > 0 && m_nExp >= m_nNextLevelExp &&
+		Npc[m_nIndex].m_Level < MAX_LEVEL)	// 升级
 	{
 		LevelUp();
 	}
-	else								// 同步经验
 	{
 		PLAYER_EXP_SYNC	sSyncExp;
-		sSyncExp.ProtocolType = (BYTE)s2c_playerexp;
+		sSyncExp.ProtocolType = 0x61;
 		sSyncExp.m_nExp = m_nExp;
 		g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSyncExp, sizeof(PLAYER_EXP_SYNC));
 	}
@@ -2301,11 +2304,17 @@ void	KPlayer::DirectAddExp(int nExp)
 //-------------------------------------------------------------------------
 void	KPlayer::LevelUp()
 {
-	m_nExp = 0;
 	if (Npc[m_nIndex].m_Level >= MAX_LEVEL)
 		return;
+	if (m_nNextLevelExp > 0 && m_nExp >= m_nNextLevelExp)
+		m_nExp -= m_nNextLevelExp;
+	int nOldLifeMax = Npc[m_nIndex].m_LifeMax;
+	int nOldManaMax = Npc[m_nIndex].m_ManaMax;
 	Npc[m_nIndex].m_Level++;
-	m_nNextLevelExp = PlayerSet.m_cLevelAdd.GetLevelExp(Npc[m_nIndex].m_Level);
+	int nAttributeAdd[4] = {0, 0, 0, 0};
+	BOOL bCurrentLevelData = PlayerSet.m_cLevelAdd.GetLevelAttribute(
+		Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level, nAttributeAdd);
+	m_nNextLevelExp = PlayerSet.m_cLevelAdd.GetLevelExp(Npc[m_nIndex].m_Level, Npc[m_nIndex].m_Series);
 	
 	// -------------------------- 等级增加时各项属性增加 ----------------------
 	// 增加未分配属性点
@@ -2314,9 +2323,23 @@ void	KPlayer::LevelUp()
 	m_nSkillPoint += PLAYER_LEVEL_ADD_SKILL;
 	
 	// 处理生命、体力、内力值（影响基本生命、体力、内力最大值的因素：等级、属性点，影响当前生命最大值的因素：装备、技能、药物（临时））
-	LevelAddBaseLifeMax();
-	LevelAddBaseStaminaMax();
-	LevelAddBaseManaMax();
+	if (bCurrentLevelData)
+	{
+		m_nStrength += nAttributeAdd[0];
+		m_nDexterity += nAttributeAdd[1];
+		m_nVitality += nAttributeAdd[2];
+		m_nEngergy += nAttributeAdd[3];
+		Npc[m_nIndex].AddBaseLifeMax(PlayerSet.m_cLevelAdd.GetLifePerVitality(Npc[m_nIndex].m_Series) * nAttributeAdd[2]);
+		Npc[m_nIndex].AddBaseManaMax(PlayerSet.m_cLevelAdd.GetManaPerEnergy(Npc[m_nIndex].m_Series) * nAttributeAdd[3]);
+		SetBaseAttackRating();
+		SetBaseDefence();
+	}
+	else
+	{
+		LevelAddBaseLifeMax();
+		LevelAddBaseStaminaMax();
+		LevelAddBaseManaMax();
+	}
 	//	Npc[m_nIndex].ResetLifeReplenish();
 	
 	// 处理各种抗性的变化 火、冰、毒、电、物理
@@ -2355,17 +2378,32 @@ void	KPlayer::LevelUp()
 #ifdef _SERVER
 	// 给客户端发送数据
 	// 自己的数据
-	PLAYER_LEVEL_UP_SYNC	sLevelUp;
-	sLevelUp.ProtocolType		= s2c_playerlevelup;
-	sLevelUp.m_btLevel			= (DWORD)Npc[m_nIndex].m_Level;
-	sLevelUp.m_nExp				= m_nExp;
-	sLevelUp.m_nAttributePoint	= m_nAttributePoint;
-	sLevelUp.m_nSkillPoint		= m_nSkillPoint;
-	sLevelUp.m_nBaseLifeMax		= Npc[m_nIndex].m_LifeMax;
-	sLevelUp.m_nBaseStaminaMax	= Npc[m_nIndex].m_StaminaMax;
-	sLevelUp.m_nBaseManaMax		= Npc[m_nIndex].m_ManaMax;
-	g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sLevelUp, sizeof(PLAYER_LEVEL_UP_SYNC));
-	// 给队友发送等级数据
+	PLAYER_ATTRIBUTE_SYNC Attribute;
+	memset(&Attribute, 0, sizeof(Attribute));
+	Attribute.ProtocolType = 0x73;
+	int nBase[4] = {m_nStrength, m_nDexterity, m_nVitality, m_nEngergy};
+	int nCurrent[4] = {m_nCurStrength, m_nCurDexterity, m_nCurVitality, m_nCurEngergy};
+	for (int i = 0; i < 4; i++)
+	{
+		Attribute.m_btAttribute = (BYTE)i;
+		Attribute.m_nBasePoint = nBase[i];
+		Attribute.m_nCurPoint = nCurrent[i];
+		Attribute.m_nLeavePoint = m_nAttributePoint - PLAYER_LEVEL_ADD_ATTRIBUTE;
+		g_pServer->PackDataToClient(m_nNetConnectIdx, &Attribute, sizeof(Attribute));
+	}
+	GAME_PLAYER_LEVEL_UP_SYNC Level;
+	memset(&Level, 0, sizeof(Level));
+	Level.ProtocolType = 0x71;
+	Level.Level = (BYTE)Npc[m_nIndex].m_Level;
+	// 71的这两项为血蓝成长值，客户端用于还原升级前的上限。
+	Level.LifeAdd = Npc[m_nIndex].m_LifeMax - nOldLifeMax;
+	Level.ManaAdd = Npc[m_nIndex].m_ManaMax - nOldManaMax;
+	Level.LifeMax = Npc[m_nIndex].m_LifeMax;
+	Level.ManaMax = Npc[m_nIndex].m_ManaMax;
+	memcpy(Level.AttributeAdd, nAttributeAdd, sizeof(nAttributeAdd));
+	Level.unknown_2 = 128;
+	g_pServer->PackDataToClient(m_nNetConnectIdx, &Level, sizeof(Level));
+
 	if ( m_cTeam.m_nFlag )
 	{
 		PLAYER_TEAMMATE_LEVEL_SYNC	sLevel;
@@ -2404,6 +2442,7 @@ void	KPlayer::UpdataCurData()
 	Npc[m_nIndex].m_CurrentDamage2Mana	= 0;
 	Npc[m_nIndex].m_CurrentDamageReduce	= 0;
 	Npc[m_nIndex].m_CurrentDeadlyStrike	= 0;
+	Npc[m_nIndex].m_CurrentExDefend = Npc[m_nIndex].m_ExDefend;
 	Npc[m_nIndex].m_CurrentDefend		= Npc[m_nIndex].m_Defend;
 	Npc[m_nIndex].m_CurrentElementDamageReduce = 0;
 	ZeroMemory(&Npc[m_nIndex].m_CurrentFireDamage, sizeof(KMagicAttrib));
@@ -3622,10 +3661,15 @@ void	KPlayer::AddSkillPoint(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol)
 {
-	PLAYER_PICKUP_ITEM_COMMAND	*pPickUp = (PLAYER_PICKUP_ITEM_COMMAND*)pProtocol;
+	const GAME_PICKUP_COMMAND *pPickUp = (const GAME_PICKUP_COMMAND*)pProtocol;
+	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC ||
+		Npc[m_nIndex].m_RegionIndex < 0 || Npc[m_nIndex].m_bExchangeServer ||
+		Npc[m_nIndex].m_Doing == do_death || Npc[m_nIndex].m_Doing == do_revive ||
+		CheckTrading() || pPickUp->Place != pos_equiproom)
+		return FALSE;
 	
 	int		nObjIndex, nNpcX, nNpcY, nObjX, nObjY;
-	nObjIndex = ObjSet.FindID(pPickUp->m_nObjID);
+	nObjIndex = ObjSet.FindID(pPickUp->ObjectId);
 	if (nObjIndex == 0)
 		return FALSE;
 	
@@ -3635,14 +3679,6 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol)
 		{
 			if (Object[nObjIndex].m_nBelong != m_nPlayerIndex)
 			{
-				SHOW_MSG_SYNC	sMsg;
-				sMsg.ProtocolType = s2c_msgshow;
-				if (Object[nObjIndex].m_nKind == Obj_Kind_Money)
-					sMsg.m_wMsgID = enumMSG_ID_MONEY_CANNOT_PICKUP;
-				else
-					sMsg.m_wMsgID = enumMSG_ID_OBJ_CANNOT_PICKUP;
-				sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-				g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
 				return FALSE;
 			}
 		}
@@ -3653,11 +3689,6 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol)
 				if (Object[nObjIndex].m_nBelong != m_nPlayerIndex &&
 					!g_Team[m_cTeam.m_nID].CheckIn(Object[nObjIndex].m_nBelong))
 				{
-					SHOW_MSG_SYNC	sMsg;
-					sMsg.ProtocolType = s2c_msgshow;
-					sMsg.m_wMsgID = enumMSG_ID_MONEY_CANNOT_PICKUP;
-					sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-					g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
 					return FALSE;
 				}
 			}
@@ -3671,11 +3702,6 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol)
 				if ((Item[Object[nObjIndex].m_nItemDataID].GetGenre() == item_task && Object[nObjIndex].m_nBelong != m_nPlayerIndex) ||
 					!g_Team[m_cTeam.m_nID].CheckIn(Object[nObjIndex].m_nBelong))
 				{
-					SHOW_MSG_SYNC	sMsg;
-					sMsg.ProtocolType = s2c_msgshow;
-					sMsg.m_wMsgID = enumMSG_ID_OBJ_CANNOT_PICKUP;
-					sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-					g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
 					return FALSE;
 				}
 			}
@@ -3706,11 +3732,6 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol)
 		&nNpcY);
 	if ( PLAYER_PICKUP_SERVER_DISTANCE < (nNpcX - nObjX) * (nNpcX - nObjX) + (nNpcY - nObjY) * (nNpcY - nObjY))
 	{
-		SHOW_MSG_SYNC	sMsg;
-		sMsg.ProtocolType = s2c_msgshow;
-		sMsg.m_wMsgID = enumMSG_ID_OBJ_TOO_FAR;
-		sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-		g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
 		return FALSE;
 	}
 	
@@ -3718,20 +3739,10 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol)
 	{
 	case Obj_Kind_Item:				// 掉在地上的装备
 		{
-			int nItemIdx = m_ItemList.Add(Object[nObjIndex].m_nItemDataID, pPickUp->m_btPosType, pPickUp->m_btPosX, pPickUp->m_btPosY);
-			if (nItemIdx <= 0 || nItemIdx >= MAX_PLAYER_ITEM)
-				return FALSE;
 			if (Object[nObjIndex].m_nItemDataID <= 0 || Object[nObjIndex].m_nItemDataID >= MAX_ITEM)
 				return FALSE;
-			// 给客户端发送获得装备的消息
-			SHOW_MSG_SYNC	sMsg;
-			sMsg.ProtocolType = s2c_msgshow;
-			sMsg.m_wMsgID = enumMSG_ID_GET_ITEM;
-			sMsg.m_lpBuf = (LPVOID)Item[Object[nObjIndex].m_nItemDataID].GetID();
-			sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1;
-			g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-			sMsg.m_lpBuf = 0;
-			
+			if (!m_ItemList.AddPickupItem(Object[nObjIndex].m_nItemDataID, pPickUp->X, pPickUp->Y))
+				return FALSE;
 			// 去掉Object[nObjIndex]与道具的关联。避免ItemSet的Remove被Object的Remove调用
 			Object[nObjIndex].m_nItemDataID = 0;
 			Object[nObjIndex].m_nItemWidth = 0;
@@ -3760,9 +3771,18 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 void	KPlayer::EatItem(BYTE* pProtocol)
 {
-	PLAYER_EAT_ITEM_COMMAND	*pEat = (PLAYER_EAT_ITEM_COMMAND*)pProtocol;
+	const GAME_USE_ITEM_COMMAND *pEat = (const GAME_USE_ITEM_COMMAND*)pProtocol;
 	
-	m_ItemList.EatMecidine(pEat->m_btPlace, pEat->m_btX, pEat->m_btY);
+	if (pEat->UseMode != 1 || (pEat->Place != pos_equiproom && pEat->Place != pos_immediacy) ||
+		Npc[m_nIndex].m_Doing == do_death || Npc[m_nIndex].m_Doing == do_revive || CheckTrading())
+		return;
+	int nRoom = pEat->Place == pos_equiproom ? room_equipment : room_immediacy;
+	int nItem = m_ItemList.m_Room[nRoom].FindItem(pEat->X, pEat->Y);
+	if (nItem <= 0 || nItem >= MAX_ITEM || Item[nItem].GetGenre() != item_medicine)
+		return;
+	// item_id是客户端使用函数的原始标识，不作为服务器数组下标。
+	if (m_ItemList.EatMecidine(pEat->Place, pEat->X, pEat->Y))
+		SendCurNormalSyncData();
 }
 #endif
 
@@ -5504,10 +5524,10 @@ void	KPlayer::s2cLevelUp(BYTE* pMsg)
 {
 	PLAYER_LEVEL_UP_SYNC	*pLevel = (PLAYER_LEVEL_UP_SYNC*)pMsg;
 
-	if ((DWORD)Npc[m_nIndex].m_Level < (DWORD)pLevel->m_btLevel && m_nExp < PlayerSet.m_cLevelAdd.GetLevelExp(Npc[m_nIndex].m_Level))
+	if ((DWORD)Npc[m_nIndex].m_Level < (DWORD)pLevel->m_btLevel && m_nExp < PlayerSet.m_cLevelAdd.GetLevelExp(Npc[m_nIndex].m_Level, Npc[m_nIndex].m_Series))
 	{
 		KSystemMessage	sMsg;
-		sprintf(sMsg.szMessage, MSG_GET_EXP, PlayerSet.m_cLevelAdd.GetLevelExp(Npc[m_nIndex].m_Level) - m_nExp);
+		sprintf(sMsg.szMessage, MSG_GET_EXP, PlayerSet.m_cLevelAdd.GetLevelExp(Npc[m_nIndex].m_Level, Npc[m_nIndex].m_Series) - m_nExp);
 		sMsg.eType = SMT_NORMAL;
 		sMsg.byConfirmType = SMCT_NONE;
 		sMsg.byPriority = 0;
@@ -5517,7 +5537,7 @@ void	KPlayer::s2cLevelUp(BYTE* pMsg)
 	
 	m_nExp = 0;
 	Npc[m_nIndex].m_Level = (DWORD)pLevel->m_btLevel;
-	m_nNextLevelExp = PlayerSet.m_cLevelAdd.GetLevelExp(Npc[m_nIndex].m_Level);
+	m_nNextLevelExp = PlayerSet.m_cLevelAdd.GetLevelExp(Npc[m_nIndex].m_Level, Npc[m_nIndex].m_Series);
 	
 	// -------------------------- 等级增加时各项属性同步 ----------------------
 	// 同步未分配属性点
@@ -5872,7 +5892,7 @@ void	KPlayer::SyncCurPlayer(BYTE* pMsg)
 	Npc[m_nIndex].m_ActionScriptID = 0;
 	Npc[m_nIndex].m_TrapScriptID = 0;
 	m_nExp = PlaySync->m_nExp;
-	m_nNextLevelExp = PlayerSet.m_cLevelAdd.GetLevelExp(PlaySync->m_btLevel);
+	m_nNextLevelExp = PlayerSet.m_cLevelAdd.GetLevelExp(PlaySync->m_btLevel, Npc[m_nIndex].m_Series);
 	m_dwLeadExp = PlaySync->m_dwLeadExp;
 	m_dwLeadLevel = PlayerSet.m_cLeadExp.GetLevel(m_dwLeadExp);
 	m_dwNextLevelLeadExp = PlayerSet.m_cLeadExp.GetLevelExp(m_dwLeadLevel);
@@ -5962,12 +5982,16 @@ void	KPlayer::SetFirstDamage()
 
 void	KPlayer::SetBaseAttackRating()
 {
-	Npc[m_nIndex].m_AttackRating = m_nDexterity * 4 - 28;
+	Npc[m_nIndex].m_AttackRating = PlayerSet.m_cLevelAdd.HasBaseNumerical() ?
+		PlayerSet.m_cLevelAdd.GetAttributeValue(KLevelAdd::AttackRating,
+			Npc[m_nIndex].m_Series, m_nDexterity) : m_nDexterity * 4 - 28;
 }
 
 void	KPlayer::SetBaseDefence()
 {
-	Npc[m_nIndex].m_Defend = m_nDexterity >> 2;
+	Npc[m_nIndex].m_Defend = PlayerSet.m_cLevelAdd.HasBaseNumerical() ?
+		PlayerSet.m_cLevelAdd.GetAttributeValue(KLevelAdd::DefenceRating,
+			Npc[m_nIndex].m_Series, m_nDexterity) : m_nDexterity >> 2;
 }
 
 void	KPlayer::SetBaseResistData()

@@ -29,7 +29,8 @@ KNpcAttribModify::KNpcAttribModify()
 	ProcessFunc[magic_lightingenhance_p] = &KNpcAttribModify::LightingEnhanceP;
 	ProcessFunc[magic_fireenhance_p] = &KNpcAttribModify::FireEnhanceP;
 	ProcessFunc[magic_coldenhance_p] = &KNpcAttribModify::ColdEnhanceP;
-	ProcessFunc[magic_armordefense_v] = &KNpcAttribModify::ArmorDefenseV;
+	ProcessFunc[magic_armordefense_v] = &KNpcAttribModify::ExDefenseV;
+	ProcessFunc[magic_addexdefense_v] = &KNpcAttribModify::ExDefenseV;
 	ProcessFunc[magic_lifemax_v] = &KNpcAttribModify::LifeMaxV;
 	ProcessFunc[magic_lifemax_p] = &KNpcAttribModify::LifeMaxP;
 	ProcessFunc[magic_life_v] = &KNpcAttribModify::LifeV;
@@ -910,4 +911,11 @@ void KNpcAttribModify::MixPoisonDamage(KMagicAttrib* pDes, KMagicAttrib* pSrc)
 	pDes->nValue[0] = ((c1 + c2) * d1 / c1 + (c1 + c2) * d2 / c2) / 2;
 	pDes->nValue[1] = (t1 * d1 * c2 + t2 *d2 * c1) /(d1 * c2 + d2 * c1);
 	pDes->nValue[2] = (c1 + c2) / 2;
+}
+
+// 装备防御吸收伤害；adddefense_v仍只改变命中判定使用的闪避。
+void KNpcAttribModify::ExDefenseV(KNpc* pNpc, void* pData)
+{
+	const KMagicAttrib* pMagic = (const KMagicAttrib*)pData;
+	pNpc->m_CurrentExDefend += pMagic->nValue[0];
 }

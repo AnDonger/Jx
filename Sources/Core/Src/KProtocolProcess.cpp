@@ -215,6 +215,13 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[c2s_viewequip] = &KProtocolProcess::c2sViewEquip;
 	ProcessFunc[c2s_ladderquery] = &KProtocolProcess::LadderQuery;
 	ProcessFunc[c2s_repairitem] = &KProtocolProcess::ItemRepair;
+	// 当前客户端编号优先于旧枚举，避免分派到旧版聊天、交易等处理器。
+	ProcessFunc[0x51] = &KProtocolProcess::CurrentSkillCommand;
+	ProcessFunc[0x61] = &KProtocolProcess::PlayerEatItem;
+	ProcessFunc[0x62] = &KProtocolProcess::CurrentPickupCommand;
+	ProcessFunc[0x78] = &KProtocolProcess::ChangeAuraSkill;
+	ProcessFunc[0xA4] = &KProtocolProcess::CurrentPickupCommand;
+	ProcessFunc[0x94] = &KProtocolProcess::CurrentSplitItemCommand;
 #endif
 }
 
@@ -3306,6 +3313,72 @@ void KProtocolProcess::NpcRunCommand(int nIndex, BYTE* pProtocol)
 }
 
 
+void KProtocolProcess::CurrentSkillCommand(int nIndex, BYTE* pProtocol)
+{
+	const GAME_SKILL_COMMAND* pCommand = (const GAME_SKILL_COMMAND*)pProtocol;
+	int nNpcIndex = Player[nIndex].m_nIndex;
+	if (nNpcIndex <= 0 || nNpcIndex >= MAX_NPC)
+		return;
+	KNpc& Npc = ::Npc[nNpcIndex];
+	if (Npc.m_RegionIndex < 0 || Npc.m_SubWorldIndex < 0 || Npc.m_bExchangeServer ||
+		Npc.m_Doing == do_death || Npc.m_Doing == do_revive ||
+		!pCommand->SkillId || pCommand->SkillId >= MAX_SKILL ||
+		Npc.m_SkillList.GetCurrentLevel(pCommand->SkillId) <= 0)
+		return;
+	int nX = pCommand->TargetX;
+	int nY = pCommand->TargetY;
+	if (nX == -1)
+	{
+		nY = Player[nIndex].FindAroundNpc((DWORD)nY);
+		if (nY <= 0 || ::Npc[nY].m_SubWorldIndex != Npc.m_SubWorldIndex)
+			return;
+	}
+	else if (nX < 0 || nY <= 0)
+		return;
+	// 位置由服务器维护，不能以请求中的施法坐标直接移动角色。
+	Npc.SendCommand(do_skill, pCommand->SkillId, nX, nY);
+	g_DebugLog("[Combat] player=%d frame=%lu skill=%u target=(%d,%d)",
+		nIndex, pCommand->SimulationFrame, pCommand->SkillId, nX, nY);
+}
+
+void KProtocolProcess::CurrentPickupCommand(int nIndex, BYTE* pProtocol)
+{
+	int nNpc = Player[nIndex].m_nIndex;
+	if (nNpc <= 0 || nNpc >= MAX_NPC || ::Npc[nNpc].m_RegionIndex < 0 ||
+		::Npc[nNpc].m_Doing == do_death || ::Npc[nNpc].m_Doing == do_revive ||
+		::Npc[nNpc].m_bExchangeServer || Player[nIndex].CheckTrading())
+		return;
+	GAME_PICKUP_COMMAND Command;
+	memset(&Command, 0, sizeof(Command));
+	if (pProtocol[0] == 0x62)
+	{
+		Command = *(const GAME_PICKUP_COMMAND*)pProtocol;
+		if (Command.Place != pos_equiproom)
+			return;
+	}
+	else
+	{
+		if (*(const WORD*)(pProtocol + 1) != 8 || pProtocol[3] != 3)
+			return;
+		memcpy(&Command.ObjectId, pProtocol + 4, sizeof(Command.ObjectId));
+		int nObject = ObjSet.FindID(Command.ObjectId);
+		if (nObject <= 0)
+			return;
+		int nX = 0, nY = 0;
+		if (Object[nObject].m_nKind == Obj_Kind_Item &&
+			(Object[nObject].m_nItemDataID <= 0 || Object[nObject].m_nItemDataID >= MAX_ITEM))
+			return;
+		if (Object[nObject].m_nKind == Obj_Kind_Item &&
+			!Player[nIndex].m_ItemList.CheckCanPlaceInEquipment(Item[Object[nObject].m_nItemDataID].GetWidth(),
+				Item[Object[nObject].m_nItemDataID].GetHeight(), &nX, &nY))
+			return;
+		Command.Place = pos_equiproom;
+		Command.X = (BYTE)nX;
+		Command.Y = (BYTE)nY;
+	}
+	Player[nIndex].ServerPickUpItem((BYTE*)&Command);
+}
+
 void KProtocolProcess::CurrentRunCommand(int nIndex, BYTE* pProtocol)
 {
 	const GAME_RUN_COMMAND_PREFIX *pCommand = (const GAME_RUN_COMMAND_PREFIX*)pProtocol;
@@ -3583,6 +3656,26 @@ void KProtocolProcess::PlayerPickUpItem(int nIndex, BYTE* pProtocol)
 	Player[nIndex].ServerPickUpItem(pProtocol);
 }
 
+void KProtocolProcess::CurrentSplitItemCommand(int nIndex, BYTE* pProtocol)
+{
+	const GAME_SPLIT_ITEM_COMMAND* pCommand = (const GAME_SPLIT_ITEM_COMMAND*)pProtocol;
+	BOOL bSplit = FALSE;
+	if (!Player[nIndex].CheckTrading() && pCommand->Mode == 0 && pCommand->unknown_1 == 1)
+	{
+		ItemPos Source;
+		Source.nPlace = pCommand->Place;
+		Source.nX = pCommand->X;
+		Source.nY = pCommand->Y;
+		bSplit = Player[nIndex].m_ItemList.SplitItem(&Source, pCommand->Count);
+	}
+
+	g_DebugLog("[Item] Split: player=%d place=%u x=%u y=%u count=%lu unknown_1=%lu mode=%u accepted=%d",
+		nIndex, pCommand->Place, pCommand->X, pCommand->Y, pCommand->Count,
+		pCommand->unknown_1, pCommand->Mode, bSplit);
+	BYTE byFinished = s2c_itemexchangefinish;
+	g_pServer->PackDataToClient(Player[nIndex].m_nNetConnectIdx, &byFinished, sizeof(byFinished));
+}
+
 void KProtocolProcess::PlayerMoveItem(int nIndex, BYTE* pProtocol)
 {
 	Player[nIndex].ServerMoveItem(pProtocol);
@@ -3691,8 +3784,13 @@ void	KProtocolProcess::TeamInviteAdd(int nIndex, BYTE * pProtocol)
 
 void	KProtocolProcess::ChangeAuraSkill(int nIndex, BYTE * pProtocol)
 {
-	SKILL_CHANGEAURASKILL_COMMAND * pCommand = (SKILL_CHANGEAURASKILL_COMMAND*) pProtocol;
-	Npc[Player[nIndex].m_nIndex].SetAuraSkill(pCommand->m_nAuraSkill);
+	const GAME_AURA_COMMAND * pCommand = (const GAME_AURA_COMMAND*)pProtocol;
+	int nNpc = Player[nIndex].m_nIndex;
+	if (nNpc <= 0 || nNpc >= MAX_NPC || Npc[nNpc].m_RegionIndex < 0 ||
+		Npc[nNpc].m_Doing == do_death || Npc[nNpc].m_Doing == do_revive ||
+		pCommand->SkillId >= MAX_SKILL)
+		return;
+	Npc[nNpc].SetAuraSkill(pCommand->SkillId);
 }
 
 void	KProtocolProcess::TeamReplyInvite(int nIndex, BYTE * pProtocol)
