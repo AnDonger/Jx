@@ -397,6 +397,254 @@ int LuaSelectUI(Lua_State * L)
 }
 
 
+
+// 原任务脚本的菜单项为 {文字, 回调; show=0/1}，过滤后再绑定反馈下标。
+int LuaSayTask(Lua_State *L)
+{
+	int nParamNum = Lua_GetTopIndex(L);
+	int nPlayerIndex = GetPlayerIndex(L);
+	if (nPlayerIndex <= 0 || nParamNum < 2 || !Lua_IsTable(L, 2))
+		return 0;
+
+	KPlayer& Role = Player[nPlayerIndex];
+	Role.m_bWaitingPlayerFeedBack = false;
+	Role.m_nAvailableAnswerNum = 0;
+	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
+	UiInfo.m_bUIId = UI_SELECTDIALOG;
+	UiInfo.m_bParam2 = 1;
+	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
+	UiInfo.m_nParam = 1;
+	int nLength = 0;
+	if (Lua_IsNumber(L, 1))
+	{
+		int nQuestion = (int)Lua_ValueToNumber(L, 1);
+		UiInfo.m_bParam1 = 1;
+		memcpy(UiInfo.m_pContent, &nQuestion, sizeof(nQuestion));
+		nLength = sizeof(nQuestion);
+	}
+	else if (Lua_IsString(L, 1))
+	{
+		const char *pszQuestion = Lua_ValueToString(L, 1);
+		nLength = strlen(pszQuestion);
+		if (nLength >= sizeof(UiInfo.m_pContent))
+			return 0;
+		memcpy(UiInfo.m_pContent, pszQuestion, nLength);
+	}
+	else
+		return 0;
+
+	for (int nRow = 1; nRow <= 256; nRow++)
+	{
+		Lua_RawGetI(L, 2, nRow);
+		int nTable = Lua_GetTopIndex(L);
+		if (lua_isnil(L, nTable))
+		{
+			Lua_Pop(L, 1);
+			break;
+		}
+		if (!Lua_IsTable(L, nTable))
+		{
+			Lua_Pop(L, 1);
+			continue;
+		}
+		Lua_PushString(L, "show");
+		Lua_GetTable(L, nTable);
+		BOOL bShow = lua_isnil(L, -1) || Lua_ValueToNumber(L, -1) != 0;
+		Lua_Pop(L, 1);
+		if (!bShow)
+		{
+			Lua_Pop(L, 1);
+			continue;
+		}
+		char szLabel[100];
+		char szFunction[sizeof(Role.m_szTaskAnswerFun[0])];
+		ZeroMemory(szLabel, sizeof(szLabel));
+		ZeroMemory(szFunction, sizeof(szFunction));
+		Lua_RawGetI(L, nTable, 1);
+		const char *pszLabel = Lua_ValueToString(L, -1);
+		BOOL bValid = pszLabel && strlen(pszLabel) < sizeof(szLabel);
+		if (bValid)
+			strcpy(szLabel, pszLabel);
+		Lua_Pop(L, 1);
+		Lua_RawGetI(L, nTable, 2);
+		const char *pszFunction = Lua_ValueToString(L, -1);
+		bValid = bValid && pszFunction && strlen(pszFunction) < sizeof(szFunction);
+		if (bValid)
+			strcpy(szFunction, pszFunction);
+		Lua_Pop(L, 2);
+		int nLabelLength = strlen(szLabel);
+		if (!bValid || !nLabelLength || !szFunction[0] ||
+			Role.m_nAvailableAnswerNum >= MAX_ANSWERNUM ||
+			nLength + nLabelLength + 1 >= sizeof(UiInfo.m_pContent))
+		{
+			Role.m_nAvailableAnswerNum = 0;
+			return 0;
+		}
+		UiInfo.m_pContent[nLength++] = '|';
+		memcpy(UiInfo.m_pContent + nLength, szLabel, nLabelLength);
+		nLength += nLabelLength;
+		strcpy(Role.m_szTaskAnswerFun[Role.m_nAvailableAnswerNum++], szFunction);
+	}
+	UiInfo.m_bOptionNum = Role.m_nAvailableAnswerNum;
+	UiInfo.m_nBufferLen = nLength;
+	Role.m_bWaitingPlayerFeedBack = Role.m_nAvailableAnswerNum > 0;
+	Role.DoScriptAction(&UiInfo);
+	return 0;
+}
+
+// MsgBox 使用客户端原生确认框；与普通 Say 的选项文字布局不同。
+int LuaMsgBox(Lua_State *L)
+{
+	int nParamNum = Lua_GetTopIndex(L);
+	int nPlayerIndex = GetPlayerIndex(L);
+	if (nPlayerIndex <= 0 || nParamNum < 2 || nParamNum > 3)
+		return 0;
+	KPlayer& Role = Player[nPlayerIndex];
+	Role.m_bWaitingPlayerFeedBack = false;
+	Role.m_nAvailableAnswerNum = 0;
+	PLAYER_SCRIPTACTION_SYNC UiInfo;
+	ZeroMemory(&UiInfo, sizeof(UiInfo));
+	UiInfo.m_bUIId = UI_SELECTDIALOG;
+	UiInfo.m_bParam2 = 1;
+	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
+	UiInfo.m_nParam = nParamNum == 3 ? 3 : 1;
+	if (Lua_IsNumber(L, 1))
+	{
+		int nQuestion = (int)Lua_ValueToNumber(L, 1);
+		UiInfo.m_bParam1 = 1;
+		UiInfo.m_nBufferLen = sizeof(nQuestion);
+		memcpy(UiInfo.m_pContent, &nQuestion, sizeof(nQuestion));
+	}
+	else if (Lua_IsString(L, 1))
+	{
+		const char *pszQuestion = Lua_ValueToString(L, 1);
+		UiInfo.m_nBufferLen = strlen(pszQuestion);
+		if (UiInfo.m_nBufferLen >= sizeof(UiInfo.m_pContent))
+			return 0;
+		memcpy(UiInfo.m_pContent, pszQuestion, UiInfo.m_nBufferLen);
+	}
+	else
+		return 0;
+	for (int i = 2; i <= nParamNum; i++)
+	{
+		const char *pszFunction = Lua_ValueToString(L, i);
+		if (!pszFunction || !pszFunction[0] ||
+			strlen(pszFunction) >= sizeof(Role.m_szTaskAnswerFun[0]))
+			return 0;
+		strcpy(Role.m_szTaskAnswerFun[i - 2], pszFunction);
+	}
+	Role.m_nAvailableAnswerNum = nParamNum - 1;
+	Role.m_bWaitingPlayerFeedBack = true;
+	Role.DoScriptAction(&UiInfo);
+	return 0;
+}
+
+// 四参数旧脚本只匹配普通背包；数量按堆叠计，不包括仓库、身穿和鼠标物品。
+static BOOL MatchNormalItem(PlayerItem *pItem, int nGenre, int nDetail, int nParticular, int nLevel)
+{
+	if (!pItem || pItem->nPlace != pos_equiproom || pItem->nIdx <= 0 || pItem->nIdx >= MAX_ITEM)
+		return FALSE;
+	KItem& Data = Item[pItem->nIdx];
+	return Data.GetGenre() == nGenre && Data.GetDetailType() == nDetail &&
+		Data.GetParticular() == nParticular && Data.GetLevel() == nLevel;
+}
+
+static int CountNormalItems(KItemList& List, int nGenre, int nDetail, int nParticular, int nLevel)
+{
+	int nCount = 0;
+	for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
+	{
+		if (MatchNormalItem(pItem, nGenre, nDetail, nParticular, nLevel))
+			nCount += Item[pItem->nIdx].GetStackCount();
+	}
+	return nCount;
+}
+
+int LuaHaveNormalItem(Lua_State *L)
+{
+	int nParamNum = Lua_GetTopIndex(L);
+	int nPlayerIndex = GetPlayerIndex(L);
+	int nCount = 0;
+	if (nPlayerIndex > 0 && nParamNum == 4)
+	{
+		nCount = CountNormalItems(Player[nPlayerIndex].m_ItemList,
+			(int)Lua_ValueToNumber(L, 1), (int)Lua_ValueToNumber(L, 2),
+			(int)Lua_ValueToNumber(L, 3), (int)Lua_ValueToNumber(L, 4));
+	}
+	Lua_PushNumber(L, nCount);
+	return 1;
+}
+
+int LuaDelNormalItem(Lua_State *L)
+{
+	int nParamNum = Lua_GetTopIndex(L);
+	int nPlayerIndex = GetPlayerIndex(L);
+	if (nPlayerIndex <= 0 || nParamNum < 4 || nParamNum > 5)
+	{
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	int nGenre = (int)Lua_ValueToNumber(L, 1);
+	int nDetail = (int)Lua_ValueToNumber(L, 2);
+	int nParticular = (int)Lua_ValueToNumber(L, 3);
+	int nLevel = (int)Lua_ValueToNumber(L, 4);
+	int nCount = nParamNum == 5 ? (int)Lua_ValueToNumber(L, 5) : 1;
+	KItemList& List = Player[nPlayerIndex].m_ItemList;
+	if (nCount <= 0 || CountNormalItems(List, nGenre, nDetail, nParticular, nLevel) < nCount)
+	{
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	// 先收集索引，避免 Remove 改变 GetNextItem 的遍历链。
+	int Indices[MAX_PLAYER_ITEM];
+	int nItems = 0;
+	for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
+	{
+		if (MatchNormalItem(pItem, nGenre, nDetail, nParticular, nLevel))
+			Indices[nItems++] = pItem->nIdx;
+	}
+	for (int i = 0; i < nItems && nCount > 0; i++)
+	{
+		int nIndex = Indices[i];
+		int nStack = Item[nIndex].GetStackCount();
+		if (nStack > nCount)
+		{
+			Item[nIndex].SetStackCount(nStack - nCount);
+			List.SyncItemCount(nIndex);
+			nCount = 0;
+		}
+		else
+		{
+			if (!List.Remove(nIndex))
+				break;
+			ItemSet.Remove(nIndex);
+			nCount -= nStack;
+		}
+	}
+	Lua_PushNumber(L, nCount == 0 ? 1 : 0);
+	return 1;
+}
+
+int LuaTaskNote(Lua_State *L)
+{
+	int nParamNum = Lua_GetTopIndex(L);
+	int nPlayerIndex = GetPlayerIndex(L);
+	if (nPlayerIndex <= 0 || nParamNum < 2 || nParamNum > 3)
+		return 0;
+	int nTaskId = (int)Lua_ValueToNumber(L, 1);
+	int nStep = (int)Lua_ValueToNumber(L, 2);
+	const char *pszText = nParamNum == 3 ? Lua_ValueToString(L, 3) : "";
+	KPlayerTask& Tasks = Player[nPlayerIndex].m_cTask;
+	if (!pszText || !Tasks.SetNote(nTaskId, nStep, pszText))
+	{
+		g_DebugLog("[Task] Rejected TaskNote: player=%d task=%d step=%d", nPlayerIndex, nTaskId, nStep);
+		return 0;
+	}
+	Tasks.SendNote(nPlayerIndex, nTaskId, nStep, pszText);
+	return 0;
+}
+
 //PutMsg(szMsg/MsgId)
 int LuaSendMessageInfo(Lua_State * L)
 {
@@ -1117,8 +1365,7 @@ int LuaOpenBox(Lua_State * L)
 	int nPlayerIndex = GetPlayerIndex(L);
 	if (nPlayerIndex <= 0) return 0;
 	
-	BYTE	NetCommand = (BYTE)s2c_openstorebox;
-	g_pServer->PackDataToClient(Player[nPlayerIndex].m_nNetConnectIdx, &NetCommand, sizeof(BYTE));
+	Player[nPlayerIndex].OpenStoreBox((int)Lua_ValueToNumber(L, 1));
 	return 0;
 }
 
@@ -5006,6 +5253,11 @@ TLua_Funcs GameScriptFuns[] =
 	//通用指令
 	
 	{"Say", LuaSelectUI},
+	{"SayTask", LuaSayTask},
+	{"TaskNote", LuaTaskNote},
+	{"MsgBox", LuaMsgBox},
+	{"HaveNormalItem", LuaHaveNormalItem},
+	{"DelNormalItem", LuaDelNormalItem},
 	{"Talk", LuaTalkUI},
 	{"GetTaskTemp", LuaGetTempTaskValue},
 	{"SetTaskTemp", LuaSetTempTaskValue},

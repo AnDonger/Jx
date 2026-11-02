@@ -5733,6 +5733,7 @@ int KNpc::ChangeWorld(DWORD dwSubWorldID, int nX, int nY)
 		return 2;	// 需要加切换服务器的处理 -- spe
 	}
 
+	Player[m_nPlayerIdx].CloseStoreBox();
 	Player[m_nPlayerIdx].m_nPrePayMoney = 0;// 不是跨服务器，不用还钱
 	// 切换的世界就是本身
 	if (nTargetSubWorld == m_SubWorldIndex)

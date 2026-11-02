@@ -34,11 +34,29 @@ extern int  *g_pDockPriceTab;
 #endif
 
 
+#define MAX_TASK_NOTE 64
+#define MAX_TASK_NOTE_TEXT 128
+
+struct KTaskNote
+{
+	int		TaskId;
+	int		Step;
+	char	Text[MAX_TASK_NOTE_TEXT];
+};
+
 class KPlayerTask
 {
 public:
 	int			nSave[MAX_TASK];					// 用于记录任务是否完成，须保存到数据库
 	int			nClear[MAX_TEMP_TASK];				// 用于记录任务过程中的中间步骤的完成情况，不保存到数据库，玩家下线后次数据清空
+#ifdef _SERVER
+	KTaskNote	m_Notes[MAX_TASK_NOTE];
+	BOOL		SetNote(int nTaskId, int nStep, const char *pszText);
+	BOOL		SendNote(int nPlayer, int nTaskId, int nStep, const char *pszText);
+	BOOL		SyncNotes(int nPlayer);
+	BOOL		LoadNotes(const BYTE *pBuffer, DWORD dwLength);
+	int			SaveNotes(BYTE *pBuffer, DWORD dwCapacity);
+#endif
 public:
 	KPlayerTask();									// 构造函数
 	void		Release();							// 清空

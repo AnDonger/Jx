@@ -373,6 +373,9 @@ void KItem::operator = (const KBASICPROP_MEDMATERIAL& sData)
 	::strcpy(pCA->szIntro,	   sData.m_szIntro);
 #endif
 	// 赋值: 基本属性部分
+	ZeroMemory(m_aryBaseAttrib, sizeof(m_aryBaseAttrib));
+	ZeroMemory(m_aryRequireAttrib, sizeof(m_aryRequireAttrib));
+	ZeroMemory(m_aryMagicAttrib, sizeof(m_aryMagicAttrib));
 	KItemNormalAttrib* pBA = m_aryBaseAttrib;
 	pBA[0].nAttribType = sData.m_nAttrib1_Type;
 	pBA[0].nValue[0]   = sData.m_nAttrib1_Para;

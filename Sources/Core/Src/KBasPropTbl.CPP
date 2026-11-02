@@ -19,7 +19,7 @@
 #define		TABFILE_MINE				"minebase.txt"
 #define		TABFILE_TASK				"questkey.txt"
 #define		TABFILE_MEDICINE			"potion.txt"
-#define		TABFILE_MEDMATERIAL			"medmaterialbase.txt"
+#define		TABFILE_MEDMATERIAL			"material.txt"
 #define		TABFILE_MELEEWEAPON			"MeleeWeapon.txt"
 #define		TABFILE_RANGEWEAPON			"RangeWeapon.txt"
 #define		TABFILE_ARMOR				"Armor.txt"
@@ -140,6 +140,7 @@ BOOL KLibOfBPT::Init(int nVersion)
 											&m_BPTPendant,
 											&m_BPTHorse,
 											&m_BPTMedicine,
+											&m_BPTMedMaterial,
 											&m_BPTQuest,
 											&m_BPTTownPortal,
 											&m_BPTMagicAttrib,
@@ -609,7 +610,12 @@ const KBASICPROP_EQUIPMENT_UNIQUE* KLibOfBPT::FindEquipmentUnique(IN int a, IN i
 ******************************************************************************/
 const KBASICPROP_MEDMATERIAL* KLibOfBPT::GetMedMaterial(int i) const
 {
-	return 0;// TODO:m_BPTMedMaterial.GetRecord(i);
+	return m_BPTMedMaterial.GetRecord(i);
+}
+
+const KBASICPROP_MEDMATERIAL* KLibOfBPT::FindMedMaterial(int nDetailType, int nParticularType, int nLevel) const
+{
+	return m_BPTMedMaterial.FindRecord(nDetailType, nParticularType, nLevel);
 }
 
 /******************************************************************************
@@ -731,7 +737,18 @@ BOOL KBasicPropertyTable::Load(int nVersion)
 	{
 		g_UnitePathAndName(TABFILE_PATH, m_szTabFile, szFileName);
 		if (!theLoader.Load(szFileName))
-			return FALSE;
+		{
+			// 普通材料优先使用当前客户端的 material.txt，旧表仅作为缺失时的兼容补充。
+			if (strcmp(m_szTabFile, TABFILE_MEDMATERIAL) != 0)
+				return FALSE;
+			g_UnitePathAndName(szVersionPath, "medmaterialbase.txt", szFileName);
+			if (!theLoader.Load(szFileName))
+			{
+				g_UnitePathAndName(TABFILE_PATH, "medmaterialbase.txt", szFileName);
+				if (!theLoader.Load(szFileName))
+					return FALSE;
+			}
+		}
 	}
 
 	// 确定file内给出了多少项记录
@@ -1044,6 +1061,24 @@ BOOL KBPT_MedMaterial::LoadRecord(int i, KTabFile* pTF)
 	// 初始化
 	KBASICPROP_MEDMATERIAL* pBuf = (KBASICPROP_MEDMATERIAL*)m_pBuf;
 	pBuf = pBuf + i;	// 读入的属性记在 pBuf 所指结构中
+	ZeroMemory(pBuf, sizeof(*pBuf));
+	if (pTF->FindColumn("详细类别") <= 0 && pTF->FindColumn("是否叠放") > 0)
+	{
+		// 新材料表没有详细类别、等级和五行列，原脚本以 (3,类别,0,0) 引用。
+		int nRow = i + 2;
+		return pTF->GetString(nRow, "名称", "", pBuf->m_szName, sizeof(pBuf->m_szName)) &&
+			pTF->GetInteger(nRow, "道具种类", -1, &pBuf->m_nItemGenre) &&
+			pTF->GetInteger(nRow, "具体类别", -1, &pBuf->m_nDetailType) &&
+			pTF->GetString(nRow, "动画文件名", "", pBuf->m_szImageName, sizeof(pBuf->m_szImageName)) &&
+			pTF->GetInteger(nRow, "对应物件索引", 0, &pBuf->m_nObjIdx) &&
+			pTF->GetInteger(nRow, "宽度", 0, &pBuf->m_nWidth) &&
+			pTF->GetInteger(nRow, "高度", 0, &pBuf->m_nHeight) &&
+			pTF->GetString(nRow, "说明文字", "", pBuf->m_szIntro, sizeof(pBuf->m_szIntro)) &&
+			pTF->GetInteger(nRow, "价格", 0, &pBuf->m_nPrice) &&
+			pTF->GetInteger(nRow, "是否叠放", 0, &pBuf->m_bStack) &&
+			pBuf->m_nItemGenre == item_materials && pBuf->m_nDetailType >= 0 &&
+			pBuf->m_nWidth > 0 && pBuf->m_nHeight > 0 && pBuf->m_bStack >= 0;
+	}
 	const PROPINFO	aryPI[] =
 	{
 /*ver1****************************************************************
@@ -1100,6 +1135,18 @@ const KBASICPROP_MEDMATERIAL* KBPT_MedMaterial::GetRecord(int i) const
 	_ASSERT(i >= 0 && i < m_nNumOfEntries);
 	return (i >= 0 && i < m_nNumOfEntries) ?
 		(((KBASICPROP_MEDMATERIAL*)m_pBuf) + i) : NULL;
+}
+
+const KBASICPROP_MEDMATERIAL* KBPT_MedMaterial::FindRecord(int nDetailType, int nParticularType, int nLevel) const
+{
+	const KBASICPROP_MEDMATERIAL* pMaterial = (KBASICPROP_MEDMATERIAL*)m_pBuf;
+	for (int i = 0; i < m_nNumOfEntries; i++)
+	{
+		if (pMaterial[i].m_nDetailType == nDetailType &&
+			pMaterial[i].m_nParticularType == nParticularType && pMaterial[i].m_nLevel == nLevel)
+			return &pMaterial[i];
+	}
+	return NULL;
 }
 
 KBPT_Equipment::KBPT_Equipment()

@@ -110,6 +110,7 @@ private:
 
 public:
 #ifdef _SERVER
+	int				m_nStoreBoxObjectID;		// 当前获准交互的储物箱世界ID，不存盘
 	PLAYER_EXCHANGE_POS		m_sExchangePos;
 	KTimerTaskFun	m_TimerTask;
 	BOOL			m_bIsQuiting;
@@ -192,6 +193,7 @@ public:
 	char			m_szTaskAnswerFun[MAX_ANSWERNUM][32];
 	DWORD			m_dwScriptDialogToken;
 	DWORD			m_dwScriptDialogScriptID;
+	DWORD			m_dwScriptDialogNpcID;
 	int				m_nScriptDialogWorld;
 	int				m_nAvailableAnswerNum;//当前选择界面下，最大回答数。
 	bool			m_bWaitingPlayerFeedBack;	//当前是否正等待玩家在客户端的反馈。该状态下，当前脚本不置空.类式对话选择情况
@@ -244,6 +246,12 @@ public:
 	void			Revive(int nType);						// 重生	
 
 	BOOL			CheckTrading();
+#ifdef _SERVER
+	void			ExecuteObjectScript(int nObjIndex);
+	BOOL			OpenStoreBox(int nBox);
+	BOOL			CanUseStoreBox();
+	void			CloseStoreBox();
+#endif
 	void			SetFirstDamage();
 	void			SetBaseAttackRating();
 	void			SetBaseDefence();

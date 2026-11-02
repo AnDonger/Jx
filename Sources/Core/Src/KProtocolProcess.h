@@ -179,6 +179,7 @@ public:
 	//void	ReplyPing(int nIndex, BYTE* pProtocol);
 	void	NpcSitCommand(int nIndex, BYTE* pProtocol);
 	void	ObjMouseClick(int nIndex, BYTE* pProtocol);
+	void	CloseStoreBoxCommand(int nIndex, BYTE* pProtocol);
 	void	StoreMoneyCommand(int nIndex, BYTE* pProtocol);
 	void	NpcReviveCommand(int nIndex, BYTE* pProtocol);
 	void	c2sTradeReplyStart(int nIndex, BYTE* pProtocol);

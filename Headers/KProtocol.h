@@ -660,7 +660,16 @@ typedef struct
 {
 	BYTE	ProtocolType;
 	int		nNpcId;
-} PLAYER_DIALOG_NPC_COMMAND; //主角与nNpcId对话的请求
+} PLAYER_DIALOG_NPC_COMMAND;
+
+// 新客户端 NPC 点击为 9 字节，末 DWORD 用途未确认；原 5 字节结构作兼容前缀。
+typedef struct
+{
+	BYTE	ProtocolType;
+	DWORD	NpcId;
+	DWORD	unknown_1;
+} GAME_DIALOG_NPC_COMMAND;
+ //主角与nNpcId对话的请求
 
 typedef struct
 {
@@ -1141,6 +1150,19 @@ typedef struct
 	DWORD	DataLength;
 	char	Content[MAX_SCIRPTACTION_BUFFERNUM];
 } GAME_SCRIPT_ACTION_SYNC;
+
+// 新客户端 0x93，正式服仓库打开记录共 38 字节；未知域保留原宽度。
+typedef struct
+{
+	BYTE	ProtocolType;
+	WORD	Length;
+	BYTE	unknown_1;
+	BYTE	unknown_2;
+	BYTE	unknown_3;
+	BYTE	unknown_4[24];
+	DWORD	unknown_5;
+	DWORD	unknown_6;
+} GAME_OPEN_STOREBOX_SYNC;
 
 typedef struct
 {

@@ -793,6 +793,30 @@ BOOL KItemGenerator::Gen_ExistEquipment(IN int nDetailType,
 	return bEC;
 }
 
+// 普通材料按原资源的类别、详细类别、等级和版本生成，不占用任务专用物品类型。
+BOOL KItemGenerator::Gen_Material(IN int nDetailType,
+								  IN int nParticularType,
+								  IN int nLevel,
+								  IN int nVersion,
+								  IN OUT KItem* pItem)
+{
+	if (!pItem || nDetailType < 0 || nParticularType < 0 || nLevel < 0)
+		return FALSE;
+	KLibOfBPT* pLibrary = GetVersionLibrary(nVersion);
+	if (!pLibrary)
+		return FALSE;
+	const KBASICPROP_MEDMATERIAL* pMaterial = pLibrary->FindMedMaterial(nDetailType, nParticularType, nLevel);
+	if (!pMaterial)
+		return FALSE;
+
+	ZeroMemory(&pItem->m_GeneratorParam, sizeof(pItem->m_GeneratorParam));
+	pItem->m_GeneratorParam.nVersion = nVersion == -1 ? m_nCurrentVersion : nVersion;
+	*pItem = *pMaterial;
+	pItem->SetDurability(-1);
+	pItem->SetStackCount(1);
+	return TRUE;
+}
+
 BOOL KItemGenerator::Gen_Quest(IN int nDetailType, IN OUT KItem* pItem)
 {
 	_ASSERT(this != NULL);

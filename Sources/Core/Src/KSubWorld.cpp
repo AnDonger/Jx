@@ -21,6 +21,9 @@
 #include "scene/KScenePlaceC.h"
 #endif
 #include "KSubWorld.h"
+#ifdef _SERVER
+#include "KSortScript.h"
+#endif
 
 #ifndef TOOLVERSION
 KSubWorld	SubWorld[MAX_SUBWORLD];
@@ -838,11 +841,46 @@ BOOL KSubWorld::LoadMap(int nId)
 		}
 	}
 
+	if (nLoadedRegions && !ObjSet.LoadFixedObjects(m_nIndex))
+		printf("[FixedObj] Supplemental fixed object data rejected for map %d.\n", nId);
+
 	if (nLoadedRegions && !LoadFixedNpc())
 		printf("[FixedNpc] Supplemental fixed NPC data rejected for map %d.\n", nId);
 
 	if (nLoadedRegions && !LoadSupplementNpc())
 		printf("[Spawn] Supplemental monster data rejected for map %d.\n", nId);
+
+	// 客户端区域记录常不带脚本名。仅当原资源确有同地图、同名脚本时补上关联。
+	// 不改变站位，不生成脚本；有显式关联时继续使用原来的路径。
+	int nBoundScripts = 0;
+	for (int nNpc = NpcSet.GetNextIdx(0); nNpc; nNpc = NpcSet.GetNextIdx(nNpc))
+	{
+		if (Npc[nNpc].m_SubWorldIndex != m_nIndex || Npc[nNpc].m_Kind != kind_dialoger)
+			continue;
+		char szScript[256];
+		if (Npc[nNpc].ActionScript[0])
+			g_StrCpyLen(szScript, Npc[nNpc].ActionScript, sizeof(szScript));
+		else
+			sprintf(szScript, "\\script\\%s\\%s.lua", szPathName, Npc[nNpc].Name);
+		if (strlen(szScript) >= sizeof(Npc[nNpc].ActionScript))
+			continue;
+		KPakFile ScriptFile;
+		if (!ScriptFile.Open(szScript) || !ScriptFile.Size())
+			continue;
+		ScriptFile.Close();
+		g_StrLower(szScript);
+		DWORD dwScriptID = g_FileName2Id(szScript);
+		if (!g_GetScript(dwScriptID) && !ReLoadScript(szScript))
+		{
+			printf("[NpcScript] Cannot load map %d NPC %s script %s.\n", nId, Npc[nNpc].Name, szScript);
+			continue;
+		}
+		strcpy(Npc[nNpc].ActionScript, szScript);
+		Npc[nNpc].m_ActionScriptID = dwScriptID;
+		nBoundScripts++;
+	}
+	if (nBoundScripts)
+		printf("[NpcScript] Map %d: %d existing resource scripts bound.\n", nId, nBoundScripts);
 
 	int nLoadedNpcs = 0;
 	for (nIdx = 0; nIdx < m_nTotalRegion; nIdx++)
@@ -1280,7 +1318,7 @@ void KSubWorld::PlayerChangeRegion(int nSrcRnidx, int nDesRnIdx, int nIdx)
 
 	if (nDesRnIdx >= 0)
 	{
-		AddPlayer(nDesRnIdx, nIdx);
+		AddPlayer(nDesRnIdx, nIdx, nSrcRnidx);
 	}
 /* 因为RemovePlayer和AddPlayer已经做了从链表中清除节点，修改周边九个REGION的引用计数的操作了
 	KIndexNode* pNode = &Player[nIdx].m_Node;
@@ -1504,7 +1542,7 @@ void KSubWorld::LoadObject(char* szPath, char* szFileName)
 }
 #endif
 
-void KSubWorld::AddPlayer(int nRegion, int nIdx)
+void KSubWorld::AddPlayer(int nRegion, int nIdx, int nPreviousRegion)
 {
 	if (nRegion < 0 || nRegion >= m_nTotalRegion)
 	{
@@ -1524,6 +1562,36 @@ void KSubWorld::AddPlayer(int nRegion, int nIdx)
 			
 			m_Region[nConRegion].m_nActive++;
 		}
+
+#ifdef _SERVER
+		// 初次进图同步周边物件；跨区域时仅补发新进入视野的区域。
+		// 复用原 4F SyncAdd，固定箱子与已落地物品走同一条场景同步路径。
+		if (nIdx > 0 && nIdx < MAX_PLAYER && Player[nIdx].m_bFinishLoading &&
+			Player[nIdx].m_nNetConnectIdx >= 0 && g_pServer)
+		{
+			for (int i = -1; i < 8; i++)
+			{
+				int nVisibleRegion = i < 0 ? nRegion : m_Region[nRegion].m_nConnectRegion[i];
+				if (nVisibleRegion < 0 || nVisibleRegion >= m_nTotalRegion)
+					continue;
+				BOOL bAlreadyVisible = FALSE;
+				if (nPreviousRegion >= 0 && nPreviousRegion < m_nTotalRegion)
+				{
+					bAlreadyVisible = nVisibleRegion == nPreviousRegion;
+					for (int j = 0; j < 8 && !bAlreadyVisible; j++)
+						bAlreadyVisible = nVisibleRegion == m_Region[nPreviousRegion].m_nConnectRegion[j];
+				}
+				if (bAlreadyVisible)
+					continue;
+				KIndexNode *pNode = (KIndexNode *)m_Region[nVisibleRegion].m_ObjList.GetHead();
+				while (pNode)
+				{
+					Object[pNode->m_nIndex].SyncAdd(Player[nIdx].m_nNetConnectIdx);
+					pNode = (KIndexNode *)pNode->GetNext();
+				}
+			}
+		}
+#endif
 	}
 	else
 	{

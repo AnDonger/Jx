@@ -434,6 +434,14 @@ void	KObj::SetScriptFile(char *lpszScriptFile)
 				g_StrCpyLen(szScript, lpszScriptFile, sizeof(szScript));
 			g_StrLower(szScript);
 			m_dwScriptID = g_FileName2Id(szScript);
+#ifdef _SERVER
+			// 脚本正文由 KPakFile 优先读取 Resources，不能只依赖 Server/script 的枚举。
+			if (!g_GetScript(m_dwScriptID) && !ReLoadScript(szScript))
+			{
+				g_DebugLog("[Object] Cannot load script %s", szScript);
+				m_dwScriptID = 0;
+			}
+#endif
 		}
 	}
 }

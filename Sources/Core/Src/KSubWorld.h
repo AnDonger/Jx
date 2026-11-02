@@ -70,7 +70,7 @@ public:
 	BOOL		CanPutObj(POINT pos);
 	void		ObjChangeRegion(int nSrcRegionIdx, int nDesRegionIdx, int nObjIdx);
 	void		MissleChangeRegion(int nSrcRegionIdx, int nDesRegionIdx, int nObjIdx);
-	void		AddPlayer(int nRegion, int nIdx);
+	void		AddPlayer(int nRegion, int nIdx, int nPreviousRegion = -1);
 	void		RemovePlayer(int nRegion, int nIdx);
 	void		Close();
 	int			GetDistance(int nRx1, int nRy1, int nRx2, int nRy2);						// ÏñËØ¼¶×ø±ê

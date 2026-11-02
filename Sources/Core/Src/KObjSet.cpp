@@ -569,6 +569,164 @@ BOOL	KObjSet::ClientLoadRegionObj(KPakFile *pFile, DWORD dwDataSize)
 
 #ifdef _SERVER
 //---------------------------------------------------------------------------
+//  功能：原生区域物件加载后，补充经批准的固定场景物件。
+//---------------------------------------------------------------------------
+BOOL KObjSet::LoadFixedObjects(int nSubWorld)
+{
+	if (nSubWorld < 0 || nSubWorld >= MAX_SUBWORLD ||
+		!SubWorld[nSubWorld].m_Region || SubWorld[nSubWorld].m_nTotalRegion <= 0)
+		return FALSE;
+
+	const char *pszFile = "\\ServerConfig\\FixedObjects.ini";
+	KIniFile IniFile;
+	if (!IniFile.Load(pszFile))
+		return TRUE;
+
+	int nMap = SubWorld[nSubWorld].m_SubWorldID;
+	char szSection[32];
+	sprintf(szSection, "%d", nMap);
+	int nEnabled, nCount;
+	IniFile.GetInteger(szSection, "Enabled", 0, &nEnabled);
+	if (!nEnabled)
+		return TRUE;
+	IniFile.GetInteger(szSection, "Count", -1, &nCount);
+	if (nCount < 0 || nCount >= MAX_OBJECT)
+	{
+		printf("[FixedObj] Invalid count for map %d: %s.\n", nMap, pszFile);
+		return FALSE;
+	}
+	if (!nCount)
+		return TRUE;
+
+	KMemClass Data, Indices;
+	KSPObj *pCells = (KSPObj *)Data.Alloc(nCount * sizeof(KSPObj));
+	int *pIndices = (int *)Indices.Alloc(nCount * sizeof(int));
+	if (!pCells || !pIndices)
+		return FALSE;
+	memset(pCells, 0, nCount * sizeof(KSPObj));
+	memset(pIndices, 0, nCount * sizeof(int));
+
+	// 先校验整批数据，防止错误配置只载入了一部分物件。
+	for (int i = 0; i < nCount; i++)
+	{
+		char szKey[32], szValue[256], cExtra;
+		int nTemplate, nState, nDir, nX, nY;
+		sprintf(szKey, "Obj%03d", i + 1);
+		if (!IniFile.GetString(szSection, szKey, "", szValue, sizeof(szValue)) ||
+			sscanf(szValue, "%d,%d,%d,%d,%d %c", &nTemplate, &nState, &nDir, &nX, &nY, &cExtra) != 5 ||
+			nTemplate < 1 || nTemplate >= m_cTabFile.GetHeight() ||
+			GetDataIDKind(nTemplate) != Obj_Kind_Box ||
+			(nState != OBJ_BOX_STATE_CLOSE && nState != OBJ_BOX_STATE_OPEN) ||
+			nDir < 0 || nDir >= 64 || nX < 0 || nY < 0)
+		{
+			printf("[FixedObj] Invalid map %d record %s: %s.\n", nMap, szKey, pszFile);
+			return FALSE;
+		}
+
+		KMapPos Pos;
+		SubWorld[nSubWorld].Mps2Map(nX, nY, &Pos.nRegion,
+			&Pos.nMapX, &Pos.nMapY, &Pos.nOffX, &Pos.nOffY);
+		if (Pos.nRegion < 0 || Pos.nRegion >= SubWorld[nSubWorld].m_nTotalRegion)
+		{
+			printf("[FixedObj] Site outside map %d for record %s.\n", nMap, szKey);
+			return FALSE;
+		}
+
+		sprintf(szKey, "Script%03d", i + 1);
+		if (!IniFile.GetString(szSection, szKey, "", szValue, sizeof(szValue)) ||
+			strncmp(szValue, "\\script\\", 8) || strstr(szValue, "..") ||
+			strlen(szValue) >= 80 || strlen(szValue) >= sizeof(pCells[i].szScript))
+		{
+			printf("[FixedObj] Invalid script for map %d record %s.\n", nMap, szKey);
+			return FALSE;
+		}
+		KPakFile ScriptFile;
+		if (!ScriptFile.Open(szValue) || !ScriptFile.Size())
+		{
+			printf("[FixedObj] Missing script for map %d record %s: %s.\n", nMap, szKey, szValue);
+			return FALSE;
+		}
+		ScriptFile.Close();
+
+		KSPObj& Cell = pCells[i];
+		Cell.nTemplateID = nTemplate;
+		Cell.nState = (short)nState;
+		Cell.nDir = (char)nDir;
+		Cell.Pos.x = nX;
+		Cell.Pos.y = nY;
+		strcpy(Cell.szScript, szValue);
+		Cell.nScriptNameLen = (unsigned short)(strlen(szValue) + 1);
+		for (int j = 0; j < i; j++)
+		{
+			if (pCells[j].nTemplateID == nTemplate &&
+				pCells[j].Pos.x == nX && pCells[j].Pos.y == nY)
+			{
+				printf("[FixedObj] Duplicate site for map %d record Obj%03d.\n", nMap, i + 1);
+				return FALSE;
+			}
+		}
+	}
+
+	int nSkipped = 0;
+	for (int nObj = m_UseIdx.GetNext(0); nObj; nObj = m_UseIdx.GetNext(nObj))
+	{
+		if (Object[nObj].m_nSubWorldID != nSubWorld)
+			continue;
+		int nX, nY;
+		Object[nObj].GetMpsPos(&nX, &nY);
+		for (int i = 0; i < nCount; i++)
+		{
+			if (pIndices[i] != -1 && Object[nObj].m_nDataID == pCells[i].nTemplateID &&
+				nX == pCells[i].Pos.x && nY == pCells[i].Pos.y)
+			{
+				pIndices[i] = -1;
+				nSkipped++;
+			}
+		}
+	}
+	if (nCount - nSkipped > m_FreeIdx.GetCount())
+	{
+		printf("[FixedObj] Insufficient object slots for map %d.\n", nMap);
+		return FALSE;
+	}
+
+	int nLoaded = 0;
+	for (int i = 0; i < nCount; i++)
+	{
+		if (pIndices[i] == -1)
+			continue;
+		KMapPos Pos;
+		KObjItemInfo Info;
+		memset(&Info, 0, sizeof(Info));
+		Pos.nSubWorld = nSubWorld;
+		SubWorld[nSubWorld].Mps2Map(pCells[i].Pos.x, pCells[i].Pos.y, &Pos.nRegion,
+			&Pos.nMapX, &Pos.nMapY, &Pos.nOffX, &Pos.nOffY);
+		pIndices[i] = Add(pCells[i].nTemplateID, Pos, Info);
+		if (pIndices[i] <= 0)
+		{
+			for (int j = 0; j < i; j++)
+			{
+				if (pIndices[j] > 0)
+				{
+					int nRegion = Object[pIndices[j]].m_nRegionIdx;
+					SubWorld[nSubWorld].m_Region[nRegion].RemoveObj(pIndices[j]);
+					Remove(pIndices[j]);
+				}
+			}
+			printf("[FixedObj] Map %d creation failed; new entries rolled back.\n", nMap);
+			return FALSE;
+		}
+		Object[pIndices[i]].SetDir(pCells[i].nDir);
+		Object[pIndices[i]].SetState(pCells[i].nState);
+		Object[pIndices[i]].SetScriptFile(pCells[i].szScript);
+		nLoaded++;
+	}
+	printf("[FixedObj] Map %d: %d/%d fixed objects loaded, %d existing sites retained: %s.\n",
+		nMap, nLoaded, nCount, nSkipped, pszFile);
+	return TRUE;
+}
+
+//---------------------------------------------------------------------------
 //	功能：服务器端载入一个Region的所有Obj
 //---------------------------------------------------------------------------
 BOOL	KObjSet::ServerLoadRegionObj(char *lpszMapPath, int nRegionX, int nRegionY, int nSubWorld)

@@ -222,6 +222,7 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[0x78] = &KProtocolProcess::ChangeAuraSkill;
 	ProcessFunc[0xA4] = &KProtocolProcess::CurrentPickupCommand;
 	ProcessFunc[0x94] = &KProtocolProcess::CurrentSplitItemCommand;
+	ProcessFunc[0x98] = &KProtocolProcess::CloseStoreBoxCommand;
 #endif
 }
 
@@ -3660,7 +3661,8 @@ void KProtocolProcess::CurrentSplitItemCommand(int nIndex, BYTE* pProtocol)
 {
 	const GAME_SPLIT_ITEM_COMMAND* pCommand = (const GAME_SPLIT_ITEM_COMMAND*)pProtocol;
 	BOOL bSplit = FALSE;
-	if (!Player[nIndex].CheckTrading() && pCommand->Mode == 0 && pCommand->unknown_1 == 1)
+	if (!Player[nIndex].CheckTrading() && pCommand->Mode == 0 && pCommand->unknown_1 == 1 &&
+		(pCommand->Place != pos_repositoryroom || Player[nIndex].CanUseStoreBox()))
 	{
 		ItemPos Source;
 		Source.nPlace = pCommand->Place;
@@ -3678,6 +3680,15 @@ void KProtocolProcess::CurrentSplitItemCommand(int nIndex, BYTE* pProtocol)
 
 void KProtocolProcess::PlayerMoveItem(int nIndex, BYTE* pProtocol)
 {
+	const PLAYER_MOVE_ITEM_COMMAND* pCommand = (const PLAYER_MOVE_ITEM_COMMAND*)pProtocol;
+	if ((pCommand->m_btDownPos == pos_repositoryroom || pCommand->m_btUpPos == pos_repositoryroom) &&
+		!Player[nIndex].CanUseStoreBox())
+	{
+		BYTE byFinished = s2c_itemexchangefinish;
+		if (g_pServer)
+			g_pServer->PackDataToClient(Player[nIndex].m_nNetConnectIdx, &byFinished, sizeof(byFinished));
+		return;
+	}
 	Player[nIndex].ServerMoveItem(pProtocol);
 }
 
@@ -3852,19 +3863,27 @@ void KProtocolProcess::NpcSitCommand(int nIndex, BYTE* pProtocol)
 
 void KProtocolProcess::ObjMouseClick(int nIndex, BYTE* pProtocol)
 {
-	if (Player[nIndex].CheckTrading())
+	int nNpcIndex = Player[nIndex].m_nIndex;
+	if (nNpcIndex <= 0 || nNpcIndex >= MAX_NPC || Player[nIndex].CheckTrading() ||
+		Player[nIndex].m_bExchangeServer || Npc[nNpcIndex].m_bExchangeServer ||
+		Npc[nNpcIndex].m_Doing == do_death || Npc[nNpcIndex].m_Doing == do_revive)
 		return;
 
 	int		nSubWorldIdx, nRegionIdx, nObjIdx;
 	int		nPlayerX, nPlayerY, nObjX, nObjY;
 	OBJ_MOUSE_CLICK_SYNC 	*pObj = (OBJ_MOUSE_CLICK_SYNC*)pProtocol;
 
-	nSubWorldIdx = Npc[Player[nIndex].m_nIndex].m_SubWorldIndex;
+	nSubWorldIdx = Npc[nNpcIndex].m_SubWorldIndex;
+	if (nSubWorldIdx < 0 || nSubWorldIdx >= MAX_SUBWORLD ||
+		!SubWorld[nSubWorldIdx].m_Region || Npc[nNpcIndex].m_RegionIndex < 0 ||
+		Npc[nNpcIndex].m_RegionIndex >= SubWorld[nSubWorldIdx].m_nTotalRegion)
+		return;
 	nRegionIdx = SubWorld[nSubWorldIdx].FindRegion(pObj->m_dwRegionID);
-	if (nRegionIdx < 0)
+	if (nRegionIdx < 0 || nRegionIdx >= SubWorld[nSubWorldIdx].m_nTotalRegion)
 		return;
 	nObjIdx = SubWorld[nSubWorldIdx].m_Region[nRegionIdx].FindObject(pObj->m_nObjID);
-	if (nObjIdx <= 0)
+	if (nObjIdx <= 0 || nObjIdx >= MAX_OBJECT ||
+		Object[nObjIdx].m_nSubWorldID != nSubWorldIdx || Object[nObjIdx].m_nRegionIdx != nRegionIdx)
 		return;
 
 	SubWorld[nSubWorldIdx].Map2Mps(
@@ -3903,7 +3922,9 @@ void KProtocolProcess::ObjMouseClick(int nIndex, BYTE* pProtocol)
 		if (g_GetDistance(nPlayerX, nPlayerY, nObjX, nObjY) > defMAX_EXEC_OBJ_SCRIPT_DISTANCE)
 			break;
 		if (Object[nObjIdx].m_nState == OBJ_BOX_STATE_CLOSE)
-			Object[nObjIdx].ExecScript(nIndex);
+		{
+			Player[nIndex].ExecuteObjectScript(nObjIdx);
+		}
 		break;
 	case Obj_Kind_Door:
 		break;
@@ -3911,13 +3932,24 @@ void KProtocolProcess::ObjMouseClick(int nIndex, BYTE* pProtocol)
 		if (g_GetDistance(nPlayerX, nPlayerY, nObjX, nObjY) > defMAX_EXEC_OBJ_SCRIPT_DISTANCE)
 			break;
 		if (Object[nObjIdx].m_nState == OBJ_PROP_STATE_DISPLAY)
-			Object[nObjIdx].ExecScript(nIndex);
+		{
+			Player[nIndex].ExecuteObjectScript(nObjIdx);
+		}
 		break;
 	}
 }
 
+void KProtocolProcess::CloseStoreBoxCommand(int nIndex, BYTE* pProtocol)
+{
+	// unknown 0x98：记录中紧随储物箱窗口交互，按关闭时机撤销本次访问权限。
+	Player[nIndex].CloseStoreBox();
+}
+
 void KProtocolProcess::StoreMoneyCommand(int nIndex, BYTE* pProtocol)
 {
+	if (!Player[nIndex].CanUseStoreBox())
+		return;
+
 	STORE_MONEY_COMMAND*	pCommand = (STORE_MONEY_COMMAND *)pProtocol;
 
 	if (pCommand->m_byDir)	// 取钱

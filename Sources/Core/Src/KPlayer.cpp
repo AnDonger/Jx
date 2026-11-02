@@ -143,11 +143,13 @@ void	KPlayer::Release()
 	m_dwScriptDialogToken = 0;
 	m_dwScriptDialogScriptID = 0;
 	m_nScriptDialogWorld = -1;
+	m_dwScriptDialogNpcID = 0;
 	m_nAvailableAnswerNum = 0;
 	m_btTryExecuteScriptTimes = 0;	//
 	
 	
 #ifdef _SERVER
+	m_nStoreBoxObjectID = 0;
 	m_bUseReviveIdWhenLogin = 0;
 	m_nWeightMax = 0;
 	m_btPortrait = 0;
@@ -858,7 +860,7 @@ BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 		bRet = TRUE;
 		break;
 	case STEP_TASK_LIST:
-		bRet = TRUE;
+		bRet = m_cTask.SyncNotes(m_nPlayerIndex);
 		break;
 	case STEP_SYNC_END:
 		bRet = TRUE;
@@ -4857,6 +4859,8 @@ void	KPlayer::DoScriptAction(PLAYER_SCRIPTACTION_SYNC * pUIInfo) //要求显示某个U
 			m_dwScriptDialogToken = dwNextDialogToken;
 			m_dwScriptDialogScriptID = Npc[m_nIndex].m_ActionScriptID;
 			m_nScriptDialogWorld = Npc[m_nIndex].m_SubWorldIndex;
+			m_dwScriptDialogNpcID = m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC ?
+				Npc[m_nPeapleIdx].m_dwID : 0;
 			Info.SourceToken = m_dwScriptDialogToken;
 		}
 		g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&Info, Info.Length + 1);
@@ -4880,6 +4884,7 @@ void	KPlayer::ProcessPlayerSelectFromUI(BYTE* pProtocol)			// 处理当玩家从选择菜
 	int nAnswerNum = m_nAvailableAnswerNum;
 	DWORD dwScriptID = m_dwScriptDialogScriptID;
 	int nDialogWorld = m_nScriptDialogWorld;
+	DWORD dwDialogNpcID = m_dwScriptDialogNpcID;
 	m_bWaitingPlayerFeedBack = false;
 	m_nAvailableAnswerNum = 0;
 	m_dwScriptDialogScriptID = 0;
@@ -4888,13 +4893,26 @@ void	KPlayer::ProcessPlayerSelectFromUI(BYTE* pProtocol)			// 处理当玩家从选择菜
 		Npc[m_nIndex].m_SubWorldIndex != nDialogWorld || !dwScriptID)
 		return;
 
+	int nDialogNpc = 0;
+	if (dwDialogNpcID)
+	{
+		nDialogNpc = FindAroundNpc(dwDialogNpcID);
+		if (nDialogNpc <= 0 || nDialogNpc >= MAX_NPC ||
+			Npc[nDialogNpc].m_SubWorldIndex != nDialogWorld ||
+			Npc[nDialogNpc].m_ActionScriptID != dwScriptID ||
+			NpcSet.GetDistance(nDialogNpc, m_nIndex) > Npc[nDialogNpc].m_DialogRadius * 2)
+			return;
+	}
 	char szFunction[sizeof(m_szTaskAnswerFun[0])];
 	g_StrCpyLen(szFunction, m_szTaskAnswerFun[nSelectIndex], sizeof(szFunction));
 	if (szFunction[0])
 	{
 		g_DebugLog("[ScriptUI] player=%d token=%lu select=%d script=%lu function=%s",
 			m_nPlayerIndex, m_dwScriptDialogToken, nSelectIndex, dwScriptID, szFunction);
+		int nPreviousNpc = m_nPeapleIdx;
+		m_nPeapleIdx = nDialogNpc;
 		ExecuteScript(dwScriptID, szFunction, nSelectIndex);
+		m_nPeapleIdx = nPreviousNpc;
 	}
 }
 
@@ -5378,7 +5396,10 @@ void	KPlayer::DialogNpc(BYTE * pProtocol)
 			{
 				if (Npc[nIdx].ActionScript[0])
 				{
+					int nPreviousNpc = m_nPeapleIdx;
+					m_nPeapleIdx = nIdx;
 					ExecuteScript(Npc[nIdx].m_ActionScriptID, "main", "");
+					m_nPeapleIdx = nPreviousNpc;
 				}
 			}
 		}
@@ -5943,6 +5964,79 @@ void	KPlayer::SyncCurPlayer(BYTE* pMsg)
 	Npc[m_nIndex].m_SyncSignal = 0;
 	//Npc[m_nIndex].RestoreLiveData();
 	//	SubWorld[0].AddPlayer(Npc[m_nIndex].m_RegionIndex, 0);//m_Region[Npc[m_nIndex].m_RegionIndex].AddPlayer(0);// m_WorldMessage.Send(GWM_PLAYER_ADD, Npc[m_nIndex].m_RegionIndex, 0);
+}
+#endif
+
+
+#ifdef _SERVER
+void KPlayer::ExecuteObjectScript(int nObjIndex)
+{
+	if (nObjIndex <= 0 || nObjIndex >= MAX_OBJECT)
+		return;
+	int nPreviousObject = m_nObjectIdx;
+	m_nObjectIdx = nObjIndex;
+	Object[nObjIndex].ExecScript(m_nPlayerIndex);
+	m_nObjectIdx = nPreviousObject;
+}
+
+BOOL KPlayer::CanUseStoreBox()
+{
+	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC || m_nNetConnectIdx < 0 ||
+		m_bExchangeServer || m_bIsQuiting || CheckTrading() ||
+		Npc[m_nIndex].m_CurrentLife <= 0 || Npc[m_nIndex].m_Doing == do_death)
+		return FALSE;
+	if (m_cTask.GetSaveVal(13) != 2 && m_cTask.GetSaveVal(23) != 2 && m_cTask.GetSaveVal(33) != 2)
+		return FALSE;
+	KNpc& Hero = Npc[m_nIndex];
+	if (Hero.m_bExchangeServer || Hero.m_Doing == do_revive ||
+		Hero.m_SubWorldIndex < 0 || Hero.m_SubWorldIndex >= MAX_SUBWORLD ||
+		!SubWorld[Hero.m_SubWorldIndex].m_Region || Hero.m_RegionIndex < 0 ||
+		Hero.m_RegionIndex >= SubWorld[Hero.m_SubWorldIndex].m_nTotalRegion)
+		return FALSE;
+	int nObject = ObjSet.FindID(m_nStoreBoxObjectID);
+	if (m_nStoreBoxObjectID <= 0 || nObject <= 0 || nObject >= MAX_OBJECT ||
+		Object[nObject].m_nKind != Obj_Kind_Box ||
+		Object[nObject].m_nSubWorldID != Npc[m_nIndex].m_SubWorldIndex)
+		return FALSE;
+	int nPlayerX, nPlayerY, nObjectX, nObjectY;
+	Npc[m_nIndex].GetMpsPos(&nPlayerX, &nPlayerY);
+	Object[nObject].GetMpsPos(&nObjectX, &nObjectY);
+	__int64 nDeltaX = (__int64)nPlayerX - nObjectX;
+	__int64 nDeltaY = (__int64)nPlayerY - nObjectY;
+	return nDeltaX * nDeltaX + nDeltaY * nDeltaY <=
+		(__int64)defMAX_EXEC_OBJ_SCRIPT_DISTANCE * defMAX_EXEC_OBJ_SCRIPT_DISTANCE;
+}
+
+void KPlayer::CloseStoreBox()
+{
+	m_nStoreBoxObjectID = 0;
+}
+
+BOOL KPlayer::OpenStoreBox(int nBox)
+{
+	CloseStoreBox();
+	if (nBox != 4 || m_nObjectIdx <= 0 || m_nObjectIdx >= MAX_OBJECT)
+		return FALSE;
+	m_nStoreBoxObjectID = Object[m_nObjectIdx].m_nID;
+	if (!CanUseStoreBox())
+	{
+		CloseStoreBox();
+		return FALSE;
+	}
+	GAME_OPEN_STOREBOX_SYNC Info;
+	ZeroMemory(&Info, sizeof(Info));
+	Info.ProtocolType = s2c_openstorebox;
+	Info.Length = sizeof(Info) - 1;
+	// 7 和两个尾部 DWORD 均取自本批正式服记录；细分含义尚未确认。
+	Info.unknown_3 = 7;
+	Info.unknown_5 = 1;
+	Info.unknown_6 = 1;
+	if (FAILED(g_pServer->PackDataToClient(m_nNetConnectIdx, &Info, sizeof(Info))))
+	{
+		CloseStoreBox();
+		return FALSE;
+	}
+	return TRUE;
 }
 #endif
 

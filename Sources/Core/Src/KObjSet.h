@@ -80,6 +80,9 @@ public:
 	// 设定obj所带的物件信息，包括物件id，物件在装备栏中的长、宽
 	BOOL	SetObjItem(int nObjIndex, int nItemID, int nItemWidth, int nItemHeight);
 
+	// 载入经批准的固定场景物件补充配置。
+	BOOL	LoadFixedObjects(int nSubWorld);
+
 	BOOL	SyncAdd(int nID, int nClient);
 #endif
 

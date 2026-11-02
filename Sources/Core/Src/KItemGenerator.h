@@ -51,6 +51,7 @@ public:
 	BOOL Gen_Quest(IN int, IN OUT KItem*);
 	BOOL Gen_TownPortal(IN OUT KItem*);
 	BOOL Gen_Medicine(IN int, IN int, IN int, IN OUT KItem*);
+	BOOL Gen_Material(IN int, IN int, IN int, IN int, IN OUT KItem*);
 	BOOL Gen_Equipment(IN int, IN int, IN int, IN int, IN const int*, IN int,
 						IN int, IN OUT KItem*);
 	BOOL Gen_ExistEquipment(IN int, IN int, IN int, IN int, IN const int*, IN int,

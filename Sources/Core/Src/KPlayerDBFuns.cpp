@@ -210,8 +210,7 @@ int KPlayer::LoadDBPlayerInfo(BYTE *pPlayerInfo, int &nStep, unsigned int &nPara
 		{
 			if (nRet == -1)
 			{
-				nStep ++;
-				nParam = 0;
+				m_bFinishLoading = FALSE;
 				return 0;
 			}
 			else
@@ -279,7 +278,8 @@ int KPlayer::UpdateDBPlayerInfo(BYTE* pPlayerInfo)
 	SavePlayerLifeSkilllList(pPlayerInfo);
 
 	// 玩家的任务列表
-	SavePlayerTaskList(pPlayerInfo);
+	if (SavePlayerTaskList(pPlayerInfo) != 1)
+		return -1;
 
 	// 玩家的物品列表
 	if (SavePlayerItemList(pPlayerInfo) != 1)
@@ -609,10 +609,13 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 				
 			}
 			break;
-		case item_materials:			// 药材
-			{
-				
-			}
+		case item_materials:			// 普通材料
+			bGetEquiptResult = ItemGen.Gen_Material(
+				NewItem.m_CommonAttrib.nDetailType,
+				NewItem.m_CommonAttrib.nParticularType,
+				NewItem.m_CommonAttrib.nLevel,
+				NewItem.m_GeneratorParam.nVersion,
+				&NewItem);
 			break;
 		case item_task:				// 任务
 			{
@@ -811,7 +814,28 @@ int	KPlayer::LoadPlayerTaskList(BYTE * pRoleBuffer, BYTE * &pTaskBuffer, unsigne
 		delete pNode;
 	}
 
-	if(nParam == 0)	m_cTask.Release();
+	TRoleData *pRoleData = (TRoleData*)pRoleBuffer;
+	if (pRoleData->nTaskCount < 0 || pRoleData->nTaskCount > MAX_TASK ||
+		pRoleData->dwTaskOffset < sizeof(TRoleData) - 1 || pRoleData->dwItemOffset < 0 ||
+		pRoleData->dwDataLen > sizeof(m_SaveBuffer) ||
+		(DWORD)pRoleData->dwTaskOffset > pRoleData->dwDataLen ||
+		(DWORD)pRoleData->dwItemOffset > pRoleData->dwDataLen ||
+		(DWORD)pRoleData->dwItemOffset < (DWORD)pRoleData->dwTaskOffset)
+		return -1;
+	DWORD dwTaskBytes = (DWORD)pRoleData->nTaskCount * sizeof(TDBTaskData);
+	if (dwTaskBytes > (DWORD)pRoleData->dwItemOffset - (DWORD)pRoleData->dwTaskOffset)
+		return -1;
+	DWORD dwTaskEnd = (DWORD)pRoleData->dwTaskOffset + dwTaskBytes;
+	if (nParam == 0)
+	{
+		m_cTask.Release();
+		if (!m_cTask.LoadNotes(pRoleBuffer + dwTaskEnd, pRoleData->dwItemOffset - dwTaskEnd))
+		{
+			g_DebugLog("[Task] Invalid saved task journal: role=%s", m_PlayerName);
+			return -1;
+		}
+		pTaskBuffer = pRoleBuffer + pRoleData->dwTaskOffset;
+	}
 
 	int nTaskCount = 0;
 	int nTaskId = 0;
@@ -820,7 +844,11 @@ int	KPlayer::LoadPlayerTaskList(BYTE * pRoleBuffer, BYTE * &pTaskBuffer, unsigne
 	char szTaskValueKey[100];
 	nTaskCount = ((TRoleData* )pRoleBuffer)->nTaskCount;
 
-	if (nTaskCount == 0) return 1;
+	if (nTaskCount == 0)
+	{
+		pTaskBuffer = pRoleBuffer + pRoleData->dwItemOffset;
+		return 1;
+	}
 	if (nParam >= nTaskCount ) return -1;
 	int nBegin	= nParam;
 	int nEnd	= nBegin + DBLOADPERTIME_TASK;
@@ -831,7 +859,7 @@ int	KPlayer::LoadPlayerTaskList(BYTE * pRoleBuffer, BYTE * &pTaskBuffer, unsigne
 	{
 		nTaskId = pTaskData->m_nTaskId;
 		nTaskDegee = pTaskData->m_nTaskValue;
-		if (nTaskId >= MAX_TASK) 
+		if (nTaskId < 0 || nTaskId >= MAX_TASK)
 		{
 			KASSERT(0);
 			continue;//任务ID超过上限了！
@@ -839,7 +867,12 @@ int	KPlayer::LoadPlayerTaskList(BYTE * pRoleBuffer, BYTE * &pTaskBuffer, unsigne
 		m_cTask.SetSaveVal(nTaskId, nTaskDegee);
 	}
 	pTaskBuffer = (BYTE*) pTaskData;
-	if (nParam >= nTaskCount) return 1;
+	if (nParam >= nTaskCount)
+	{
+		// 标准任务变量后还有可选任务日志，下一阶段必须从物品偏移开始。
+		pTaskBuffer = pRoleBuffer + pRoleData->dwItemOffset;
+		return 1;
+	}
 	else 
 	return 0;
 }
@@ -1137,7 +1170,20 @@ int	KPlayer::SavePlayerTaskList(BYTE * pRoleBuffer)
 	}
 		
 	pRoleData->nTaskCount = nTaskCount;
-	pRoleData->dwItemOffset = (BYTE *)pTaskData - pRoleBuffer;
+	DWORD dwOffset = (BYTE*)pTaskData - pRoleBuffer;
+	if (dwOffset >= sizeof(m_SaveBuffer))
+		return -1;
+	int nNotesLength = m_cTask.SaveNotes(pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
+	if (nNotesLength < 0)
+		return -1;
+	dwOffset += nNotesLength;
+	// 任务日志不能挤占随后物品记录的空间，提前计算完整存档上限。
+	int nItems = 0;
+	for (PlayerItem *pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
+		nItems++;
+	if (dwOffset + nItems * (sizeof(TDBItemData) + 1) + sizeof(PLAYER_ITEM_COUNT_HEADER) >= sizeof(m_SaveBuffer) - 32)
+		return -1;
+	pRoleData->dwItemOffset = dwOffset;
 	return 1;
 }
 #endif

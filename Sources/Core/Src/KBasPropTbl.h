@@ -334,6 +334,7 @@ public:
 // 以下是对外接口
 public:
 	const KBASICPROP_MEDMATERIAL* GetRecord(IN int) const;
+	const KBASICPROP_MEDMATERIAL* FindRecord(IN int, IN int, IN int) const;
 
 // 以下是辅助函数
 protected:
@@ -486,6 +487,7 @@ public:
 // 以下是核心成员变量
 protected:
 	KBPT_Medicine			m_BPTMedicine;
+	KBPT_MedMaterial		m_BPTMedMaterial;
 	KBPT_TownPortal			m_BPTTownPortal;
 	KBPT_Quest				m_BPTQuest;
 	KBPT_Equipment			m_BPTHorse;
@@ -548,6 +550,7 @@ public:
 	const int					GetHorseRecordNumber() const;
 	const KBASICPROP_EQUIPMENT_UNIQUE* FindEquipmentUnique(IN int, IN int, IN int) const;
 	const KBASICPROP_MEDMATERIAL* GetMedMaterial(IN int) const;
+	const KBASICPROP_MEDMATERIAL* FindMedMaterial(IN int, IN int, IN int) const;
 	const KBASICPROP_MEDICINE*	GetMedicineRecord(IN int) const;
 	const int					GetMedicineRecordNumber() const;
 	const KBASICPROP_MEDICINE*	FindMedicine(IN int, IN int) const;
