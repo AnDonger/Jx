@@ -4701,7 +4701,8 @@ BOOL KNpc::CheckHitTarget(int nAR, int nDf, int nIngore/* = 0*/)
 
 void KNpc::GetNpcCopyFromTemplate(int nNpcTemplateId, int nLevel)
 {
-	if (nNpcTemplateId < 0 || nLevel < 1 ) 
+	if (nNpcTemplateId < 0 || nNpcTemplateId >= MAX_NPCSTYLE ||
+		nLevel < 1 || nLevel >= MAX_NPC_LEVEL)
 		return ;
 	
 	if (g_pNpcTemplate[nNpcTemplateId][nLevel]) //数据有效则拷贝，否则重新生成
@@ -4753,7 +4754,8 @@ void KNpc::GetNpcCopyFromTemplate(int nNpcTemplateId, int nLevel)
 
 void	KNpc::LoadDataFromTemplate(int nNpcTemplateId, int nLevel)
 {
-	if (nNpcTemplateId < 0 )
+	if (nNpcTemplateId < 0 || nNpcTemplateId >= MAX_NPCSTYLE ||
+		nLevel < 1 || nLevel >= MAX_NPC_LEVEL)
 	{
 		g_DebugLog("载入Npc%d模板请求非法！", nNpcTemplateId);
 		return ;

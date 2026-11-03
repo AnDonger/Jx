@@ -118,7 +118,8 @@ enum ITEM_POSITION
 #define		MAX_HORSE					6
 
 #define		MAX_NPC_TYPE	300
-#define		MAX_NPC_LEVEL	100
+// 0为基础模板，1～100为有效NPC等级，数组上界不包含在内。
+#define		MAX_NPC_LEVEL	101
 
 
 #define		MAX_NPC_DIR		64
