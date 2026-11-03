@@ -84,7 +84,9 @@ public:
 	int		m_PhysicsResist;
 	KSkillList m_SkillList;
 	KItemDropRate *m_pItemDropRate;
-	char	m_szDropRateFile[150];
+	KItemDropRate *m_pItemDropRate1;
+	char	m_szDropRateFile[200];
+	char	m_szDropRateFile1[200];
 	
 #endif
 	

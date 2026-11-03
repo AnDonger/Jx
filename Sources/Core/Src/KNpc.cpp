@@ -226,6 +226,7 @@ void KNpc::Init()
 #ifdef _SERVER
 	m_nNextStatePos				= 0;
 	m_pDropRate = NULL;
+	m_pDropRate1 = NULL;
 #endif
 
 #ifndef _SERVER
@@ -4787,6 +4788,7 @@ void	KNpc::LoadDataFromTemplate(int nNpcTemplateId, int nLevel)
 	m_AiMode		= pNpcTemp->m_AiMode;
 	m_AiAddLifeTime	= 0;
 	m_pDropRate		= pNpcTemp->m_pItemDropRate;
+	m_pDropRate1		= pNpcTemp->m_pItemDropRate1;
 
 	if (!m_AiSkillRadiusLoadFlag)
 	{
@@ -5013,19 +5015,26 @@ void KNpc::DeathPunish(int nMode, int nBelongPlayer)
 		}
 	}
 //	else if (m_nLastDamageIdx && Npc[m_nLastDamageIdx].IsPlayer())
-	else if (nBelongPlayer > 0 && m_pDropRate)
+	else if (nBelongPlayer > 0)
 	{
-		for (int i = 0; i < m_CurrentTreasure; i++)
+		if (m_pDropRate)
 		{
-			if (g_RandPercent(m_pDropRate->nMoneyRate))
+			for (int i = 0; i < m_CurrentTreasure; i++)
 			{
-				LoseMoney(nBelongPlayer);
-			}
-			else
-			{
-				LoseSingleItem(nBelongPlayer);
+				if (g_RandPercent(m_pDropRate->nMoneyRate))
+				{
+					LoseMoney(nBelongPlayer);
+				}
+				else
+				{
+					LoseSingleItem(m_pDropRate, nBelongPlayer);
+				}
 			}
 		}
+
+		// 参考fsb2的分组掉落：专属表独立抽取一次，不依赖通用表是否抽中。
+		if (m_pDropRate1)
+			LoseSingleItem(m_pDropRate1, nBelongPlayer);
 	}
 }
 
@@ -5084,49 +5093,49 @@ void KNpc::LoseMoney(int nBelongPlayer)
 
 }
 
-void KNpc::LoseSingleItem(int nBelongPlayer)
+void KNpc::LoseSingleItem(KItemDropRate *pDropRate, int nBelongPlayer)
 {
-	if (!m_pDropRate)
+	if (!pDropRate || pDropRate->nMaxRandRate <= 0)
 		return;
 
-	if (m_pDropRate->nMaxItemLevelScale <= 0 || m_pDropRate->nMinItemLevelScale <= 0)
+	if (pDropRate->nMaxItemLevelScale <= 0 || pDropRate->nMinItemLevelScale <= 0)
 		return;
 
-	int nRand = g_Random(m_pDropRate->nMaxRandRate);
+	int nRand = g_Random(pDropRate->nMaxRandRate);
 	int nCheckRand = 0;	// 累加概率，确认是否落在区间内
 
 	int i;
-	for (i = 0; i < m_pDropRate->nCount; i++)
+	for (i = 0; i < pDropRate->nCount; i++)
 	{
-		if (nRand >= nCheckRand && nRand < nCheckRand + m_pDropRate->pItemParam[i].nRate)
+		if (nRand >= nCheckRand && nRand < nCheckRand + pDropRate->pItemParam[i].nRate)
 		{
 			break;
 		}
-		nCheckRand += m_pDropRate->pItemParam[i].nRate;
+		nCheckRand += pDropRate->pItemParam[i].nRate;
 	}
 
-	if (i == m_pDropRate->nCount)
+	if (i == pDropRate->nCount)
 		return;
 
 	int nGenre, nSeries, nLuck, nDetail, nParticular, nLevel, pnMagicLevel[6];
-	nGenre = m_pDropRate->pItemParam[i].nGenre;
-	nDetail = m_pDropRate->pItemParam[i].nDetailType;
-	nParticular = m_pDropRate->pItemParam[i].nParticulType;
+	nGenre = pDropRate->pItemParam[i].nGenre;
+	nDetail = pDropRate->pItemParam[i].nDetailType;
+	nParticular = pDropRate->pItemParam[i].nParticulType;
 	nSeries = m_Series;
 	nLuck = Player[nBelongPlayer].m_nCurLucky;
 
-	int nMaxLevel = m_Level / m_pDropRate->nMaxItemLevelScale;
-	int nMinLevel = m_Level / m_pDropRate->nMinItemLevelScale;
+	int nMaxLevel = m_Level / pDropRate->nMaxItemLevelScale;
+	int nMinLevel = m_Level / pDropRate->nMinItemLevelScale;
 
-	if (nMaxLevel > m_pDropRate->nMaxItemLevel)
-		nMaxLevel = m_pDropRate->nMaxItemLevel;
+	if (nMaxLevel > pDropRate->nMaxItemLevel)
+		nMaxLevel = pDropRate->nMaxItemLevel;
 
-	if (nMaxLevel < m_pDropRate->nMinItemLevel)
-		nMaxLevel = m_pDropRate->nMinItemLevel;
-	if (nMinLevel > m_pDropRate->nMaxItemLevel)
-		nMinLevel = m_pDropRate->nMaxItemLevel;
-	if (nMinLevel < m_pDropRate->nMinItemLevel)
-		nMinLevel = m_pDropRate->nMinItemLevel;
+	if (nMaxLevel < pDropRate->nMinItemLevel)
+		nMaxLevel = pDropRate->nMinItemLevel;
+	if (nMinLevel > pDropRate->nMaxItemLevel)
+		nMinLevel = pDropRate->nMaxItemLevel;
+	if (nMinLevel < pDropRate->nMinItemLevel)
+		nMinLevel = pDropRate->nMinItemLevel;
 
 	if (nMaxLevel < nMinLevel)
 	{
@@ -5142,7 +5151,7 @@ void KNpc::LoseSingleItem(int nBelongPlayer)
 	{
 		if (!bSkip)
 		{
-			 if (g_Random(m_pDropRate->nMagicRate))
+			 if (g_Random(pDropRate->nMagicRate))
 			 {
 				 pnMagicLevel[j] = nLevel;
 			 }
@@ -5157,6 +5166,10 @@ void KNpc::LoseSingleItem(int nBelongPlayer)
 			pnMagicLevel[j] = 0;
 		}
 	}
+
+	// 当前材料表没有等级列，材料等级由原资源加载为0，不套用装备等级比例。
+	if (nGenre == item_materials)
+		nLevel = 0;
 
 	int nIdx = ItemSet.Add(nGenre, nSeries, nLevel, nLuck, nDetail, nParticular, pnMagicLevel, g_SubWorldSet.GetGameVersion());
 

@@ -400,6 +400,7 @@ public:
 	int					m_AiSkillRadiusLoadFlag;// 战斗npc技能范围是否已经初始化 只需要在构造的时候初始化一次
 	KNpcDeathCalcExp	m_cDeathCalcExp;		// 战斗npc死亡后送出经验给不同的player
 	KItemDropRate*		m_pDropRate;
+	KItemDropRate*		m_pDropRate1;
 	int					m_nCurPKPunishState;	// PK死亡时的惩罚性质，用于国战
 #endif
 #ifndef	_SERVER
@@ -530,7 +531,7 @@ private:
 	BOOL				NewJump(int nMpsX, int nMpsY);
 	BOOL				CheckHitTarget(int nAR, int nDf, int nIngore = 0);
 #ifdef _SERVER
-	void				LoseSingleItem(int nBelongPlayer);
+	void				LoseSingleItem(KItemDropRate *pDropRate, int nBelongPlayer);
 	void				LoseMoney(int nBelongPlayer);
 	void				PlayerDeadCreateMoneyObj(int nMoneyNum);	// 玩家死的时候掉出来的钱生成一个object
 	void				UpdateNpcStateInfo();		//重新更新角色的状态信息

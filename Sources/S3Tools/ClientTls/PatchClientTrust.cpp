@@ -12,16 +12,34 @@
 
 typedef std::vector< unsigned char > BYTES;
 
-// These addresses belong only to the SHA256-checked 2026-10-30 client.
-// Their signatures and calling conventions were checked in background GUI IDA.
-static const DWORD SSL_CTX_NEW_EX = 0x008D9B60;
-static const DWORD SSL_CTX_FREE = 0x008D92F0;
-static const DWORD D2I_X509 = 0x00977960;
-static const DWORD X509_STORE_ADD_CERT = 0x00974B50;
-static const DWORD X509_FREE = 0x009777F0;
-static const DWORD TLS_CONNECT = 0x0069E730;
-static const DWORD LOGIN_TLS_CONNECT_CALL = 0x00679AF8;
-static const DWORD GETPEERNAME_IAT = 0x0228C0A0;
+// Each layout belongs only to its complete SHA256-checked original client.
+// Addresses, calling conventions and cert_store +0x14 were checked in GUI IDA.
+struct CLIENT_BUILD
+{
+	const char *pSha256;
+	DWORD sslContextNew;
+	DWORD sslContextFree;
+	DWORD decodeCertificate;
+	DWORD addCertificate;
+	DWORD freeCertificate;
+	DWORD tlsConnect;
+	DWORD loginConnectCall;
+	DWORD peerNameImport;
+};
+
+static const CLIENT_BUILD CLIENT_BUILDS[] =
+{
+	{
+		"2F795666BC02B4948B6B7416855272FF703C543CE404523AD44E4727912975BF",
+		0x008D9B60, 0x008D92F0, 0x00977960, 0x00974B50,
+		0x009777F0, 0x0069E730, 0x00679AF8, 0x0228C0A0
+	},
+	{
+		"6EF957059B1A8EF28A24BA14038018D8710AFAF524D2FCD68C40761467D05D27",
+		0x008D9D30, 0x008D94C0, 0x00977B10, 0x00974D10,
+		0x009779A0, 0x0069E7F0, 0x00679BA8, 0x022C40A0
+	}
+};
 static const char OFFICIAL_PUBLIC_KEY_PIN[] =
 	"10914f18bfc58b69a7533b1a6834cd5757c610a73b111427a196239cb29e22aa";
 
@@ -187,7 +205,7 @@ private:
 	std::vector< REFERENCE > m_references;
 };
 
-static BYTES MakeTrustHook( DWORD address, const BYTES &certificate )
+static BYTES MakeTrustHook( DWORD address, const BYTES &certificate, const CLIENT_BUILD &build )
 {
 	CNativeCode code( address );
 
@@ -215,7 +233,7 @@ static BYTES MakeTrustHook( DWORD address, const BYTES &certificate )
 	code.Dword( static_cast< DWORD >( certificate.size() ) );
 	code.Bytes( { 0x50 } );                         // push eax (&DER pointer)
 	code.Bytes( { 0x6A, 0x00 } );                   // push NULL (new X509)
-	code.Call( D2I_X509 );
+	code.Call( build.decodeCertificate );
 	code.Bytes( { 0x83, 0xC4, 0x0C } );             // add esp, 12
 	code.Bytes( { 0x8B, 0xF0 } );                   // mov esi, eax
 	code.Bytes( { 0x85, 0xF6 } );                   // test esi, esi
@@ -223,11 +241,11 @@ static BYTES MakeTrustHook( DWORD address, const BYTES &certificate )
 
 	code.Bytes( { 0x56 } );                         // push esi (public X509)
 	code.Bytes( { 0xFF, 0x73, 0x14 } );             // push [ebx+20] (cert_store)
-	code.Call( X509_STORE_ADD_CERT );
+	code.Call( build.addCertificate );
 	code.Bytes( { 0x83, 0xC4, 0x08 } );             // add esp, 8
 	code.Bytes( { 0x89, 0x45, 0xF4 } );             // mov [ebp-12], eax
 	code.Bytes( { 0x56 } );                         // push esi
-	code.Call( X509_FREE );                         // store retains its own reference
+	code.Call( build.freeCertificate );            // store retains its own reference
 	code.Bytes( { 0x83, 0xC4, 0x04 } );             // add esp, 4
 	code.Bytes( { 0x83, 0x7D, 0xF4, 0x01 } );       // cmp [ebp-12], 1
 	code.Bytes( { 0x0F, 0x85 } );                   // jne failed
@@ -236,7 +254,7 @@ static BYTES MakeTrustHook( DWORD address, const BYTES &certificate )
 
 	code.Label( "failed" );
 	code.Bytes( { 0x53 } );                         // push ebx
-	code.Call( SSL_CTX_FREE );
+	code.Call( build.sslContextFree );
 	code.Bytes( { 0x83, 0xC4, 0x04 } );             // add esp, 4
 	code.Bytes( { 0x33, 0xDB } );                   // xor ebx, ebx (fail closed)
 
@@ -251,13 +269,13 @@ static BYTES MakeTrustHook( DWORD address, const BYTES &certificate )
 	code.AlignCode();
 	code.Label( "original" );
 	code.Bytes( { 0x53, 0x8B, 0x5C, 0x24, 0x10 } ); // displaced complete prologue
-	code.JumpTo( SSL_CTX_NEW_EX + 5 );
+	code.JumpTo( build.sslContextNew + 5 );
 	code.Label( "certificate" );
 	code.Data( certificate );
 	return code.Finish();
 }
 
-static BYTES MakePinHook( DWORD address, const std::string &localPin )
+static BYTES MakePinHook( DWORD address, const std::string &localPin, const CLIENT_BUILD &build )
 {
 	CNativeCode code( address );
 
@@ -272,7 +290,7 @@ static BYTES MakePinHook( DWORD address, const std::string &localPin )
 	code.Bytes( { 0x8D, 0x44, 0x24, 0x04, 0x50 } ); // push &address
 	code.Bytes( { 0xFF, 0x74, 0x24, 0x44 } );       // push original socket
 	code.Bytes( { 0xFF, 0x15 } );
-	code.Dword( GETPEERNAME_IAT );                  // stdcall, restores 12 bytes
+	code.Dword( build.peerNameImport );            // stdcall, restores 12 bytes
 	code.Bytes( { 0x85, 0xC0 } );                   // test eax, eax
 	code.Bytes( { 0x0F, 0x85 } );
 	code.Reference( "done", true );
@@ -310,7 +328,7 @@ static BYTES MakePinHook( DWORD address, const std::string &localPin )
 
 	code.Label( "done" );
 	code.Bytes( { 0x83, 0xC4, 0x14, 0x61, 0x9D } ); // restore stack, registers, flags
-	code.JumpTo( TLS_CONNECT );                   // preserve the protected entry byte for byte
+	code.JumpTo( build.tlsConnect );               // preserve the protected entry byte for byte
 	code.AlignCode();
 	code.Label( "hostname" );
 	const char hostname[] = "fs.seayoo.com";
@@ -335,8 +353,16 @@ int main( int argc, char *argv[] )
 		OPENSSL_init_crypto( OPENSSL_INIT_NO_LOAD_CONFIG, NULL );
 		BYTES image = ReadFileBytes( argv[1] );
 		std::string originalHash = GetSha256( image );
-		Require( originalHash == "2F795666BC02B4948B6B7416855272FF703C543CE404523AD44E4727912975BF",
-			"The input is not the analyzed, unmodified 2026-10-30 client." );
+		const CLIENT_BUILD *pBuild = NULL;
+		for ( size_t i = 0; i < sizeof( CLIENT_BUILDS ) / sizeof( CLIENT_BUILDS[0] ); ++i )
+		{
+			if ( originalHash == CLIENT_BUILDS[i].pSha256 )
+			{
+				pBuild = &CLIENT_BUILDS[i];
+				break;
+			}
+		}
+		Require( pBuild != NULL, "The input is not an analyzed, unmodified client build." );
 		Require( GetFileAttributesA( argv[3] ) == INVALID_FILE_ATTRIBUTES,
 			"The output already exists. Use a new candidate path." );
 
@@ -401,21 +427,23 @@ int main( int argc, char *argv[] )
 		{
 			Require( image[i] == 0, "The section-header slot is in use." );
 		}
-		DWORD hookOffset = GetFileOffset( image, SSL_CTX_NEW_EX );
+		DWORD hookOffset = GetFileOffset( image, pBuild->sslContextNew );
 		const unsigned char prologue[] = { 0x53, 0x8B, 0x5C, 0x24, 0x10 };
 		Require( memcmp( &image[hookOffset], prologue, sizeof( prologue ) ) == 0,
 			"The original SSL_CTX_new_ex prologue differs." );
-		DWORD pinOffset = GetFileOffset( image, LOGIN_TLS_CONNECT_CALL );
-		const unsigned char pinPrologue[] = { 0xE8, 0x33, 0x4C, 0x02, 0x00 };
-		Require( memcmp( &image[pinOffset], pinPrologue, sizeof( pinPrologue ) ) == 0,
+		DWORD pinOffset = GetFileOffset( image, pBuild->loginConnectCall );
+		DWORD originalDisplacement = 0;
+		memcpy( &originalDisplacement, &image[pinOffset + 1], sizeof( originalDisplacement ) );
+		Require( image[pinOffset] == 0xE8 &&
+			pBuild->loginConnectCall + 5 + originalDisplacement == pBuild->tlsConnect,
 			"The original login TLS connector call differs." );
 		DWORD sectionRva = Align( imageEnd, sectionAlignment );
 		DWORD sectionVa = 0x400000 + sectionRva;
 		DWORD rawOffset = Align( static_cast< DWORD >( image.size() ), fileAlignment );
-		BYTES hook = MakeTrustHook( sectionVa, certificate );
+		BYTES hook = MakeTrustHook( sectionVa, certificate, *pBuild );
 		DWORD pinHookOffset = Align( static_cast< DWORD >( hook.size() ), 16 );
 		hook.resize( pinHookOffset, 0xCC );
-		BYTES pinHook = MakePinHook( sectionVa + pinHookOffset, localPin );
+		BYTES pinHook = MakePinHook( sectionVa + pinHookOffset, localPin, *pBuild );
 		hook.insert( hook.end(), pinHook.begin(), pinHook.end() );
 		DWORD rawSize = Align( static_cast< DWORD >( hook.size() ), fileAlignment );
 		image.resize( rawOffset + rawSize, 0 );
@@ -435,10 +463,10 @@ int main( int argc, char *argv[] )
 		pNt->OptionalHeader.SizeOfCode += rawSize;
 		pNt->OptionalHeader.CheckSum = 0;
 		image[hookOffset] = 0xE9;
-		DWORD displacement = sectionVa - ( SSL_CTX_NEW_EX + 5 );
+		DWORD displacement = sectionVa - ( pBuild->sslContextNew + 5 );
 		memcpy( &image[hookOffset + 1], &displacement, sizeof( displacement ) );
 		image[pinOffset] = 0xE8;
-		displacement = sectionVa + pinHookOffset - ( LOGIN_TLS_CONNECT_CALL + 5 );
+		displacement = sectionVa + pinHookOffset - ( pBuild->loginConnectCall + 5 );
 		memcpy( &image[pinOffset + 1], &displacement, sizeof( displacement ) );
 
 		std::ofstream output( argv[3], std::ios::binary );

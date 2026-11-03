@@ -12,6 +12,8 @@
 
 需要已有 Visual Studio 2022 C++ 工具和 `Test/Dependencies/OpenSSL` 的 Win32 `/MT` 静态依赖。编译产物仅写入 `Test/Client20261030/Tools`。
 
+其他轮次可通过 `-OutputRoot F:\mxd\Jx\Test\Client20261103\Tools` 将工具编译到该轮测试目录。
+
 ## 身份生成
 
 ```powershell
@@ -35,19 +37,36 @@ Heaven 在启动时从 EXE 目录的 `../../Resources/ServerConfig/ClientTls` �
     .\Test\Client20261030\Game.unpacked.20261030.local-pin-call.exe
 ```
 
-补丁只接受后台 GUI IDA 核对过的原始 EXE：
+补丁只接受后台 GUI IDA 核对过的原始 EXE，按完整 SHA256 选择独立地址表：
 
-- 大小：32,083,968 字节。
-- SHA256：`2F795666BC02B4948B6B7416855272FF703C543CE404523AD44E4727912975BF`。
-- x86，固定映像基址 `0x400000`，未启用 ASLR。
+| 构建 | 大小 | 原始 SHA256 |
+| --- | --- | --- |
+| 2026-10-30 | 32,083,968 | `2F795666BC02B4948B6B7416855272FF703C543CE404523AD44E4727912975BF` |
+| 2026-11-03 | 32,313,344 | `6EF957059B1A8EF28A24BA14038018D8710AFAF524D2FCD68C40761467D05D27` |
+
+两版均为 x86，固定映像基址 `0x400000`，未启用 ASLR。未知构建或已修改构建拒绝处理，不按版本文件名或统一地址增量推测布局。
+
+新版使用示例（输入必须为尚未部署补丁的原始文件，输出必须不存在）：
+
+```powershell
+& .\Sources\S3Tools\ClientTls\Build.ps1 -OutputRoot F:\mxd\Jx\Test\Client20261103\Tools
+& .\Test\Client20261103\Tools\PatchClientTrust.exe `
+    .\Test\Client20261103\Game.unpacked.20261103.original.exe `
+    .\Resources\ServerConfig\ClientTls\server-cert.pem `
+    .\Test\Client20261103\Game.unpacked.20261103.local.exe
+```
 
 工具在新的 `.jxtls` 只读可执行节中加入初始化代码和本地公开 DER。原 `SSL_CTX_new_ex` 入口的完整 5 字节指令转到该代码；它先调用原初始化，再使用客户端自带的 `d2i_X509`、`X509_STORE_add_cert` 追加公开证书，释放临时 X509 引用。证书解析或追加失败会释放新 context 并返回 NULL，不跳过校验。原证书验证函数、原正式服证书及其加载代码保持原字节。工具不读取私钥。
 
 该版本在 TLS 握手成功后还核对证书公钥的 SPKI SHA-256。工具从同一公开证书计算本地指纹，在登录流程 `0x679AF8` 的既有 CALL 处追加参数适配：通过客户端已有的 `getpeername` 导入核对实际远端地址，仅当地址恰为 IPv4 `127.0.0.1`、原校验名称为 `fs.seayoo.com`、原预期值为正式服已确认指纹时，改用本地公钥指纹，随后进入完整保留的原连接函数 `0x69E730` 和原比较代码。其他地址、名称、预期值或地址查询失败均保留原参数；错误公钥仍被原逻辑拒绝。不接受所有回环地址，不取消证书链、名称或公钥核对。早期修改受保护函数入口的候选未通过实测，已经撤回，不应部署。
 
-地址、调用约定和 `SSL_CTX->cert_store` 偏移只适用于上述哈希。不得直接套用到其他版本；输入或输出不满足前置条件时工具拒绝操作，输出也不覆盖。
+上段 `0x679AF8` / `0x69E730` 为10月30日构建；11月3日构建分别为 `0x679BA8` / `0x69E7F0`。新版 `SSL_CTX_new_ex` 为 `0x8D9D30`，`getpeername` IAT为 `0x22C40A0`。地址、调用约定和 `SSL_CTX->cert_store` 偏移只适用于各自哈希。不得直接套用到其他版本；输入或输出不满足前置条件时工具拒绝操作，输出也不覆盖。
 
 候选必须先在 Test 验证。替换 `Release/Client/Game.unpacked.20261030.exe` 前，关闭占用客户端并将原 EXE 备份到 Test。不要替换 `D:/Program Files/Kingsoft/FSOnline` 中的正式客户端。
+
+11月3日适配只替换用户指定的 `Release/Client/Game.unpacked.20261103.exe`，备份、后台 GUI IDA 记录与验证结果位于 `Test/Client20261103`。候选SHA256为 `497A767AAE0519407A7C95E1A4A7FF9451445F7D5C1BB096386A18083CE6E1D7`。原生九种公钥范围测试、四种信任初始化测试、精确修改范围核对和旧版输出逐字节回归已通过；真实新版客户端画面与交互须另行验收，不能由这些测试代替。
+
+2026-11-03本轮部署后，用户反馈“测试没问题，可以进入”。真实服务端日志确认登录和游戏端口均完成TLS 1.3，账号认证成功、返回3个角色，并有约75秒的进图后请求、移动、停步及心跳记录，实际连接0条TLS错误。部署记录已标记 `ActualClientVerified=true`，结果见 `Test/Client20261103/actual-client-verification.json`。这不代表所有NPC、传送点或长期游戏过程均已验证。
 
 ## 验证与回退
 

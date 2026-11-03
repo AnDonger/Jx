@@ -46,13 +46,29 @@ static KItemDropRate * g_GenItemDropRate(char * szDropIniFile)
 	}
 	else
 	{
-		printf("Œﬁ∑®’“µΩ%s\n", szDropIniFile);
+		printf("[DropRate][WARNING] Cannot load %s; this drop table is skipped.\n", szDropIniFile);
 		return NULL;
 	}
 
 	return NULL;
 }
 
+
+static KItemDropRate * g_LoadItemDropRate(char *szDropFile)
+{
+	if (!szDropFile || !szDropFile[0])
+		return NULL;
+
+	strlwr(szDropFile);
+	KItemDropRateNode DropNode;
+	strcpy(DropNode.m_szFileName, szDropFile);
+	if (g_ItemDropRateBinTree.Find(DropNode))
+		return DropNode.m_pItemDropRate;
+
+	DropNode.m_pItemDropRate = g_GenItemDropRate(szDropFile);
+	g_ItemDropRateBinTree.Insert(DropNode);
+	return DropNode.m_pItemDropRate;
+}
 
 int	operator<(KItemDropRateNode Left, KItemDropRateNode Right)
 {
@@ -116,26 +132,11 @@ void	KNpcTemplate::InitNpcBaseData(int nNpcTemplateId)
 	g_NpcSetting.GetInteger(nNpcTempRow, "ActiveRadius", 30, &m_ActiveRadius);
 	g_NpcSetting.GetInteger(nNpcTempRow, "VisionRadius", 40, &m_VisionRadius);
 	
-	char szDropFile[200];
-	g_NpcSetting.GetString(nNpcTempRow, "DropRateFile", "", szDropFile, sizeof(szDropFile));
-	strlwr(szDropFile);
-	strcpy(m_szDropRateFile, szDropFile);
-	KItemDropRateNode DropNode;
-	strcpy(DropNode.m_szFileName, szDropFile);
-	
-	if (g_ItemDropRateBinTree.Find(DropNode))
-	{
-		m_pItemDropRate = DropNode.m_pItemDropRate;
-	}
-	else
-	{
-		KItemDropRateNode newDropNode;
-		strcpy(newDropNode.m_szFileName,szDropFile);
-		newDropNode.m_pItemDropRate = g_GenItemDropRate(szDropFile);
-		g_ItemDropRateBinTree.Insert(newDropNode);
-		m_pItemDropRate = newDropNode.m_pItemDropRate;
-	}
-	
+	g_NpcSetting.GetString(nNpcTempRow, "DropRateFile", "", m_szDropRateFile, sizeof(m_szDropRateFile));
+	m_pItemDropRate = g_LoadItemDropRate(m_szDropRateFile);
+	g_NpcSetting.GetString(nNpcTempRow, "DropRateFile1", "", m_szDropRateFile1, sizeof(m_szDropRateFile1));
+	m_pItemDropRate1 = g_LoadItemDropRate(m_szDropRateFile1);
+
 	int nAIMaxTime = 0;
 	g_NpcSetting.GetInteger(nNpcTempRow, "AIMaxTime", 25, (int*)&nAIMaxTime);
 	m_AIMAXTime = (BYTE)nAIMaxTime;

@@ -1,10 +1,12 @@
 param(
     [string]$OpenSslRoot = "$PSScriptRoot\..\..\..\Test\Dependencies\OpenSSL",
-    [string]$VcVars = 'D:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars32.bat'
+    [string]$VcVars = 'D:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars32.bat',
+    [string]$OutputRoot = ''
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath("$PSScriptRoot\..\..\..")
-$outputRoot = Join-Path $projectRoot 'Test\Client20261030\Tools'
+if (-not $OutputRoot) { $OutputRoot = Join-Path $projectRoot 'Test\Client20261030\Tools' }
+$outputRoot = [IO.Path]::GetFullPath($OutputRoot)
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 foreach ($name in 'CreateLocalIdentity', 'PatchClientTrust') {
     $commands = @(
