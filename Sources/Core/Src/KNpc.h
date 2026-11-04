@@ -557,6 +557,8 @@ public:
 	void				SendCommand(NPCCMD cmd, int x = 0, int y = 0, int z = 0);
 #ifdef _SERVER
 	BOOL				StopMovement();
+	BOOL				CanSwitchRideHorse();
+	BOOL				SwitchRideHorse(BOOL bRideHorse);
 #endif
 	void				ProcCommand(int nAI);
 	ISkill* 			GetActiveSkill();

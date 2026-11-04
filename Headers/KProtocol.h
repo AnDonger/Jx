@@ -355,6 +355,28 @@ struct GAME_SPLIT_ITEM_COMMAND
 	BYTE Mode;
 };
 
+// 20261104 official capture: 85/A7 are 14 bytes; +7 is 0=mount, 1=dismount.
+struct GAME_MOUNT_STATE_COMMAND
+{
+	BYTE ProtocolType;
+	BYTE unknown_1[6];
+	char DismountFlag;
+	BYTE unknown_2[6];
+};
+
+struct GAME_MOUNT_STATE_SYNC
+{
+	BYTE ProtocolType;
+	BYTE unknown_1[6];
+	char DismountFlag;
+	BYTE unknown_2[6];
+};
+
+static_assert(sizeof(GAME_MOUNT_STATE_COMMAND) == 14, "85 mount state request");
+static_assert(sizeof(GAME_MOUNT_STATE_SYNC) == 14, "A7 mount state sync");
+static_assert(offsetof(GAME_MOUNT_STATE_COMMAND, DismountFlag) == 7, "85 mount flag");
+static_assert(offsetof(GAME_MOUNT_STATE_SYNC, DismountFlag) == 7, "A7 mount flag");
+
 struct GAME_AURA_COMMAND
 {
 	BYTE ProtocolType;

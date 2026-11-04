@@ -221,6 +221,7 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[0x62] = &KProtocolProcess::CurrentPickupCommand;
 	ProcessFunc[0x78] = &KProtocolProcess::ChangeAuraSkill;
 	ProcessFunc[0xA4] = &KProtocolProcess::CurrentPickupCommand;
+	ProcessFunc[0x85] = &KProtocolProcess::CurrentMountCommand;
 	ProcessFunc[0x94] = &KProtocolProcess::CurrentSplitItemCommand;
 	ProcessFunc[0x98] = &KProtocolProcess::CloseStoreBoxCommand;
 	ProcessFunc[0xAC] = &KProtocolProcess::PlayerBuyBackItem;
@@ -3379,6 +3380,44 @@ void KProtocolProcess::CurrentPickupCommand(int nIndex, BYTE* pProtocol)
 		Command.Y = (BYTE)nY;
 	}
 	Player[nIndex].ServerPickUpItem((BYTE*)&Command);
+}
+
+void KProtocolProcess::CurrentMountCommand(int nIndex, BYTE* pProtocol)
+{
+	if (nIndex <= 0 || nIndex >= MAX_PLAYER || !pProtocol)
+		return;
+	const GAME_MOUNT_STATE_COMMAND* pCommand = (const GAME_MOUNT_STATE_COMMAND*)pProtocol;
+	if (pCommand->DismountFlag != 0 && pCommand->DismountFlag != 1)
+	{
+		g_DebugLog("[Mount] invalid request: player=%d flag=%d", nIndex, pCommand->DismountFlag);
+		return;
+	}
+	int nNpc = Player[nIndex].m_nIndex;
+	if (nNpc <= 0 || nNpc >= MAX_NPC || !::Npc[nNpc].IsPlayer())
+		return;
+	KNpc& Npc = ::Npc[nNpc];
+	if (Npc.GetPlayerIdx() != nIndex || Npc.m_RegionIndex < 0 || Npc.m_SubWorldIndex < 0 ||
+		Npc.m_bExchangeServer || Player[nIndex].m_bExchangeServer ||
+		Npc.m_Doing == do_death || Npc.m_Doing == do_revive || Npc.m_CurrentLife <= 0)
+		return;
+	BOOL bChanged = FALSE;
+	BOOL bRideHorse = pCommand->DismountFlag == 0;
+	if (bRideHorse != Npc.m_bRideHorse && Npc.CanSwitchRideHorse())
+		bChanged = Npc.SwitchRideHorse(bRideHorse);
+
+	// 每次返回实际状态。重复请求不能再次切换，也不能重复增减坐骑属性。
+	GAME_MOUNT_STATE_SYNC Sync;
+	memset(&Sync, 0, sizeof(Sync));
+	Sync.ProtocolType = 0xA7;
+	Sync.DismountFlag = Npc.m_bRideHorse ? 0 : 1;
+	g_pServer->PackDataToClient(Player[nIndex].m_nNetConnectIdx, &Sync, sizeof(Sync));
+	if (bChanged)
+	{
+		Npc.NormalSync();
+		Player[nIndex].SendCurNormalSyncData();
+	}
+	g_DebugLog("[Mount] player=%d requested=%d actual=%d changed=%d run=%d", nIndex,
+		pCommand->DismountFlag, Sync.DismountFlag, bChanged, Npc.m_CurrentRunSpeed);
 }
 
 void KProtocolProcess::CurrentRunCommand(int nIndex, BYTE* pProtocol)

@@ -2504,6 +2504,8 @@ void KPlayer::ReCalcEquip()
 		int nIdx = m_ItemList.m_EquipItem[i];
 		if (!nIdx)
 			continue;
+		if (i == itempart_horse && !Npc[m_nIndex].m_bRideHorse)
+			continue;
 		int nActive = m_ItemList.GetEquipEnhance(i);
 		Item[nIdx].ApplyMagicAttribToNPC(&Npc[m_nIndex], nActive);
 	}

@@ -5917,6 +5917,36 @@ void KNpc::CheckTrap()
 		g_DebugLog("[Trap] Script failed: player=%d script=%lu", m_nPlayerIdx, dwTrap);
 }
 
+#ifdef _SERVER
+BOOL KNpc::CanSwitchRideHorse()
+{
+	if (!IsPlayer() || m_nPlayerIdx <= 0 || m_nPlayerIdx >= MAX_PLAYER ||
+		Player[m_nPlayerIdx].m_nIndex != m_Index || Player[m_nPlayerIdx].CheckTrading() ||
+		m_RegionIndex < 0 || m_SubWorldIndex < 0 || m_bExchangeServer ||
+		Player[m_nPlayerIdx].m_bExchangeServer || m_CurrentLife <= 0 ||
+		m_Doing == do_sit || m_Doing == do_death || m_Doing == do_revive)
+		return FALSE;
+	int nItem = Player[m_nPlayerIdx].m_ItemList.GetEquipment(itempart_horse);
+	return nItem > 0 && nItem < MAX_ITEM && Item[nItem].GetGenre() == item_equip &&
+		Item[nItem].GetDetailType() == equip_horse && m_HorseType >= 0;
+}
+
+BOOL KNpc::SwitchRideHorse(BOOL bRideHorse)
+{
+	bRideHorse = bRideHorse != FALSE;
+	if (m_bRideHorse == bRideHorse || !CanSwitchRideHorse())
+		return FALSE;
+	m_bRideHorse = bRideHorse;
+	// 坐骑仍在装备栏。按现有装备、被动技能和状态重算，避免多次上下马累加属性。
+	Player[m_nPlayerIdx].UpdataCurData();
+	Player[m_nPlayerIdx].SetNpcDamageAttrib();
+	m_CurrentLife = min(m_CurrentLife, m_CurrentLifeMax);
+	m_CurrentMana = min(m_CurrentMana, m_CurrentManaMax);
+	m_CurrentStamina = min(m_CurrentStamina, m_CurrentStaminaMax);
+	return TRUE;
+}
+#endif
+
 void KNpc::SetFightMode(BOOL bFightMode)
 {
 	//g_DebugLog("[DEATH]SetMode:%d", bFightMode);

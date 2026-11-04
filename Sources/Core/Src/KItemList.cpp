@@ -1102,7 +1102,9 @@ BOOL KItemList::UnEquip(int nIdx, int nPos/* = -1*/)
 	}
 	// 移除该装备对NPC的属性调整
 	int nActive = GetEquipEnhance(i);
-	Item[nIdx].RemoveMagicAttribFromNPC(&Npc[nNpcIdx], nActive);
+	// 下马时坐骑属性已经移除，卸下物品不能再扣一次。
+	if (i != itempart_horse || Npc[nNpcIdx].m_bRideHorse)
+		Item[nIdx].RemoveMagicAttribFromNPC(&Npc[nNpcIdx], nActive);
 	// 移除该装备可能对它激活的装备的影响。
 	InfectionNextEquip(i, FALSE);
 	// 这句话一定要放在上一句后，保证计算该装备激活的装备激活属性个数计算的正确性
