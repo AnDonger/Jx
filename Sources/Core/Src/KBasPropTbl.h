@@ -237,6 +237,8 @@ typedef struct
 	int			m_nWidth;					// 道具栏中所占宽度
 	int			m_nHeight;					// 道具栏中所占高度
 	char		m_szIntro[SZBUFLEN_1];		// 说明文字
+	int			m_bStack;				// 原资源“是否叠放”：数量上限
+	int			m_nParticularType;		// 原资源“详细类别”
 } KBASICPROP_QUEST;
 
 typedef struct

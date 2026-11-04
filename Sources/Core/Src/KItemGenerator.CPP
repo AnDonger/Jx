@@ -860,6 +860,9 @@ BOOL KItemGenerator::Gen_Quest(IN int nDetailType, IN OUT KItem* pItem)
 		return bEC;
 	}
 	*pItem = *pQuest;
+	pItem->m_GeneratorParam.nVersion = m_nCurrentVersion;
+	pItem->SetDurability(-1);
+	pItem->SetStackCount(1);
 	return TRUE;
 }
 

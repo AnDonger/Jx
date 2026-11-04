@@ -579,7 +579,7 @@ const int KLibOfBPT::GetMedicineRecordNumber() const
 
 const KBASICPROP_QUEST* KLibOfBPT::GetQuestRecord(IN int i) const
 {
-	return m_BPTQuest.GetRecord(i);
+	return m_BPTQuest.FindRecord(i);
 }
 
 const int KLibOfBPT::GetQuestRecordNumber() const
@@ -937,7 +937,11 @@ BOOL KBPT_Quest::LoadRecord(int i, KTabFile* pTF)
 	};
 
 	// 逐个读入各项属性
-	return ::LoadRecord(pTF, i, aryPI, sizeof(aryPI)/ sizeof(aryPI[0]));
+	if (!::LoadRecord(pTF, i, aryPI, sizeof(aryPI)/ sizeof(aryPI[0])))
+		return FALSE;
+	pTF->GetInteger(i + 2, "是否叠放", 0, &pBuf->m_bStack);
+	pTF->GetInteger(i + 2, "详细类别", 0, &pBuf->m_nParticularType);
+	return pBuf->m_bStack >= 0;
 
 }
 

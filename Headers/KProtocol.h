@@ -323,6 +323,60 @@ struct GAME_BUY_ITEM_COMMAND
 
 static_assert(sizeof(GAME_BUY_ITEM_COMMAND) == 17, "B8/5 shop purchase request");
 
+// 20261104 official capture: B8/38 wraps an operation and its byte-counted payload.
+struct GAME_MALL_COMMAND
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	BYTE Operation;
+	DWORD DataLength;
+};
+
+struct GAME_MALL_BUY_COMMAND
+{
+	GAME_MALL_COMMAND Header;
+	BYTE Currency;
+	WORD GoodsID;
+	WORD Count;
+	WORD unknown_1;
+};
+
+struct GAME_MALL_GOODS
+{
+	BYTE Tabs;
+	BYTE Flags;
+	BYTE StackCount;
+	WORD GoodsID;
+	int Genre;
+	int Detail;
+	int Particular;
+	int Level;
+	int CopperPrice;
+	int CopperDiscount;
+	int YuanBaoPrice;
+	int YuanBaoDiscount;
+	int MoneyPrice;
+	int MoneyDiscount;
+};
+
+// CC only displays a currency change notice; it does not update the balance.
+// Current client: +1=0 loss, +2=1 copper, +3=actual number of coins.
+struct GAME_CURRENCY_NOTICE_SYNC
+{
+	BYTE ProtocolType;
+	BYTE ChangeType;
+	BYTE Currency;
+	DWORD Amount;
+};
+
+static_assert(sizeof(GAME_CURRENCY_NOTICE_SYNC) == 7 &&
+	offsetof(GAME_CURRENCY_NOTICE_SYNC, Amount) == 3, "CC currency notice wire layout");
+
+static_assert(sizeof(GAME_MALL_COMMAND) == 9, "B8/38 mall request header");
+static_assert(sizeof(GAME_MALL_BUY_COMMAND) == 16, "B8/38 mall purchase");
+static_assert(sizeof(GAME_MALL_GOODS) == 45, "F8/55 mall goods entry");
+
 struct GAME_USE_ITEM_COMMAND
 {
 	BYTE ProtocolType;

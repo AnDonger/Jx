@@ -426,9 +426,15 @@ STDMETHODIMP CIOCPServer::PackDataToClient( const unsigned long &ulnClientID,
 
 				CIOBuffer *pWriteBuffer = pCN->pWriteBuffer;
 
+				if ( !pData || datalength > pWriteBuffer->GetSize() ||
+					datalength > m_nNetworkBufferMaxLen )
+				{
+					return E_INVALIDARG;
+				}
+
 				const size_t nNetworkBufferLen = pWriteBuffer->GetUsed();
 
-				if ( ( nNetworkBufferLen >= m_nNetworkBufferMaxLen ) || 
+				if ( nNetworkBufferLen > 0 &&
 					( nNetworkBufferLen + datalength >= m_nNetworkBufferMaxLen ) )
 				{
 					/*
@@ -437,7 +443,10 @@ STDMETHODIMP CIOCPServer::PackDataToClient( const unsigned long &ulnClientID,
 					const BYTE *pPackData = pWriteBuffer->GetBuffer();
 					const size_t used = pWriteBuffer->GetUsed();
 
-					_SendDataEx( pCN, pPackData, used );
+					if ( !_SendDataEx( pCN, pPackData, used ) )
+					{
+						return E_FAIL;
+					}
 
 					pWriteBuffer->Empty();
 				}
@@ -1203,6 +1212,11 @@ STDMETHODIMP CServerFactory::CreateServerInterface( REFIID riid, void** ppv )
 		const size_t maxFreeBuffers_Cache = ( m_maxFreeBuffers_Cache > 0 ) ? m_maxFreeBuffers_Cache : 10;
 		const size_t bufferSize_Cache = ( m_bufferSize_Cache > 0 ) ? m_bufferSize_Cache : 8192;
 
+		// Cache sizes may exceed a frame. Preserve them and bound each WORD-sized frame.
+		const size_t frameSize = bufferSize_Cache < 0xFFFF - sizeof( WORD ) ?
+			bufferSize_Cache : 0xFFFF - sizeof( WORD );
+		const size_t bufferSize = frameSize + 32;
+
 		const size_t maxFreeBuffers = 10240;
 
 		try
@@ -1212,7 +1226,8 @@ STDMETHODIMP CServerFactory::CreateServerInterface( REFIID riid, void** ppv )
 											maxPlayerCount,
 											maxFreeBuffers,
 											maxFreeBuffers_Cache,
-											bufferSize_Cache );
+											bufferSize_Cache,
+											bufferSize );
 			
 			*ppv = reinterpret_cast< void * > ( dynamic_cast< IServer * >( pObject ) );
 			

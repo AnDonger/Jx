@@ -99,6 +99,7 @@ public:
 	void		StartTrade();
 #ifdef	_SERVER
 	BOOL		AddPickupItem(int nIdx, int nX, int nY);
+	BOOL		BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, int nDetail, int nCost);
 	int			GetBuyBackItems(int* pItems);
 	BOOL		MoveShopItem(int nIdx, int nPlace, int nX, int nY, BOOL bSync = TRUE);
 	void		SyncItemPosition(int nIdx);

@@ -301,6 +301,151 @@ void KItemList::SyncItemCount(int nIdx)
 	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &Count, sizeof(Count));
 }
 
+BOOL KItemList::BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, int nDetail, int nCost)
+{
+	if (!pTemplate || nCount <= 0 || nCost <= 0 || Player[m_PlayerIdx].CheckTrading() ||
+		pTemplate->GetWidth() <= 0 || pTemplate->GetHeight() <= 0 ||
+		(pTemplate->GetGenre() == nGenre && pTemplate->GetDetailType() == nDetail))
+		return FALSE;
+
+	struct ItemChange
+	{
+		int nIdx;
+		int nCount;
+	};
+	struct NewStack
+	{
+		int nIdx;
+		POINT Pos;
+	};
+	ItemChange Currency[MAX_PLAYER_ITEM];
+	ItemChange Targets[MAX_PLAYER_ITEM];
+	NewStack NewItems[MAX_PLAYER_ITEM];
+	int nCurrencyCount = 0;
+	int nTargetCount = 0;
+	int nNewCount = 0;
+	int nFreeCount = 0;
+	int nRemainingCost = nCost;
+	int nRemainingItems = nCount;
+	for (int nList = m_FreeIdx.GetNext(0); nList; nList = m_FreeIdx.GetNext(nList))
+		nFreeCount++;
+
+	// 先计算各叠铜钱的扣除结果；鼠标、仓库和交易栏中的铜钱不参加结算。
+	for (int nList = m_UseIdx.GetNext(0); nList && nRemainingCost; nList = m_UseIdx.GetNext(nList))
+	{
+		int nIdx = m_Items[nList].nIdx;
+		if (m_Items[nList].nPlace != pos_equiproom || Item[nIdx].GetGenre() != nGenre ||
+			Item[nIdx].GetDetailType() != nDetail)
+			continue;
+		int nUsed = Item[nIdx].GetStackCount();
+		if (nUsed > nRemainingCost)
+			nUsed = nRemainingCost;
+		Currency[nCurrencyCount].nIdx = nIdx;
+		Currency[nCurrencyCount].nCount = Item[nIdx].GetStackCount() - nUsed;
+		if (Currency[nCurrencyCount].nCount == 0)
+			nFreeCount++;
+		nCurrencyCount++;
+		nRemainingCost -= nUsed;
+	}
+	if (nRemainingCost)
+		return FALSE;
+
+	KInventory PlannedRoom;
+	if (!PlannedRoom.Init(EQUIPMENT_ROOM_WIDTH, EQUIPMENT_ROOM_HEIGHT))
+		return FALSE;
+	for (int nList = m_UseIdx.GetNext(0); nList; nList = m_UseIdx.GetNext(nList))
+	{
+		if (m_Items[nList].nPlace != pos_equiproom)
+			continue;
+		int nIdx = m_Items[nList].nIdx;
+		BOOL bRemoved = FALSE;
+		for (int i = 0; i < nCurrencyCount; i++)
+		{
+			if (Currency[i].nIdx == nIdx && Currency[i].nCount == 0)
+				bRemoved = TRUE;
+		}
+		if (bRemoved)
+			continue;
+		if (!PlannedRoom.PlaceItem(m_Items[nList].nX, m_Items[nList].nY, nIdx,
+			Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
+			return FALSE;
+		if (nRemainingItems > 0 && Item[nIdx].CanStackWith(*pTemplate))
+		{
+			int nAdded = Item[nIdx].GetMaxStackCount() - Item[nIdx].GetStackCount();
+			if (nAdded > nRemainingItems)
+				nAdded = nRemainingItems;
+			if (nAdded > 0)
+			{
+				Targets[nTargetCount].nIdx = nIdx;
+				Targets[nTargetCount++].nCount = Item[nIdx].GetStackCount() + nAdded;
+				nRemainingItems -= nAdded;
+			}
+		}
+	}
+
+	// 为全部新叠预留位置和全局物品实例，失败时不改变玩家的任何数据。
+	while (nRemainingItems > 0)
+	{
+		POINT Pos;
+		if (nNewCount >= nFreeCount || nNewCount >= MAX_PLAYER_ITEM ||
+			!PlannedRoom.FindRoom(pTemplate->GetWidth(), pTemplate->GetHeight(), &Pos))
+			break;
+		int nIdx = ItemSet.Add(pTemplate);
+		if (!nIdx)
+			break;
+		int nStack = pTemplate->GetMaxStackCount();
+		if (nStack > nRemainingItems)
+			nStack = nRemainingItems;
+		Item[nIdx].SetStackCount(nStack);
+		PlannedRoom.PlaceItem(Pos.x, Pos.y, nIdx, pTemplate->GetWidth(), pTemplate->GetHeight());
+		NewItems[nNewCount].nIdx = nIdx;
+		NewItems[nNewCount++].Pos = Pos;
+		nRemainingItems -= nStack;
+	}
+	if (nRemainingItems)
+	{
+		for (int i = 0; i < nNewCount; i++)
+			ItemSet.Remove(NewItems[i].nIdx);
+		return FALSE;
+	}
+
+	// 核心线程在预留完成后一次提交，不再执行可能失败的寻位或分配操作。
+	for (int i = 0; i < nCurrencyCount; i++)
+	{
+		int nIdx = Currency[i].nIdx;
+		if (Currency[i].nCount)
+		{
+			Item[nIdx].SetStackCount(Currency[i].nCount);
+			SyncItemCount(nIdx);
+		}
+		else
+		{
+			Remove(nIdx);
+			ItemSet.Remove(nIdx);
+		}
+	}
+	memcpy(m_Room[room_equipment].m_pArray, PlannedRoom.m_pArray,
+		EQUIPMENT_ROOM_WIDTH * EQUIPMENT_ROOM_HEIGHT * sizeof(int));
+	for (int i = 0; i < nTargetCount; i++)
+	{
+		Item[Targets[i].nIdx].SetStackCount(Targets[i].nCount);
+		SyncItem(Targets[i].nIdx, TRUE);
+	}
+	for (int i = 0; i < nNewCount; i++)
+	{
+		int nList = m_FreeIdx.GetNext(0);
+		_ASSERT(nList);
+		m_Items[nList].nIdx = NewItems[i].nIdx;
+		m_Items[nList].nPlace = pos_equiproom;
+		m_Items[nList].nX = NewItems[i].Pos.x;
+		m_Items[nList].nY = NewItems[i].Pos.y;
+		m_FreeIdx.Remove(nList);
+		m_UseIdx.Insert(nList);
+		SyncItem(NewItems[i].nIdx);
+	}
+	return TRUE;
+}
+
 BOOL KItemList::SplitItem(ItemPos* pSource, DWORD dwCount)
 {
 	if (!pSource || m_Hand || !dwCount || Player[m_PlayerIdx].CheckTrading())
@@ -2375,7 +2520,7 @@ int		KItemList::GetTaskItemNum(int nDetailType)
 		if (item_task != Item[m_Items[nIdx].nIdx].GetGenre())
 			continue;
 		if (nDetailType == Item[m_Items[nIdx].nIdx].GetDetailType())
-			nNo++;
+			nNo += Item[m_Items[nIdx].nIdx].GetStackCount();
 	}
 	return nNo;
 }
@@ -2392,7 +2537,16 @@ BOOL KItemList::RemoveTaskItem(int nDetailType)
 			continue;
 		if (nDetailType == Item[nGameIdx].GetDetailType())
 		{
-			Remove(nGameIdx);
+			if (Item[nGameIdx].GetStackCount() > 1)
+			{
+				Item[nGameIdx].SetStackCount(Item[nGameIdx].GetStackCount() - 1);
+				SyncItem(nGameIdx, TRUE);
+			}
+			else
+			{
+				Remove(nGameIdx);
+				ItemSet.Remove(nGameIdx);
+			}
 			return TRUE;
 		}
 	}

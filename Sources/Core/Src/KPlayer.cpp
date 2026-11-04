@@ -171,6 +171,7 @@ void	KPlayer::Release()
 	m_pLastScriptCacheNode = NULL;
 	m_dwLoginTime			= -1;
 	//	m_uLastPingTime			= -1;
+	m_bMallOpen = FALSE;
 	m_bFinishLoading = FALSE;
 	m_uMustSave = SAVE_IDLE;
 	m_bIsQuiting = FALSE;

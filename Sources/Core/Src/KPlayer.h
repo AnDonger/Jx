@@ -123,6 +123,7 @@ public:
 	BYTE			m_btPortrait;
 	void*			m_pStatusLoadPlayerInfo;	//加载玩家信息时用
 	BYTE*			m_pCurStatusOffset;			//二进制时，记录读到指针位置了
+	BOOL			m_bMallOpen;
 	BOOL			m_bFinishLoading;			//完成加载
 	BYTE			m_SaveBuffer[64 * 1024];	//保存缓冲
 	int				m_nLastNetOperationTime;	//最后一次网络操作时间

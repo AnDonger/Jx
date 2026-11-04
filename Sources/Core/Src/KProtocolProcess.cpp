@@ -3542,6 +3542,21 @@ void KProtocolProcess::CurrentExtensionCommand(int nIndex, BYTE* pProtocol)
 		g_pServer->PackDataToClient(Player[nIndex].m_nNetConnectIdx, Finished, sizeof(Finished));
 		return;
 	}
+	if (pProtocol[3] == 0x38)
+	{
+		if (wLength + 1 < sizeof(GAME_MALL_COMMAND))
+			return;
+		const GAME_MALL_COMMAND* pMall = (const GAME_MALL_COMMAND*)pProtocol;
+		if (pMall->Operation == 1 && wLength + 1 == sizeof(GAME_MALL_COMMAND) && pMall->DataLength == 0)
+			BuySell.OpenMall(nIndex);
+		else if (pMall->Operation == 2 && wLength + 1 == sizeof(GAME_MALL_BUY_COMMAND) && pMall->DataLength == 7)
+		{
+			const GAME_MALL_BUY_COMMAND* pBuy = (const GAME_MALL_BUY_COMMAND*)pProtocol;
+			// unknown_1 is retained in the request journal; it never supplies a price or item template.
+			BuySell.BuyMall(nIndex, pBuy->GoodsID, pBuy->Count, pBuy->Currency);
+		}
+		return;
+	}
 	if (pProtocol[3] == 0x45)
 	{
 		DWORD dwToken = 0;

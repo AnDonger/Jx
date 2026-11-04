@@ -47,3 +47,11 @@ Release/Client
 Resources/
 Test/
 .vscode/
+
+# Restored original mall catalog; keep other extracted resources ignored.
+!Resources/
+/Resources/*
+!Resources/settings/
+/Resources/settings/*
+!Resources/settings/ibshop.txt
+Resources/settings/ibshop.txt

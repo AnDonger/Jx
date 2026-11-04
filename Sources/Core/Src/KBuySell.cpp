@@ -32,6 +32,11 @@ KBuySell::KBuySell()
 	m_Height = 0;
 	m_MaxItem = 0;
 	m_CashGoods = NULL;
+#ifdef _SERVER
+	m_MallGoods = NULL;
+	m_MallItem = NULL;
+	m_MallCount = 0;
+#endif
 }
 
 KBuySell::~KBuySell()
@@ -66,6 +71,13 @@ KBuySell::~KBuySell()
 		delete [] m_CashGoods;
 		m_CashGoods = NULL;
 	}
+#ifdef _SERVER
+	delete [] m_MallGoods;
+	delete [] m_MallItem;
+	m_MallGoods = NULL;
+	m_MallItem = NULL;
+	m_MallCount = 0;
+#endif
 	m_Width = 0;
 	m_Height = 0;
 	m_MaxItem = 0;
@@ -189,6 +201,10 @@ BOOL KBuySell::Init()
 		m_pShopRoom->Init(SHOP_BOX_WIDTH, SHOP_BOX_HEIGHT);
 	}
 #endif
+#ifdef _SERVER
+	if (!InitMall())
+		return FALSE;
+#endif
 	return TRUE;
 }
 
@@ -240,6 +256,203 @@ static void ShopMessage(int nPlayerIdx, const char *pszMessage)
 	g_StrCpyLen(Info.m_pContent, pszMessage, sizeof(Info.m_pContent));
 	Info.m_nBufferLen = strlen(Info.m_pContent);
 	Player[nPlayerIdx].DoScriptAction(&Info);
+}
+
+static int ParseMallBits(const char* pszText, BOOL bTabs)
+{
+	int nBits = 0;
+	while (*pszText)
+	{
+		while (*pszText == ' ' || *pszText == '\t')
+			pszText++;
+		if (!*pszText)
+			break;
+		char* pEnd;
+		long nValue = strtol(pszText, &pEnd, 10);
+		if (pEnd == pszText || (bTabs ? (nValue < 1 || nValue > 6) : (nValue != 1 && nValue != 2)))
+			return -1;
+		nBits |= bTabs ? 1 << (nValue - 1) : nValue;
+		pszText = pEnd;
+	}
+	return nBits;
+}
+
+BOOL KBuySell::InitMall()
+{
+	KTabFile GoodsFile;
+	if (!GoodsFile.Load("\\settings\\ibshop.txt"))
+	{
+		g_DebugLog("[Mall] Original settings/ibshop.txt is unavailable; mall disabled.");
+		return TRUE;
+	}
+	int nRows = GoodsFile.GetHeight() - 2;
+	if (nRows <= 0 || nRows > 1000)
+		return FALSE;
+	m_MallGoods = new GAME_MALL_GOODS[nRows];
+	m_MallItem = new KItem[nRows];
+	if (!m_MallGoods || !m_MallItem)
+		return FALSE;
+	m_MallCount = 0;
+	for (int nRow = 3; nRow <= GoodsFile.GetHeight(); nRow++)
+	{
+		GAME_MALL_GOODS Goods;
+		ZeroMemory(&Goods, sizeof(Goods));
+		int nID, nStack;
+		GoodsFile.GetInteger(nRow, "Id", 0, &nID);
+		GoodsFile.GetInteger(nRow, "StackCount", 1, &nStack);
+		char szTabs[64], szFlags[32], szSaleDay[64];
+		GoodsFile.GetString(nRow, "ShopTab", "", szTabs, sizeof(szTabs));
+		GoodsFile.GetString(nRow, "Flags", "", szFlags, sizeof(szFlags));
+		GoodsFile.GetString(nRow, "SaleDay", "", szSaleDay, sizeof(szSaleDay));
+		if (szSaleDay[0])
+		{
+			// 原表的限时行依赖开服天数，尚无可靠开服日期时不自行选择价格。
+			g_DebugLog("[Mall] Timed goods withheld: id=%d SaleDay=%s (server opening date not configured)", nID, szSaleDay);
+			continue;
+		}
+		int nTabs = ParseMallBits(szTabs, TRUE);
+		int nFlags = ParseMallBits(szFlags, FALSE);
+		if (nID <= 0 || nID > 65535 || nStack <= 0 || nStack > 255 || nTabs <= 0 || nFlags < 0)
+			return FALSE;
+		for (int i = 0; i < m_MallCount; i++)
+		{
+			if (m_MallGoods[i].GoodsID == nID)
+				return FALSE;
+		}
+		Goods.GoodsID = (WORD)nID;
+		Goods.StackCount = (BYTE)nStack;
+		Goods.Tabs = (BYTE)nTabs;
+		Goods.Flags = (BYTE)nFlags;
+		GoodsFile.GetInteger(nRow, "Genre", -1, &Goods.Genre);
+		GoodsFile.GetInteger(nRow, "Detail", -1, &Goods.Detail);
+		GoodsFile.GetInteger(nRow, "Particular", -1, &Goods.Particular);
+		GoodsFile.GetInteger(nRow, "Level", -1, &Goods.Level);
+		const char* Prices[] = {"CopperOriginalPrice", "CopperDiscountPrice", "YuanBaoOriginalPrice",
+			"YuanBaoDiscountPrice", "MoneyOriginalPrice", "MoneyDiscountPrice"};
+		int* Values[] = {&Goods.CopperPrice, &Goods.CopperDiscount, &Goods.YuanBaoPrice,
+			&Goods.YuanBaoDiscount, &Goods.MoneyPrice, &Goods.MoneyDiscount};
+		for (int i = 0; i < 6; i++)
+		{
+			int nPrice;
+			GoodsFile.GetInteger(nRow, (char*)Prices[i], 0, &nPrice);
+			if (nPrice < 0 || nPrice > 0x7FFFFFFF / 100)
+				return FALSE;
+			*Values[i] = nPrice * 100;
+		}
+		KItem& Template = m_MallItem[m_MallCount];
+		BOOL bGenerated = FALSE;
+		if (Goods.Genre == item_magicorscript || Goods.Genre == item_skillbook)
+		{
+			bGenerated = ItemGen.Gen_NormalItem(Goods.Genre, Goods.Detail, Goods.Particular,
+				Goods.Level, -1, &Template);
+		}
+		else if (Goods.Genre == item_materials)
+		{
+			bGenerated = ItemGen.Gen_Material(Goods.Detail, Goods.Particular, 0,
+				-1, &Template);
+		}
+		else if (Goods.Genre == item_medicine)
+		{
+			bGenerated = ItemGen.Gen_Medicine(Goods.Detail, Goods.Level,
+				-1, &Template);
+		}
+		if (!bGenerated || !Template.GetName()[0] || Template.GetWidth() <= 0 || Template.GetHeight() <= 0)
+		{
+			g_DebugLog("[Mall] Goods template unavailable: id=%d genre=%d detail=%d particular=%d level=%d",
+				nID, Goods.Genre, Goods.Detail, Goods.Particular, Goods.Level);
+			continue;
+		}
+		m_MallGoods[m_MallCount++] = Goods;
+	}
+	g_DebugLog("[Mall] Loaded %d goods from original settings/ibshop.txt", m_MallCount);
+	return TRUE;
+}
+
+static BOOL CheckMallPlayer(int nPlayerIdx)
+{
+	if (nPlayerIdx <= 0 || nPlayerIdx >= MAX_PLAYER)
+		return FALSE;
+	KPlayer& Role = Player[nPlayerIdx];
+	if (!Role.m_bFinishLoading || Role.CheckTrading() || Role.m_bIsQuiting ||
+		Role.m_nIndex <= 0 || Role.m_nIndex >= MAX_NPC)
+		return FALSE;
+	KNpc& Hero = Npc[Role.m_nIndex];
+	return Hero.m_CurrentLife > 0 && Hero.m_Doing != do_death && Hero.m_RegionIndex >= 0 &&
+		!Hero.m_bExchangeServer && !Role.m_bExchangeServer;
+}
+
+BOOL KBuySell::OpenMall(int nPlayerIdx)
+{
+	if (!CheckMallPlayer(nPlayerIdx))
+		return FALSE;
+	Player[nPlayerIdx].m_bMallOpen = FALSE;
+	if (!m_MallGoods || !m_MallCount)
+	{
+		ShopMessage(nPlayerIdx, "奇货商场暂未开放。");
+		return FALSE;
+	}
+	// F8/55 operation 5 + DWORD byte count + the original 45-byte goods records.
+	int nDataLength = m_MallCount * sizeof(GAME_MALL_GOODS);
+	int nLength = 9 + nDataLength;
+	BYTE* pBuffer = new BYTE[nLength];
+	if (!pBuffer)
+		return FALSE;
+	ZeroMemory(pBuffer, 9);
+	pBuffer[0] = 0xF8;
+	WORD wLength = (WORD)(nLength - 1);
+	memcpy(pBuffer + 1, &wLength, sizeof(wLength));
+	pBuffer[3] = 0x55;
+	pBuffer[4] = 5;
+	memcpy(pBuffer + 5, &nDataLength, sizeof(nDataLength));
+	memcpy(pBuffer + 9, m_MallGoods, nDataLength);
+	HRESULT hResult = g_pServer->PackDataToClient(Player[nPlayerIdx].m_nNetConnectIdx, pBuffer, nLength);
+	delete [] pBuffer;
+	if (FAILED(hResult))
+		return FALSE;
+	Player[nPlayerIdx].m_bMallOpen = TRUE;
+	g_DebugLog("[Mall] Open: player=%d goods=%d", nPlayerIdx, m_MallCount);
+	return TRUE;
+}
+
+BOOL KBuySell::BuyMall(int nPlayerIdx, int nGoodsID, int nCount, int nCurrency)
+{
+	if (!CheckMallPlayer(nPlayerIdx) || !Player[nPlayerIdx].m_bMallOpen)
+		return FALSE;
+	if (nCurrency != 1 || nCount <= 0 || nCount > 65535)
+		return FALSE;
+	int nIndex = 0;
+	while (nIndex < m_MallCount && m_MallGoods[nIndex].GoodsID != nGoodsID)
+		nIndex++;
+	if (nIndex == m_MallCount)
+		return FALSE;
+	const GAME_MALL_GOODS& Goods = m_MallGoods[nIndex];
+	int nUnitPrice = Goods.CopperDiscount ? Goods.CopperDiscount : Goods.CopperPrice;
+	__int64 nPrice = (__int64)nUnitPrice * nCount;
+	__int64 nItems = (__int64)Goods.StackCount * nCount;
+	if (nUnitPrice <= 0 || nPrice % 100 || nPrice / 100 > 0x7FFFFFFF ||
+		nItems > (__int64)(MAX_PLAYER_ITEM - 1) * m_MallItem[nIndex].GetMaxStackCount())
+		return FALSE;
+	// 铜钱身份由原 questkey.txt 定义为 (genre=4, detail=47)，不是角色现金。
+	BOOL bBought = Player[nPlayerIdx].m_ItemList.BuyWithItemCurrency(&m_MallItem[nIndex],
+		(int)nItems, item_task, 47, (int)(nPrice / 100));
+	if (bBought)
+	{
+		GAME_CURRENCY_NOTICE_SYNC Notice;
+		ZeroMemory(&Notice, sizeof(Notice));
+		Notice.ProtocolType = 0xCC;
+		Notice.ChangeType = 0;
+		Notice.Currency = 1;
+		Notice.Amount = (DWORD)(nPrice / 100);
+		g_pServer->PackDataToClient(Player[nPlayerIdx].m_nNetConnectIdx, &Notice, sizeof(Notice));
+		char szMessage[160];
+		sprintf(szMessage, "购买%d个%s成功", nCount, m_MallItem[nIndex].GetName());
+		ShopMessage(nPlayerIdx, szMessage);
+	}
+	else
+		ShopMessage(nPlayerIdx, "铜钱不足或背包空间不足，购买未完成。");
+	g_DebugLog("[Mall] Buy: player=%d goods=%d count=%d items=%d copper=%d result=%d",
+		nPlayerIdx, nGoodsID, nCount, (int)nItems, (int)(nPrice / 100), bBought);
+	return bBought;
 }
 
 BOOL KBuySell::Buy(int nPlayerIdx, int nBuy, int nBuyIdx, int nPlace, int nX, int nY)

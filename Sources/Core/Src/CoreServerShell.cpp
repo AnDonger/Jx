@@ -817,6 +817,17 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 			return false;
 		if ((BYTE)pChar[3] == 5)
 			return nSize == sizeof(GAME_BUY_ITEM_COMMAND);
+		if ((BYTE)pChar[3] == 0x38)
+		{
+			if (nSize < sizeof(GAME_MALL_COMMAND))
+				return false;
+			const GAME_MALL_COMMAND* pMall = (const GAME_MALL_COMMAND*)pChar;
+			if (pMall->Operation == 1)
+				return nSize == sizeof(GAME_MALL_COMMAND) && pMall->DataLength == 0;
+			if (pMall->Operation == 2)
+				return nSize == sizeof(GAME_MALL_BUY_COMMAND) && pMall->DataLength == 7;
+			return false;
+		}
 		if ((BYTE)pChar[3] == 0x1E)
 			return nSize == sizeof(GAME_STOP_COMMAND);
 		return true;
