@@ -223,6 +223,7 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[0xA4] = &KProtocolProcess::CurrentPickupCommand;
 	ProcessFunc[0x94] = &KProtocolProcess::CurrentSplitItemCommand;
 	ProcessFunc[0x98] = &KProtocolProcess::CloseStoreBoxCommand;
+	ProcessFunc[0xAC] = &KProtocolProcess::PlayerBuyBackItem;
 #endif
 }
 
@@ -3488,6 +3489,20 @@ void KProtocolProcess::CurrentExtensionCommand(int nIndex, BYTE* pProtocol)
 	memcpy(&wLength, pProtocol + 1, sizeof(wLength));
 	if (wLength < 3)
 		return;
+	if (pProtocol[3] == 5)
+	{
+		if (wLength != sizeof(GAME_BUY_ITEM_COMMAND) - 1)
+			return;
+		const GAME_BUY_ITEM_COMMAND *pBuy = (const GAME_BUY_ITEM_COMMAND*)pProtocol;
+		if (pBuy->unknown_1 == 0 && pBuy->unknown_2 <= 1 &&
+			(pBuy->unknown_2 == 0 || (pBuy->Place == 255 && pBuy->X == 255 && pBuy->Y == 255)))
+		{
+			BuySell.Buy(nIndex, pBuy->ShopIndex, pBuy->ItemIndex, pBuy->Place, pBuy->X, pBuy->Y);
+		}
+		BYTE Finished[] = {0xF8, 7, 0, 0x4C, 1, 0, 0, 0};
+		g_pServer->PackDataToClient(Player[nIndex].m_nNetConnectIdx, Finished, sizeof(Finished));
+		return;
+	}
 	if (pProtocol[3] == 0x45)
 	{
 		DWORD dwToken = 0;
@@ -3694,16 +3709,37 @@ void KProtocolProcess::PlayerMoveItem(int nIndex, BYTE* pProtocol)
 
 void KProtocolProcess::PlayerSellItem(int nIndex, BYTE* pProtocol)
 {
-	if (Player[nIndex].CheckTrading())
-		return;
-	Player[nIndex].SellItem(pProtocol);
+	const PLAYER_SELL_ITEM_COMMAND* pCommand = (const PLAYER_SELL_ITEM_COMMAND*)pProtocol;
+	GAME_SHOP_ITEM_RESULT Info;
+	ZeroMemory(&Info, sizeof(Info));
+	Info.ProtocolType = 0xED;
+	if (BuySell.Sell(nIndex, Player[nIndex].m_BuyInfo.m_nBuyIdx,
+		Player[nIndex].m_ItemList.SearchID(pCommand->m_ID)))
+		Info.ItemID = pCommand->m_ID;
+	g_pServer->PackDataToClient(Player[nIndex].m_nNetConnectIdx, &Info, sizeof(Info));
 }
 
 void KProtocolProcess::PlayerBuyItem(int nIndex, BYTE* pProtocol)
 {
-	if (Player[nIndex].CheckTrading())
-		return;
-	Player[nIndex].BuyItem(pProtocol);
+	const PLAYER_BUY_ITEM_COMMAND* pCommand = (const PLAYER_BUY_ITEM_COMMAND*)pProtocol;
+	BuySell.Buy(nIndex, Player[nIndex].m_BuyInfo.m_nBuyIdx,
+		pCommand->m_BuyIdx, pCommand->m_Place, pCommand->m_X, pCommand->m_Y);
+	// GUI IDA 7B6630：F8/4C 释放购买锁；AD 数量同步本身不会释放。
+	// 参数用途未确认，保留正式服记录中的固定值 1。
+	BYTE Finished[] = {0xF8, 7, 0, 0x4C, 1, 0, 0, 0};
+	g_pServer->PackDataToClient(Player[nIndex].m_nNetConnectIdx, Finished, sizeof(Finished));
+}
+
+void KProtocolProcess::PlayerBuyBackItem(int nIndex, BYTE* pProtocol)
+{
+	const GAME_SHOP_ITEM_RESULT* pCommand = (const GAME_SHOP_ITEM_RESULT*)pProtocol;
+	GAME_SHOP_ITEM_RESULT Info;
+	ZeroMemory(&Info, sizeof(Info));
+	Info.ProtocolType = 0xEE;
+	if (BuySell.BuyBack(nIndex, pCommand->ItemID))
+		Info.ItemID = pCommand->ItemID;
+	// GUI IDA 7B6670：成功或失败均释放操作锁并刷新商店界面。
+	g_pServer->PackDataToClient(Player[nIndex].m_nNetConnectIdx, &Info, sizeof(Info));
 }
 
 void KProtocolProcess::PlayerDropItem(int nIndex, BYTE* pProtocol)

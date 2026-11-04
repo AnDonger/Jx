@@ -4617,8 +4617,37 @@ BOOL	KPlayer::ExecuteScript(char * ScriptFileName, char * szFunName, int nParam)
 	return ExecuteScript(g_FileName2Id(ScriptFileName), szFunName, nParam);	
 }
 #define MAX_TRYEXECUTESCRIPT_COUNT 5
+// 在执行完整回调之前检查它引用的接口，避免先扣材料、随后才因缺失接口中断。
+BOOL KPlayer::CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction)
+{
+	char szMissing[128];
+	if (g_CheckNpcScriptFunction(dwScriptId, pszFunction, szMissing, sizeof(szMissing)))
+		return TRUE;
+	g_DebugLog("[NpcScript] Unsupported callback: player=%d script=%lu function=%s missing=%s",
+		m_nPlayerIndex, dwScriptId, pszFunction, szMissing);
+	m_bWaitingPlayerFeedBack = false;
+	m_nAvailableAnswerNum = 0;
+	Npc[m_nIndex].m_ActionScriptID = 0;
+	PLAYER_SCRIPTACTION_SYNC Info;
+	ZeroMemory(&Info, sizeof(Info));
+	Info.m_bUIId = UI_MSGINFO;
+	Info.m_bParam2 = 1;
+	Info.m_nOperateType = SCRIPTACTION_UISHOW;
+	g_StrCpyLen(Info.m_pContent, "该项功能尚未适配，请先体验其他对话。", sizeof(Info.m_pContent));
+	Info.m_nBufferLen = strlen(Info.m_pContent);
+	DoScriptAction(&Info);
+	return FALSE;
+}
+
 BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 {
+	if (m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
+		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
+		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 2 &&
+		Npc[m_nPeapleIdx].m_Kind == kind_dialoger &&
+		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
+		!CheckNpcScriptFunction(dwScriptId, szFunName))
+		return FALSE;
 /*	bool	bCanExecuteScript = true;
 
   //当前脚本未置空
@@ -4691,6 +4720,13 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 
 BOOL	KPlayer::ExecuteScript(DWORD dwScriptId, char * szFunName, char *  szParams)
 {
+	if (m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
+		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
+		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 2 &&
+		Npc[m_nPeapleIdx].m_Kind == kind_dialoger &&
+		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
+		!CheckNpcScriptFunction(dwScriptId, szFunName))
+		return FALSE;
 /*bool	bCanExecuteScript = true;
 
   //当前脚本未置空
@@ -6432,6 +6468,9 @@ BOOL	KPlayer::CreateTong(int nCamp, char *lpszTongName)
 void KPlayer::RepairItem(DWORD dwItemID)
 {
 	int nIdx = m_ItemList.SearchID(dwItemID);
+	int nList = m_ItemList.FindSame(nIdx);
+	if (!nList || m_ItemList.m_Items[nList].nPlace == pos_buyback)
+		return;
 	int nCost = Item[nIdx].GetRepairPrice();
 	if (!nCost)
 		return;

@@ -82,7 +82,10 @@ enum ITEM_POSITION
 	pos_traderoom,		// 交易栏
 	pos_trade1,			// 交易过程中对方的交易栏
 	pos_immediacy,		// 快捷物品
+	pos_buyback = 12,	// 商店回购栏，按原物品属性保存，不计入随身背包
 };
+
+#define		MAX_SHOP_BUYBACK_ITEM	14
 
 #define		MAX_HAND_ITEM				1
 #define		EQUIPMENT_ROOM_WIDTH		6

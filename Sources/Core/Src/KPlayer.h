@@ -512,6 +512,7 @@ public:
 	BOOL			Pay(int nMoney);
 	BOOL			Earn(int nMoney);
 	void			DialogNpc(BYTE * pProtocol);
+	BOOL			CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction);
 
 	int				AddTempTaskValue(void* pData);
 #endif

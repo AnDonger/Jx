@@ -468,7 +468,7 @@ void KItem::operator = (const KBASICPROP_TOWNPORTAL& sData)
 	pCA->nDetailType	 = 0;
 	pCA->nParticularType = 0;
 	pCA->nObjIdx		 = sData.m_nObjIdx;
-	pCA->bStack			 = 0;
+	pCA->bStack			 = sData.m_bStack;
 	pCA->nWidth			 = sData.m_nWidth;
 	pCA->nHeight		 = sData.m_nHeight;
 	pCA->nPrice			 = sData.m_nPrice;
@@ -490,6 +490,36 @@ void KItem::operator = (const KBASICPROP_TOWNPORTAL& sData)
 	m_Image.nISPosition = IMAGE_IS_POSITION_INIT;
 	m_Image.nType = ISI_T_SPR;
 	::strcpy(m_Image.szImage, pCA->szImageName);
+	m_Image.uImage = 0;
+#endif
+}
+
+void KItem::operator = (const KBASICPROP_NORMALITEM& sData)
+{
+	KItemCommonAttrib* pCA = &m_CommonAttrib;
+	ZeroMemory(pCA, sizeof(*pCA));
+	pCA->nItemGenre = sData.m_nItemGenre;
+	pCA->nDetailType = sData.m_nDetailType;
+	pCA->nParticularType = sData.m_nParticularType;
+	pCA->nObjIdx = sData.m_nObjIdx;
+	pCA->bStack = sData.m_bStack;
+	pCA->nWidth = sData.m_nWidth;
+	pCA->nHeight = sData.m_nHeight;
+	pCA->nPrice = sData.m_nPrice;
+	pCA->nLevel = sData.m_nLevel;
+	pCA->nSeries = sData.m_nSeries;
+	strcpy(pCA->szItemName, sData.m_szName);
+	ZeroMemory(m_aryBaseAttrib, sizeof(m_aryBaseAttrib));
+	ZeroMemory(m_aryRequireAttrib, sizeof(m_aryRequireAttrib));
+	ZeroMemory(m_aryMagicAttrib, sizeof(m_aryMagicAttrib));
+#ifndef _SERVER
+	strcpy(pCA->szImageName, sData.m_szImageName);
+	g_StrCpyLen(pCA->szIntro, sData.m_szIntro, sizeof(pCA->szIntro));
+	m_Image.Color.Color_b.a = 255;
+	m_Image.nFrame = 0;
+	m_Image.nISPosition = IMAGE_IS_POSITION_INIT;
+	m_Image.nType = ISI_T_SPR;
+	strcpy(m_Image.szImage, pCA->szImageName);
 	m_Image.uImage = 0;
 #endif
 }

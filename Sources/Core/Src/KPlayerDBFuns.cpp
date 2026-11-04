@@ -617,6 +617,16 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 				NewItem.m_GeneratorParam.nVersion,
 				&NewItem);
 			break;
+		case item_magicorscript:
+		case item_skillbook:
+			bGetEquiptResult = ItemGen.Gen_NormalItem(
+				nItemClass,
+				NewItem.m_CommonAttrib.nDetailType,
+				NewItem.m_CommonAttrib.nParticularType,
+				NewItem.m_CommonAttrib.nLevel,
+				NewItem.m_GeneratorParam.nVersion,
+				&NewItem);
+			break;
 		case item_task:				// хннЯ
 			{
 				bGetEquiptResult = ItemGen.Gen_Quest(NewItem.m_CommonAttrib.nDetailType, &NewItem);

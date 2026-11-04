@@ -217,6 +217,80 @@ void KItemList::SyncItem(int nIdx, BOOL bRefresh)
 	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC) - sizeof(sItem.unknown_9));
 }
 
+// 回购栏使用独立的逻辑槽位；不占背包格子，但沿用原物品存档和退出清理。
+int KItemList::GetBuyBackItems(int* pItems)
+{
+	int nCount = 0;
+	for (int nSlot = 0; nSlot < MAX_SHOP_BUYBACK_ITEM; nSlot++)
+	{
+		for (int nList = m_UseIdx.GetNext(0); nList; nList = m_UseIdx.GetNext(nList))
+		{
+			if (m_Items[nList].nPlace == pos_buyback &&
+				m_Items[nList].nX == nSlot % 2 && m_Items[nList].nY == nSlot / 2)
+			{
+				pItems[nCount++] = m_Items[nList].nIdx;
+				break;
+			}
+		}
+	}
+	return nCount;
+}
+
+void KItemList::SyncItemPosition(int nIdx)
+{
+	int nList = FindSame(nIdx);
+	if (!nList)
+		return;
+	GAME_ITEM_POSITION_SYNC Info;
+	ZeroMemory(&Info, sizeof(Info));
+	Info.ProtocolType = 0xEF;
+	Info.ItemID = Item[nIdx].GetID();
+	Info.Place = m_Items[nList].nPlace;
+	Info.X = m_Items[nList].nX;
+	Info.Y = m_Items[nList].nY;
+	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &Info, sizeof(Info));
+}
+
+BOOL KItemList::MoveShopItem(int nIdx, int nPlace, int nX, int nY, BOOL bSync)
+{
+	int nList = FindSame(nIdx);
+	if (!nList)
+		return FALSE;
+	PlayerItem& Entry = m_Items[nList];
+	if (nPlace == pos_buyback)
+	{
+		if ((Entry.nPlace != pos_hand && Entry.nPlace != pos_equiproom && Entry.nPlace != pos_buyback) ||
+			nX < 0 || nX >= 2 || nY < 0 || nY >= MAX_SHOP_BUYBACK_ITEM / 2)
+			return FALSE;
+		for (int nOther = m_UseIdx.GetNext(0); nOther; nOther = m_UseIdx.GetNext(nOther))
+		{
+			if (nOther != nList && m_Items[nOther].nPlace == pos_buyback &&
+				m_Items[nOther].nX == nX && m_Items[nOther].nY == nY)
+				return FALSE;
+		}
+		if (Entry.nPlace == pos_hand)
+			m_Hand = 0;
+		else if (Entry.nPlace == pos_equiproom)
+		{
+			m_Room[room_equipment].PickUpItem(nIdx, Entry.nX, Entry.nY,
+				Item[nIdx].GetWidth(), Item[nIdx].GetHeight());
+		}
+	}
+	else if (nPlace == pos_equiproom && Entry.nPlace == pos_buyback)
+	{
+		if (!m_Room[room_equipment].PlaceItem(nX, nY, nIdx, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
+			return FALSE;
+	}
+	else
+		return FALSE;
+	Entry.nPlace = nPlace;
+	Entry.nX = nX;
+	Entry.nY = nY;
+	if (bSync)
+		SyncItemPosition(nIdx);
+	return TRUE;
+}
+
 void KItemList::SyncItemCount(int nIdx)
 {
 	GAME_ITEM_COUNT_SYNC Count;
@@ -327,7 +401,8 @@ BOOL KItemList::AddPickupItem(int nIdx, int nX, int nY)
 			if (nFree > 0)
 			{
 				Item[nTarget].SetStackCount(Item[nTarget].GetStackCount() + nFree);
-				SyncItemCount(nTarget);
+				// 与手动合并一致，完整刷新目标格，避免客户端仍绘制旧数量。
+				SyncItem(nTarget, TRUE);
 				nToStack -= nFree;
 			}
 		}
@@ -377,6 +452,21 @@ int KItemList::Add(int nIdx, int nPlace, int nX, int nY)
 		m_Items[i].nX = nX;
 		m_Items[i].nY = 0;
 		break;
+#ifdef _SERVER
+	case pos_buyback:
+		if (nX < 0 || nX >= 2 || nY < 0 || nY >= MAX_SHOP_BUYBACK_ITEM / 2)
+			return 0;
+		for (int nList = m_UseIdx.GetNext(0); nList; nList = m_UseIdx.GetNext(nList))
+		{
+			if (m_Items[nList].nPlace == pos_buyback &&
+				m_Items[nList].nX == nX && m_Items[nList].nY == nY)
+				return 0;
+		}
+		m_Items[i].nPlace = pos_buyback;
+		m_Items[i].nX = nX;
+		m_Items[i].nY = nY;
+		break;
+#endif
 	case pos_equiproom:
 		if (!m_Room[room_equipment].PlaceItem(nX, nY, nIdx, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
 			return 0;
@@ -525,6 +615,10 @@ BOOL KItemList::Remove(int nGameIdx)
 
 	switch(m_Items[nIdx].nPlace)
 	{
+#ifdef _SERVER
+	case pos_buyback:
+		break;
+#endif
 	case pos_hand:
 		m_Hand = 0;
 		break;

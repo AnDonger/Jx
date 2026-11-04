@@ -264,6 +264,26 @@ struct GAME_ITEM_COUNT_SYNC
 	BYTE unknown_2;
 };
 
+// 正式服 20261104：EF 按原物品 ID 移动，三个未确认字节固定清零。
+struct GAME_ITEM_POSITION_SYNC
+{
+	BYTE ProtocolType;
+	BYTE unknown_1[3];
+	DWORD ItemID;
+	int Place;
+	int X;
+	int Y;
+};
+
+struct GAME_SHOP_ITEM_RESULT
+{
+	BYTE ProtocolType;
+	DWORD ItemID;
+};
+
+static_assert(sizeof(GAME_ITEM_POSITION_SYNC) == 20, "EF item position sync");
+static_assert(sizeof(GAME_SHOP_ITEM_RESULT) == 5, "ED/EE shop item result");
+
 struct GAME_SKILL_COMMAND
 {
 	BYTE ProtocolType;
@@ -285,6 +305,23 @@ struct GAME_SKILL_COMMAND
 	BYTE TargetMapHigh;
 	BYTE unknown_2;
 };
+
+// Current client 6FDB2D/6F2118: B8 subtype 5, independent of the old 51 request.
+struct GAME_BUY_ITEM_COMMAND
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	BYTE unknown_1;
+	BYTE ItemIndex;
+	BYTE Place;
+	BYTE X;
+	BYTE Y;
+	int ShopIndex;
+	DWORD unknown_2;
+};
+
+static_assert(sizeof(GAME_BUY_ITEM_COMMAND) == 17, "B8/5 shop purchase request");
 
 struct GAME_USE_ITEM_COMMAND
 {
@@ -653,8 +690,11 @@ typedef struct
 typedef struct
 {
 	BYTE	ProtocolType;
+	BYTE	ShopType;
 	int		nShopIndex;
 } SALE_BOX_SYNC;
+
+static_assert(sizeof(SALE_BOX_SYNC) == 6, "current 8F shop entry");
 
 typedef struct 
 {

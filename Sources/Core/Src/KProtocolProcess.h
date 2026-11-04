@@ -157,6 +157,7 @@ public:
 	void	PlayerMoveItem(int nIndex, BYTE* pProtocol);
 	void	PlayerSellItem(int nIndex, BYTE* pProtocol);
 	void	PlayerBuyItem(int nIndex, BYTE* pProtocol);
+	void	PlayerBuyBackItem(int nIndex, BYTE* pProtocol);
 	void	PlayerDropItem(int nIndex, BYTE* pProtocol);
 	void	PlayerSelUI(int nIndex, BYTE* pProtocol);
 	void	ChatSetChannel(int nIndex, BYTE* pProtocol);

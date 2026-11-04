@@ -20,6 +20,8 @@
 #define		TABFILE_TASK				"questkey.txt"
 #define		TABFILE_MEDICINE			"potion.txt"
 #define		TABFILE_MEDMATERIAL			"material.txt"
+#define		TABFILE_MAGICSCRIPT			"magicscript.txt"
+#define		TABFILE_SKILLBOOK			"skillbook.txt"
 #define		TABFILE_MELEEWEAPON			"MeleeWeapon.txt"
 #define		TABFILE_RANGEWEAPON			"RangeWeapon.txt"
 #define		TABFILE_ARMOR				"Armor.txt"
@@ -126,6 +128,8 @@ KLibOfBPT::~KLibOfBPT()
 ******************************************************************************/
 BOOL KLibOfBPT::Init(int nVersion)
 {
+	m_BPTMagicScript.Init(item_magicorscript);
+	m_BPTSkillBook.Init(item_skillbook);
 	// 初始化
 	KBasicPropertyTable*	paryBPT[] = {	
 											&m_BPTMeleeWeapon,
@@ -144,6 +148,8 @@ BOOL KLibOfBPT::Init(int nVersion)
 											&m_BPTQuest,
 											&m_BPTTownPortal,
 											&m_BPTMagicAttrib,
+											&m_BPTMagicScript,
+											&m_BPTSkillBook,
 										};
 	// 将tab file逐个读入
 	const int cbNumOfTables = sizeof(paryBPT)/sizeof(paryBPT[0]);
@@ -636,6 +642,15 @@ const KBASICPROP_MEDICINE* KLibOfBPT::FindMedicine(IN int nType, IN int nLevel) 
 	出口:	成功时返回指向该记录的指针
 			失败时返回NULL
 ******************************************************************************/
+const KBASICPROP_NORMALITEM* KLibOfBPT::FindNormalItem(int nGenre, int nDetail, int nParticular, int nLevel) const
+{
+	if (nGenre == item_magicorscript)
+		return m_BPTMagicScript.FindRecord(nDetail, nParticular, nLevel);
+	if (nGenre == item_skillbook)
+		return m_BPTSkillBook.FindRecord(nDetail, nParticular, nLevel);
+	return NULL;
+}
+
 const KBASICPROP_MINE* KLibOfBPT::GetMine(IN int i) const
 {
 	return 0;// TODO:m_BPTMine.GetRecord(i);
@@ -876,7 +891,11 @@ BOOL KBPT_TownPortal::LoadRecord(int i, KTabFile* pTF)
 	};
 
 	// 逐个读入各项属性
-	return ::LoadRecord(pTF, i, aryPI, sizeof(aryPI)/ sizeof(aryPI[0]));
+	if (!::LoadRecord(pTF, i, aryPI, sizeof(aryPI) / sizeof(aryPI[0])))
+		return FALSE;
+	// 新表保留前八列，在其后增加叠放上限；旧表缺列时保持不可叠放。
+	pTF->GetInteger(i + 2, "是否叠放", 0, &pBuf->m_bStack);
+	return TRUE;
 }
 
 const KBASICPROP_TOWNPORTAL* KBPT_TownPortal::GetRecord(IN int i) const
@@ -1148,6 +1167,90 @@ const KBASICPROP_MEDMATERIAL* KBPT_MedMaterial::FindRecord(int nDetailType, int 
 	}
 	return NULL;
 }
+
+KBPT_NormalItem::KBPT_NormalItem()
+{
+	m_nSizeOfEntry = sizeof(KBASICPROP_NORMALITEM);
+	m_nGenre = -1;
+}
+
+void KBPT_NormalItem::Init(int nGenre)
+{
+	m_nGenre = nGenre;
+	if (nGenre == item_magicorscript)
+		strcpy(m_szTabFile, TABFILE_MAGICSCRIPT);
+	else if (nGenre == item_skillbook)
+		strcpy(m_szTabFile, TABFILE_SKILLBOOK);
+	else
+		m_szTabFile[0] = 0;
+}
+
+BOOL KBPT_NormalItem::Load(int nVersion)
+{
+	if (!m_szTabFile[0] || !KBasicPropertyTable::Load(nVersion))
+	{
+		ReleaseMemory();
+		return FALSE;
+	}
+	return TRUE;
+}
+
+BOOL KBPT_NormalItem::LoadRecord(int i, KTabFile* pTF)
+{
+	if (!pTF || i < 0 || i >= m_nNumOfEntries || !m_pBuf)
+		return FALSE;
+
+	KBASICPROP_NORMALITEM* pBuf = (KBASICPROP_NORMALITEM*)m_pBuf + i;
+	ZeroMemory(pBuf, sizeof(*pBuf));
+	int nRow = i + 2;
+	const char* pszParticular = m_nGenre == item_skillbook ? "详细类别(技能ID)" : "详细类别";
+	BOOL bRead = pTF->GetString(nRow, "名称", "", pBuf->m_szName, sizeof(pBuf->m_szName)) &&
+		pTF->GetInteger(nRow, "道具种类", -1, &pBuf->m_nItemGenre) &&
+		pTF->GetInteger(nRow, "具体类别", -1, &pBuf->m_nDetailType) &&
+		pTF->GetInteger(nRow, (char*)pszParticular, -1, &pBuf->m_nParticularType) &&
+		pTF->GetString(nRow, "动画文件名", "", pBuf->m_szImageName, sizeof(pBuf->m_szImageName)) &&
+		pTF->GetInteger(nRow, "对应物件索引", 0, &pBuf->m_nObjIdx) &&
+		pTF->GetInteger(nRow, "宽度", 0, &pBuf->m_nWidth) &&
+		pTF->GetInteger(nRow, "高度", 0, &pBuf->m_nHeight) &&
+		pTF->GetInteger(nRow, "价格", 0, &pBuf->m_nPrice) &&
+		pTF->GetInteger(nRow, "是否叠放", 0, &pBuf->m_bStack) &&
+		pTF->GetInteger(nRow, "负重", 0, &pBuf->m_nWeight);
+	pTF->GetString(nRow, "说明文字", "", pBuf->m_szIntro, sizeof(pBuf->m_szIntro));
+	pTF->GetInteger(nRow, "五行属性", 0, &pBuf->m_nSeries);
+	// 原技能书表没有等级列；商店和存档均以等级1引用。
+	pTF->GetInteger(nRow, "等级", 1, &pBuf->m_nLevel);
+	pBuf->m_bValid = bRead && pBuf->m_szName[0] && pBuf->m_nItemGenre == m_nGenre &&
+		pBuf->m_nDetailType >= 0 && pBuf->m_nParticularType >= 0 &&
+		pBuf->m_nLevel >= 0 && pBuf->m_nWidth > 0 && pBuf->m_nHeight > 0 &&
+		pBuf->m_nPrice >= 0 && pBuf->m_bStack >= 0 && pBuf->m_nWeight >= 0;
+	if (!pBuf->m_bValid)
+		g_DebugLog("[Item] Invalid normal item resource row: file=%s, row=%d, genre=%d, detail=%d, particular=%d",
+			m_szTabFile, nRow, pBuf->m_nItemGenre, pBuf->m_nDetailType, pBuf->m_nParticularType);
+	// 单条格式异常只禁用该条，不能使同表的其余有效道具无法加载。
+	return TRUE;
+}
+
+const KBASICPROP_NORMALITEM* KBPT_NormalItem::GetRecord(int nIndex) const
+{
+	if (!m_pBuf || nIndex < 0 || nIndex >= m_nNumOfEntries)
+		return NULL;
+	const KBASICPROP_NORMALITEM* pData = (const KBASICPROP_NORMALITEM*)m_pBuf + nIndex;
+	return pData->m_bValid ? pData : NULL;
+}
+
+const KBASICPROP_NORMALITEM* KBPT_NormalItem::FindRecord(int nDetail, int nParticular, int nLevel) const
+{
+	for (int i = 0; i < m_nNumOfEntries; i++)
+	{
+		const KBASICPROP_NORMALITEM* pData = GetRecord(i);
+		if (pData && pData->m_nDetailType == nDetail &&
+			pData->m_nParticularType == nParticular && pData->m_nLevel == nLevel)
+			return pData;
+	}
+	return NULL;
+}
+
+//============================================================================
 
 KBPT_Equipment::KBPT_Equipment()
 {

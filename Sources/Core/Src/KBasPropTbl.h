@@ -87,6 +87,26 @@ typedef struct
 	int			m_nAttrib3_Para;			// 属性2参数
 } KBASICPROP_MEDMATERIAL;
 
+// 技能或脚本道具、技能书的共同模板；用途参数仍由对应原资源决定。
+typedef struct
+{
+	char		m_szName[SZBUFLEN_0];
+	int			m_nItemGenre;
+	int			m_nDetailType;
+	int			m_nParticularType;
+	char		m_szImageName[SZBUFLEN_0];
+	int			m_nObjIdx;
+	int			m_nWidth;
+	int			m_nHeight;
+	char		m_szIntro[SZBUFLEN_1];
+	int			m_nSeries;
+	int			m_nPrice;
+	int			m_nLevel;
+	BOOL		m_bStack;
+	int			m_nWeight;			// 原表负重；本次不改变玩家负重计算。
+	BOOL		m_bValid;
+} KBASICPROP_NORMALITEM;
+
 // 以下结构用于描述一对最大,最小值
 typedef struct
 {
@@ -229,6 +249,7 @@ typedef struct
 	int			m_nHeight;					// 道具栏中所占高度
 	int			m_nPrice;					// 价格
 	char		m_szIntro[SZBUFLEN_1];		// 说明文字
+	int			m_bStack;					// 原表“是否叠放”的数量上限
 } KBASICPROP_TOWNPORTAL;
 //=============================================================================
 
@@ -338,6 +359,21 @@ public:
 
 // 以下是辅助函数
 protected:
+	virtual BOOL LoadRecord(int i, KTabFile* pTF);
+};
+
+// =====>技能或脚本道具、技能书<=====
+class KBPT_NormalItem : public KBasicPropertyTable
+{
+public:
+	KBPT_NormalItem();
+	void Init(int nGenre);
+	virtual BOOL Load(int nVersion = -1);
+	const KBASICPROP_NORMALITEM* GetRecord(int nIndex) const;
+	const KBASICPROP_NORMALITEM* FindRecord(int nDetail, int nParticular, int nLevel) const;
+
+protected:
+	int m_nGenre;
 	virtual BOOL LoadRecord(int i, KTabFile* pTF);
 };
 
@@ -488,6 +524,8 @@ public:
 protected:
 	KBPT_Medicine			m_BPTMedicine;
 	KBPT_MedMaterial		m_BPTMedMaterial;
+	KBPT_NormalItem		m_BPTMagicScript;
+	KBPT_NormalItem		m_BPTSkillBook;
 	KBPT_TownPortal			m_BPTTownPortal;
 	KBPT_Quest				m_BPTQuest;
 	KBPT_Equipment			m_BPTHorse;
@@ -559,6 +597,7 @@ public:
 	const KBASICPROP_TOWNPORTAL*	GetTownPortalRecord(IN int) const;
 	const int					GetTownPortalRecordNumber() const;
 	const KBASICPROP_MINE*		GetMine(IN int) const;
+	const KBASICPROP_NORMALITEM* FindNormalItem(int nGenre, int nDetail, int nParticular, int nLevel) const;
 // 以下是辅助函数
 protected:
 	BOOL InitMALib();

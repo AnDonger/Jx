@@ -78,102 +78,72 @@ BOOL KTabFile::Load(LPSTR FileName)
 // 参数:	void
 // 返回:	void
 //---------------------------------------------------------------------------
+// 原表可能在数据行末多保留空列；每次必须走到行末，不能把剩余列当作下一行。
+static int SkipTabLineEnd(const BYTE* pBuffer, int nOffset, int nSize)
+{
+	if (nOffset < nSize && pBuffer[nOffset] == '\r')
+	{
+		do
+		{
+			nOffset++;
+		} while (nOffset < nSize && pBuffer[nOffset] == '\r');
+	}
+	if (nOffset < nSize && pBuffer[nOffset] == '\n')
+		nOffset++;
+	return nOffset;
+}
+
 void KTabFile::CreateTabOffset()
 {
-	int		nWidth, nHeight, nOffset, nSize;
-	BYTE	*Buffer;
-	TABOFFSET *TabBuffer;
+	const BYTE* pBuffer = (const BYTE*)m_Memory.GetMemPtr();
+	int nSize = m_Memory.GetMemLen();
+	m_Width = m_Height = 0;
+	if (!pBuffer || nSize <= 0)
+		return;
 
-	nWidth	= 1;
-	nHeight	= 1;
-	nOffset = 0;
-
-	Buffer	= (BYTE *)m_Memory.GetMemPtr();
-	nSize	= m_Memory.GetMemLen();
-
-	// 读第一行决定有多少列
-	while (*Buffer != 0x0d && *Buffer != 0x0a)
+	int nWidth = 1;
+	int nOffset = 0;
+	while (nOffset < nSize && pBuffer[nOffset] != '\r' && pBuffer[nOffset] != '\n')
 	{
-		if (*Buffer == 0x09)
-		{
+		if (pBuffer[nOffset] == '\t')
 			nWidth++;
-		}
-		Buffer++;
 		nOffset++;
 	}
-	if (*Buffer == 0x0d && *(Buffer + 1) == 0x0a)
-	{
-		Buffer += 2;	// 0x0a跳过		
-		nOffset += 2;	// 0x0a跳过
-	}
-	else
-	{
-		Buffer += 1;	// 0x0a跳过		
-		nOffset += 1;	// 0x0a跳过
-	}
-	while(nOffset < nSize)
-	{
-		while (*Buffer != 0x0d && *Buffer != 0x0a)
-		{
-			Buffer++;
-			nOffset++;
-			if (nOffset >= nSize)
-				break;
-		}
-		nHeight++;
-		if (*Buffer == 0x0d && *(Buffer + 1) == 0x0a)
-		{
-			Buffer += 2;	// 0x0a跳过		
-			nOffset += 2;	// 0x0a跳过
-		}
-		else
-		{
-			Buffer += 1;	// 0x0a跳过		
-			nOffset += 1;	// 0x0a跳过
-		}
-	}
-	m_Width		= nWidth;
-	m_Height	= nHeight;
-
-	TabBuffer = (TABOFFSET *)m_OffsetTable.Alloc(m_Width * m_Height * sizeof (TABOFFSET));
-	Buffer = (BYTE *)m_Memory.GetMemPtr();
-
+	int nHeight = 0;
 	nOffset = 0;
-	int nLength;
-	for (int i = 0; i < nHeight; i++)
+	while (nOffset < nSize)
 	{
-		for (int j = 0; j < nWidth; j++)
-		{
-			TabBuffer->dwOffset = nOffset;	
-			nLength = 0;
-			while(*Buffer != 0x09 && *Buffer != 0x0d && *Buffer != 0x0a && nOffset < nSize)
-			{
-				Buffer++;
-				nOffset++;
-				nLength++;
-			}
-			Buffer++;	// 0x09或0x0d或0x0a(linux)跳过
+		nHeight++;
+		while (nOffset < nSize && pBuffer[nOffset] != '\r' && pBuffer[nOffset] != '\n')
 			nOffset++;
-			TabBuffer->dwLength = nLength;
-			TabBuffer++;
-			if (*(Buffer - 1) == 0x0a || *(Buffer - 1) == 0x0d)	//	本行已经结束了，虽然可能没到nWidth //for linux modified [wxb 2003-7-29]
-			{
-				for (int k = j+1; k < nWidth; k++)
-				{
-					TabBuffer->dwOffset = nOffset;
-					TabBuffer->dwLength = 0;
-					TabBuffer++;					
-				}
-				break;
-			}
-		}
+		nOffset = SkipTabLineEnd(pBuffer, nOffset, nSize);
+	}
+	if (nHeight <= 0 || nWidth > 0x7fffffff / nHeight / sizeof(TABOFFSET))
+		return;
 
-		//modified for linux [wxb 2003-7-29]
-		if (*(Buffer - 1) == 0x0d && *Buffer == 0x0a)
+	TABOFFSET* pTable = (TABOFFSET*)m_OffsetTable.Alloc(nWidth * nHeight * sizeof(TABOFFSET));
+	if (!pTable)
+		return;
+	m_Width = nWidth;
+	m_Height = nHeight;
+	nOffset = 0;
+	for (int nRow = 0; nRow < nHeight; nRow++)
+	{
+		int nEnd = nOffset;
+		while (nEnd < nSize && pBuffer[nEnd] != '\r' && pBuffer[nEnd] != '\n')
+			nEnd++;
+		for (int nColumn = 0; nColumn < nWidth; nColumn++)
 		{
-			Buffer++;				// 0x0a跳过	
-			nOffset++;				// 0x0a跳过	
+			pTable->dwOffset = nOffset;
+			while (nOffset < nEnd && pBuffer[nOffset] != '\t')
+				nOffset++;
+			pTable->dwLength = nOffset - pTable->dwOffset;
+			pTable++;
+			if (nOffset < nEnd)
+				nOffset++;
 		}
+		// 多余列忽略，缺少列保留空字段；兼容 CRLF、LF、CR 和原资源中的 CRCRLF。
+		nOffset = SkipTabLineEnd(pBuffer, nEnd, nSize);
 	}
 }
 

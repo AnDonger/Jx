@@ -790,6 +790,9 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 	case 0x51: return nSize == sizeof(GAME_SKILL_COMMAND);
 	case 0x61: return nSize == sizeof(GAME_USE_ITEM_COMMAND);
 	case 0x62: return nSize == sizeof(GAME_PICKUP_COMMAND);
+	case 0x64: return nSize == sizeof(PLAYER_SELL_ITEM_COMMAND);
+	case 0x65: return nSize == sizeof(PLAYER_BUY_ITEM_COMMAND);
+	case 0xAC: return nSize == sizeof(GAME_SHOP_ITEM_RESULT);
 	case 0x76: return nSize == sizeof(GAME_DIALOG_NPC_COMMAND) || nSize == sizeof(PLAYER_DIALOG_NPC_COMMAND);
 	case 0x78: return nSize == sizeof(GAME_AURA_COMMAND);
 	case 0x94: return nSize == sizeof(GAME_SPLIT_ITEM_COMMAND);
@@ -811,6 +814,8 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 	{
 		if (nSize < 4 || *(const WORD*)(pChar + 1) + PROTOCOL_MSG_SIZE != nSize)
 			return false;
+		if ((BYTE)pChar[3] == 5)
+			return nSize == sizeof(GAME_BUY_ITEM_COMMAND);
 		if ((BYTE)pChar[3] == 0x1E)
 			return nSize == sizeof(GAME_STOP_COMMAND);
 		return true;

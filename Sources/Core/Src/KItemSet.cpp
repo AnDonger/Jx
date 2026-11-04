@@ -187,6 +187,10 @@ int KItemSet::Add(int nItemGenre, int nSeries,
 	case item_materials:		// 普通材料
 		bGenerated = ItemGen.Gen_Material(nDetailType, nParticularType, nLevel, nVersion, pItem);
 		break;
+	case item_magicorscript:
+	case item_skillbook:
+		bGenerated = ItemGen.Gen_NormalItem(nItemGenre, nDetailType, nParticularType, nLevel, nVersion, pItem);
+		break;
 	case item_task:				// 默认是任务类
 		bGenerated = ItemGen.Gen_Quest(nDetailType, pItem);
 		break;

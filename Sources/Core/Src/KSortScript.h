@@ -51,5 +51,8 @@ extern unsigned long g_IniScriptEngine();
 extern const KScript * g_GetScript(DWORD dwScriptId);
 extern const KScript * g_GetScript(const char * szRelativeScriptFile);
 extern BOOL ReLoadScript(const char * szRelativePathScript);
+#ifdef _SERVER
+extern BOOL g_CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, char *pszMissing, int nSize);
+#endif
 extern unsigned long  ReLoadAllScript();
 #endif

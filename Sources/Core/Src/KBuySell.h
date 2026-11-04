@@ -33,11 +33,13 @@ private:
 	int				m_Width;
 	int				m_Height;
 	int				m_MaxItem;
+	BOOL*			m_CashGoods;
 public:
 #ifdef _SERVER
 	void			OpenSale(int nPlayerIdx, int nShop);
 	BOOL			Buy(int nPlayerIdx, int nBuy, int nBuyIdx, int nPlace, int nX, int nY);	// 买第几个买卖列表中的第几项道具
 	BOOL			Sell(int nPlayerIdx, int nBuy, int nIdx);
+	BOOL			BuyBack(int nPlayerIdx, DWORD dwItemID);
 #endif
 #ifndef _SERVER
 	KInventory*		m_pShopRoom;

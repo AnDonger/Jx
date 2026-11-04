@@ -16,6 +16,7 @@
 #include "LuaLib.h"
 #include "KScriptList.h"
 #include <string.h>
+#include <time.h>
 #include "LuaFuns.h"
 #include "KCore.h"
 #include "KNpc.h"
@@ -2926,6 +2927,84 @@ int LuaGetPlayerLevel(Lua_State * L)
 	return 1;
 }
 
+// 新资源中的职业编号：0甲士、1道士、2异人，与角色存档和初始技能一致。
+int LuaGetPlayerType(Lua_State *L)
+{
+	int nPlayerIndex = GetPlayerIndex(L);
+	if (nPlayerIndex > 0 && Player[nPlayerIndex].m_nIndex > 0)
+		Lua_PushNumber(L, Npc[Player[nPlayerIndex].m_nIndex].m_Series);
+	else
+		Lua_PushNil(L);
+	return 1;
+}
+
+int LuaSystemTime(Lua_State *L)
+{
+	Lua_PushNumber(L, (double)time(NULL));
+	return 1;
+}
+
+int LuaGetHMS(Lua_State *L)
+{
+	time_t nTime = time(NULL);
+	tm *pTime = localtime(&nTime);
+	if (!pTime)
+		return 0;
+	Lua_PushNumber(L, pTime->tm_hour);
+	Lua_PushNumber(L, pTime->tm_min);
+	Lua_PushNumber(L, pTime->tm_sec);
+	return 3;
+}
+
+int LuaGetYMD(Lua_State *L)
+{
+	time_t nTime = time(NULL);
+	tm *pTime = localtime(&nTime);
+	if (!pTime)
+		return 0;
+	Lua_PushNumber(L, pTime->tm_year + 1900);
+	Lua_PushNumber(L, pTime->tm_mon + 1);
+	Lua_PushNumber(L, pTime->tm_mday);
+	return 3;
+}
+
+int LuaWriteLog(Lua_State *L)
+{
+	if (Lua_GetTopIndex(L) < 1 || !Lua_IsString(L, 1))
+		return 0;
+	const char *pszMessage = Lua_ValueToString(L, 1);
+	if (!pszMessage)
+		return 0;
+
+	char szMessage[512];
+	g_StrCpyLen(szMessage, pszMessage, sizeof(szMessage));
+	int nPlayerIndex = GetPlayerIndex(L);
+	if (nPlayerIndex > 0 && nPlayerIndex < MAX_PLAYER)
+	{
+		g_DebugLog("[LuaScript] player=%d name=%s: %s", nPlayerIndex,
+			Player[nPlayerIndex].m_PlayerName, szMessage);
+	}
+	else
+	{
+		g_DebugLog("[LuaScript] player=0: %s", szMessage);
+	}
+	return 0;
+}
+
+int LuaTime2LocalYMD(Lua_State *L)
+{
+	if (Lua_GetTopIndex(L) != 1 || !Lua_IsNumber(L, 1))
+		return 0;
+	time_t nTime = (time_t)Lua_ValueToNumber(L, 1);
+	tm *pTime = localtime(&nTime);
+	if (!pTime)
+		return 0;
+	Lua_PushNumber(L, pTime->tm_year + 1900);
+	Lua_PushNumber(L, pTime->tm_mon + 1);
+	Lua_PushNumber(L, pTime->tm_mday);
+	return 3;
+}
+
 int LuaGetPlayerLife(Lua_State * L)
 {
 	int nPlayerIndex = GetPlayerIndex(L);
@@ -2939,7 +3018,7 @@ int LuaGetPlayerLife(Lua_State * L)
 			case 0:
 				Lua_PushNumber(L, Npc[Player[nPlayerIndex].m_nIndex].m_CurrentLife);break;
 			case 1:
-				Lua_PushNumber(L, Npc[Player[nPlayerIndex].m_nIndex].m_LifeMax); break;
+				Lua_PushNumber(L, Npc[Player[nPlayerIndex].m_nIndex].m_CurrentLifeMax); break;
 			case 2:
 				Lua_PushNumber(L, Npc[Player[nPlayerIndex].m_nIndex].m_LifeMax);break;
 			default:
@@ -2959,6 +3038,7 @@ int LuaRestorePlayerLife(Lua_State * L)
 	if (nPlayerIndex > 0)
 	{
 		Npc[Player[nPlayerIndex].m_nIndex].RestoreLife();
+		Player[nPlayerIndex].SendCurNormalSyncData();
 	}
 	return 0;
 }
@@ -2969,6 +3049,7 @@ int LuaRestorePlayerMana(Lua_State * L)
 	if (nPlayerIndex > 0)
 	{
 		Npc[Player[nPlayerIndex].m_nIndex].RestoreMana();
+		Player[nPlayerIndex].SendCurNormalSyncData();
 	}
 	return 0;
 }
@@ -3002,7 +3083,7 @@ int LuaGetPlayerMana(Lua_State * L)
 			case 0:
 				Lua_PushNumber(L, Npc[Player[nPlayerIndex].m_nIndex].m_CurrentMana);break;
 			case 1:
-				Lua_PushNumber(L, Npc[Player[nPlayerIndex].m_nIndex].m_ManaMax); break;
+				Lua_PushNumber(L, Npc[Player[nPlayerIndex].m_nIndex].m_CurrentManaMax); break;
 			case 2:
 				Lua_PushNumber(L, Npc[Player[nPlayerIndex].m_nIndex].m_ManaMax);break;
 			default:
@@ -5279,6 +5360,14 @@ TLua_Funcs GameScriptFuns[] =
 	//服务器端脚本指令
 #ifdef _SERVER
 	//-----------------基本功能
+	{"GetPlayerType", LuaGetPlayerType},
+	{"SystemTime", LuaSystemTime},
+	{"GetHMS", LuaGetHMS},
+	{"GetYMD", LuaGetYMD},
+	{"WriteLog", LuaWriteLog},
+	{"Time2LocalYMD", LuaTime2LocalYMD},
+	{"HaveEventItem", LuaGetTaskItemCount},
+	{"DelEventItem", LuaDelItem},
 	{"AddRepute", LuaModifyRepute},	//修改声望值
 	{"GetRepute",LuaGetRepute},		
 	{"GetNpcIdx", LuaGetCurNpcIndex},

@@ -817,6 +817,33 @@ BOOL KItemGenerator::Gen_Material(IN int nDetailType,
 	return TRUE;
 }
 
+BOOL KItemGenerator::Gen_NormalItem(IN int nGenre,
+									 IN int nDetailType,
+									 IN int nParticularType,
+									 IN int nLevel,
+									 IN int nVersion,
+									 IN OUT KItem* pItem)
+{
+	if (!pItem || (nGenre != item_magicorscript && nGenre != item_skillbook) ||
+		nDetailType < 0 || nParticularType < 0 || nLevel < 0)
+		return FALSE;
+	KLibOfBPT* pLibrary = GetVersionLibrary(nVersion);
+	if (!pLibrary)
+		return FALSE;
+	const KBASICPROP_NORMALITEM* pTemplate =
+		pLibrary->FindNormalItem(nGenre, nDetailType, nParticularType, nLevel);
+	if (!pTemplate)
+		return FALSE;
+
+	// 这里只恢复原表的共同模板，不执行脚本物品或学习技能书。
+	ZeroMemory(&pItem->m_GeneratorParam, sizeof(pItem->m_GeneratorParam));
+	pItem->m_GeneratorParam.nVersion = nVersion == -1 ? m_nCurrentVersion : nVersion;
+	*pItem = *pTemplate;
+	pItem->SetDurability(-1);
+	pItem->SetStackCount(1);
+	return TRUE;
+}
+
 BOOL KItemGenerator::Gen_Quest(IN int nDetailType, IN OUT KItem* pItem)
 {
 	_ASSERT(this != NULL);
@@ -841,16 +868,18 @@ BOOL KItemGenerator::Gen_TownPortal(IN OUT KItem* pItem)
 	_ASSERT(this != NULL);
 	_ASSERT(pItem != NULL);
 
-	BOOL bEC = FALSE;
+	// 回城符使用基础版本。客户端生成器及正式服同步均将版本置为 0，
+	// 不能沿用装备当前版本；旧存档中误写的版本也在生成时恢复。
+	KLibOfBPT* pLibrary = GetVersionLibrary(0);
+	if (!pLibrary || pLibrary->GetTownPortalRecordNumber() <= 0)
+		return FALSE;
+	const KBASICPROP_TOWNPORTAL* pPortal = pLibrary->GetTownPortalRecord(0);
+	if (!pPortal || pPortal->m_nItemGenre != item_townportal ||
+		!pPortal->m_szName[0] || pPortal->m_nWidth <= 0 || pPortal->m_nHeight <= 0)
+		return FALSE;
+
 	ZeroMemory(&pItem->m_GeneratorParam, sizeof(pItem->m_GeneratorParam));
-	
-	const KBASICPROP_TOWNPORTAL* pPortal = NULL;
-	pPortal = m_BPTLib.GetTownPortalRecord(0);
-	if (NULL == pPortal)
-	{
-		_ASSERT(FALSE);
-		return bEC;
-	}
+	pItem->SetDurability(-1);
 	*pItem = *pPortal;
 	return TRUE;
 }
