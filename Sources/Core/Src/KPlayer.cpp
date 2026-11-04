@@ -4643,7 +4643,6 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 {
 	if (m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
-		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 2 &&
 		Npc[m_nPeapleIdx].m_Kind == kind_dialoger &&
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
 		!CheckNpcScriptFunction(dwScriptId, szFunName))
@@ -4722,7 +4721,6 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId, char * szFunName, char *  szParams
 {
 	if (m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
-		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 2 &&
 		Npc[m_nPeapleIdx].m_Kind == kind_dialoger &&
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
 		!CheckNpcScriptFunction(dwScriptId, szFunName))

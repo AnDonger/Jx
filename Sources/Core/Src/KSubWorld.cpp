@@ -866,7 +866,15 @@ BOOL KSubWorld::LoadMap(int nId)
 			continue;
 		KPakFile ScriptFile;
 		if (!ScriptFile.Open(szScript) || !ScriptFile.Size())
-			continue;
+		{
+			// 野外医生的原脚本按地图放在龙套目录，不共用城镇的商店和任务条件。
+			if (Npc[nNpc].ActionScript[0] || strcmp(Npc[nNpc].Name, "医生"))
+				continue;
+			sprintf(szScript, "\\script\\龙套\\野外医生-%s.lua", szPathName);
+			if (strlen(szScript) >= sizeof(Npc[nNpc].ActionScript) ||
+				!ScriptFile.Open(szScript) || !ScriptFile.Size())
+				continue;
+		}
 		ScriptFile.Close();
 		g_StrLower(szScript);
 		DWORD dwScriptID = g_FileName2Id(szScript);

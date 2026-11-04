@@ -40,6 +40,89 @@ struct PLAYER_ITEM_COUNT_HEADER
 
 static const DWORD PLAYER_ITEM_COUNT_MAGIC = 0x314B5453;
 
+// 旧 TDBTaskData 的任务号只有一个字节，保持原记录及 nTaskCount 的含义。
+// nTaskCount 也是一个字节；255 及以上的任务变量单独扩展，避免满 256 条溢出。
+struct PLAYER_TASK_EXT_HEADER
+{
+	DWORD Magic;
+	DWORD Version;
+	DWORD Count;
+};
+
+struct PLAYER_TASK_EXT_RECORD
+{
+	DWORD TaskId;
+	int Value;
+};
+
+static const DWORD PLAYER_TASK_EXT_MAGIC = 0x3158544b;
+static const int PLAYER_TASK_EXT_BEGIN = 255;
+
+static BOOL LoadPlayerTaskExtension(KPlayerTask& Task, const BYTE *&pData, DWORD& dwLength)
+{
+	if (dwLength < sizeof(DWORD))
+		return TRUE;
+	DWORD dwMagic;
+	memcpy(&dwMagic, pData, sizeof(dwMagic));
+	if (dwMagic != PLAYER_TASK_EXT_MAGIC)
+		return TRUE;
+	if (dwLength < sizeof(PLAYER_TASK_EXT_HEADER))
+		return FALSE;
+	PLAYER_TASK_EXT_HEADER Header;
+	memcpy(&Header, pData, sizeof(Header));
+	if (Header.Version != 1 || Header.Count == 0 ||
+		Header.Count > MAX_TASK - PLAYER_TASK_EXT_BEGIN)
+		return FALSE;
+	DWORD dwSize = sizeof(Header) + Header.Count * sizeof(PLAYER_TASK_EXT_RECORD);
+	if (dwSize > dwLength)
+		return FALSE;
+	DWORD dwPrevious = PLAYER_TASK_EXT_BEGIN - 1;
+	for (DWORD i = 0; i < Header.Count; i++)
+	{
+		PLAYER_TASK_EXT_RECORD Record;
+		memcpy(&Record, pData + sizeof(Header) + i * sizeof(Record), sizeof(Record));
+		if (Record.TaskId <= dwPrevious || Record.TaskId >= MAX_TASK || Record.Value == 0)
+			return FALSE;
+		dwPrevious = Record.TaskId;
+	}
+	for (DWORD i = 0; i < Header.Count; i++)
+	{
+		PLAYER_TASK_EXT_RECORD Record;
+		memcpy(&Record, pData + sizeof(Header) + i * sizeof(Record), sizeof(Record));
+		Task.SetSaveVal(Record.TaskId, Record.Value);
+	}
+	pData += dwSize;
+	dwLength -= dwSize;
+	return TRUE;
+}
+
+static int SavePlayerTaskExtension(KPlayerTask& Task, BYTE *pData, DWORD dwCapacity)
+{
+	DWORD dwCount = 0;
+	for (int i = PLAYER_TASK_EXT_BEGIN; i < MAX_TASK; i++)
+	{
+		if (Task.nSave[i])
+			dwCount++;
+	}
+	if (!dwCount)
+		return 0;
+	DWORD dwSize = sizeof(PLAYER_TASK_EXT_HEADER) + dwCount * sizeof(PLAYER_TASK_EXT_RECORD);
+	if (dwSize > dwCapacity)
+		return -1;
+	PLAYER_TASK_EXT_HEADER Header = {PLAYER_TASK_EXT_MAGIC, 1, dwCount};
+	memcpy(pData, &Header, sizeof(Header));
+	BYTE *pOut = pData + sizeof(Header);
+	for (int i = PLAYER_TASK_EXT_BEGIN; i < MAX_TASK; i++)
+	{
+		if (!Task.nSave[i])
+			continue;
+		PLAYER_TASK_EXT_RECORD Record = {(DWORD)i, Task.nSave[i]};
+		memcpy(pOut, &Record, sizeof(Record));
+		pOut += sizeof(Record);
+	}
+	return dwSize;
+}
+
 static BOOL GetPlayerItemCounts(const TRoleData* pRoleData, const BYTE** ppCounts)
 {
 	*ppCounts = NULL;
@@ -825,7 +908,7 @@ int	KPlayer::LoadPlayerTaskList(BYTE * pRoleBuffer, BYTE * &pTaskBuffer, unsigne
 	}
 
 	TRoleData *pRoleData = (TRoleData*)pRoleBuffer;
-	if (pRoleData->nTaskCount < 0 || pRoleData->nTaskCount > MAX_TASK ||
+	if (pRoleData->nTaskCount < 0 || pRoleData->nTaskCount > PLAYER_TASK_EXT_BEGIN ||
 		pRoleData->dwTaskOffset < sizeof(TRoleData) - 1 || pRoleData->dwItemOffset < 0 ||
 		pRoleData->dwDataLen > sizeof(m_SaveBuffer) ||
 		(DWORD)pRoleData->dwTaskOffset > pRoleData->dwDataLen ||
@@ -839,7 +922,10 @@ int	KPlayer::LoadPlayerTaskList(BYTE * pRoleBuffer, BYTE * &pTaskBuffer, unsigne
 	if (nParam == 0)
 	{
 		m_cTask.Release();
-		if (!m_cTask.LoadNotes(pRoleBuffer + dwTaskEnd, pRoleData->dwItemOffset - dwTaskEnd))
+		const BYTE *pExtra = pRoleBuffer + dwTaskEnd;
+		DWORD dwExtraLength = pRoleData->dwItemOffset - dwTaskEnd;
+		if (!LoadPlayerTaskExtension(m_cTask, pExtra, dwExtraLength) ||
+			!m_cTask.LoadNotes(pExtra, dwExtraLength))
 		{
 			g_DebugLog("[Task] Invalid saved task journal: role=%s", m_PlayerName);
 			return -1;
@@ -1169,10 +1255,12 @@ int	KPlayer::SavePlayerTaskList(BYTE * pRoleBuffer)
 
 
 	TDBTaskData * pTaskData = (TDBTaskData *)(pRoleBuffer + pRoleData->dwTaskOffset);
-	for (int i = 0; i < MAX_TASK; i ++)
+	for (int i = 0; i < PLAYER_TASK_EXT_BEGIN; i ++)
 	{
 		if (!m_cTask.nSave[i]) continue;
-		
+		// 扩展任务号不改变存档结构，写入每条记录前仍须保证缓冲区有余量。
+		if ((BYTE *)(pTaskData + 1) - pRoleBuffer > sizeof(m_SaveBuffer))
+			return -1;
 		pTaskData->m_nTaskId = i;
 		pTaskData->m_nTaskValue = m_cTask.GetSaveVal(i);
 		nTaskCount ++;
@@ -1183,6 +1271,11 @@ int	KPlayer::SavePlayerTaskList(BYTE * pRoleBuffer)
 	DWORD dwOffset = (BYTE*)pTaskData - pRoleBuffer;
 	if (dwOffset >= sizeof(m_SaveBuffer))
 		return -1;
+	int nExtensionLength = SavePlayerTaskExtension(m_cTask, pRoleBuffer + dwOffset,
+		sizeof(m_SaveBuffer) - dwOffset);
+	if (nExtensionLength < 0)
+		return -1;
+	dwOffset += nExtensionLength;
 	int nNotesLength = m_cTask.SaveNotes(pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
 	if (nNotesLength < 0)
 		return -1;

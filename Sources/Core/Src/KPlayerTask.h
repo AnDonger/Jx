@@ -10,7 +10,8 @@
 #ifndef KPLAYERTASK_H
 #define KPLAYERTASK_H
 
-#define		MAX_TASK		256
+// 当前原始 NPC 脚本使用 304、1276、1765 等持久任务号，沿用原存档的稀疏记录格式。
+#define		MAX_TASK		2048
 #define		MAX_TEMP_TASK	2560
 
 

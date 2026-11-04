@@ -2927,6 +2927,84 @@ int LuaGetPlayerLevel(Lua_State * L)
 	return 1;
 }
 
+// 新资源仍以一个持久任务整数保存四个字节，序号与原 GetByte/SetByte 一样从 1 开始。
+int LuaGetTaskByte(Lua_State *L)
+{
+	int nResult = 0;
+	int nParamNum = Lua_GetTopIndex(L);
+	int nPlayerIndex = GetPlayerIndex(L);
+	if (nPlayerIndex > 0 && nParamNum == 2)
+	{
+		int nTaskId = (int)Lua_ValueToNumber(L, 1);
+		int nByte = (int)Lua_ValueToNumber(L, 2);
+		if (nTaskId >= 0 && nTaskId < MAX_TASK && nByte >= 1 && nByte <= 4)
+		{
+			DWORD dwValue = (DWORD)Player[nPlayerIndex].m_cTask.GetSaveVal(nTaskId);
+			nResult = (int)((dwValue >> ((nByte - 1) * 8)) & 0xff);
+		}
+	}
+	Lua_PushNumber(L, nResult);
+	return 1;
+}
+
+int LuaSetTaskByte(Lua_State *L)
+{
+	int nParamNum = Lua_GetTopIndex(L);
+	int nPlayerIndex = GetPlayerIndex(L);
+	if (nPlayerIndex <= 0 || nParamNum != 3)
+		return 0;
+	int nTaskId = (int)Lua_ValueToNumber(L, 1);
+	int nByte = (int)Lua_ValueToNumber(L, 2);
+	if (nTaskId < 0 || nTaskId >= MAX_TASK || nByte < 1 || nByte > 4)
+		return 0;
+	DWORD dwShift = (nByte - 1) * 8;
+	DWORD dwByte = (DWORD)(int)Lua_ValueToNumber(L, 3) & 0xff;
+	DWORD dwValue = (DWORD)Player[nPlayerIndex].m_cTask.GetSaveVal(nTaskId);
+	dwValue = (dwValue & ~(0xffUL << dwShift)) | (dwByte << dwShift);
+	Player[nPlayerIndex].m_cTask.SetSaveVal(nTaskId, (int)dwValue);
+	return 0;
+}
+
+// 原 NPC 六参数接口：种类、详细类别、具体类别、等级、五行、幸运。
+// 模板、版本和堆叠规则全部复用现有道具生成器及背包入包流程。
+int LuaAddNormalItem(Lua_State *L)
+{
+	int nParamNum = Lua_GetTopIndex(L);
+	int nPlayerIndex = GetPlayerIndex(L);
+	if (nPlayerIndex <= 0 || nParamNum != 6)
+	{
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	int Values[6];
+	for (int i = 0; i < 6; i++)
+	{
+		double nValue = Lua_ValueToNumber(L, i + 1);
+		if (!Lua_IsNumber(L, i + 1) || nValue < 0 || nValue > 2147483647.0 ||
+			nValue != (int)nValue)
+		{
+			Lua_PushNumber(L, 0);
+			return 1;
+		}
+		Values[i] = (int)nValue;
+	}
+	int MagicLevels[6] = {0};
+	int nItem = ItemSet.Add(Values[0], Values[4], Values[3], Values[5],
+		Values[1], Values[2], MagicLevels, g_SubWorldSet.GetGameVersion());
+	if (nItem <= 0)
+	{
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	if (Item[nItem].GetGenre() == item_equip)
+		Item[nItem].SetDurability(Item[nItem].GetMaxDurability());
+	BOOL bAdded = Player[nPlayerIndex].m_ItemList.AddPickupItem(nItem, -1, -1);
+	if (!bAdded)
+		ItemSet.Remove(nItem);
+	Lua_PushNumber(L, bAdded ? 1 : 0);
+	return 1;
+}
+
 // 新资源中的职业编号：0甲士、1道士、2异人，与角色存档和初始技能一致。
 int LuaGetPlayerType(Lua_State *L)
 {
@@ -5360,6 +5438,9 @@ TLua_Funcs GameScriptFuns[] =
 	//服务器端脚本指令
 #ifdef _SERVER
 	//-----------------基本功能
+	{"GetTaskByte", LuaGetTaskByte},
+	{"SetTaskByte", LuaSetTaskByte},
+	{"AddNormalItem", LuaAddNormalItem},
 	{"GetPlayerType", LuaGetPlayerType},
 	{"SystemTime", LuaSystemTime},
 	{"GetHMS", LuaGetHMS},
