@@ -401,6 +401,8 @@ BOOL	InitNpcSetting()
 	
 	//加载Npc等级设定的脚本文件，用于今后加载Npc时使用
 #ifdef _SERVER
+	if (!g_GetScript(NPC_LEVELSCRIPT_FILENAME))
+		ReLoadScript(NPC_LEVELSCRIPT_FILENAME);
 	g_pNpcLevelScript = (KLuaScript*)g_GetScript(NPC_LEVELSCRIPT_FILENAME);
 #else
 	g_pNpcLevelScript = new KLuaScript;

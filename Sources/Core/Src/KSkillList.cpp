@@ -10,6 +10,8 @@
 #endif
 #include "KSkills.h"
 #include "KPlayer.h"
+#include <time.h>
+#include <limits.h>
 
 #ifndef _SERVER
 #include "cOREsHELL.H"
@@ -19,6 +21,7 @@ KSkillList::KSkillList()
 {
 	ZeroMemory(m_Skills, sizeof(NPCSKILL) * MAX_NPCSKILL);
 	m_nNpcIndex = 0;
+	memset(m_SkillBuffs, 0, sizeof(m_SkillBuffs));
 }
 
 KSkillList::~KSkillList()
@@ -272,7 +275,11 @@ BOOL KSkillList::CanCast(int nSkillID, DWORD dwTime)
 		return FALSE;
 	}
 
-	if (m_Skills[i].CurrentSkillLevel <= 0 || m_Skills[i].NextCastTime > dwTime)
+	if (m_Skills[i].CurrentSkillLevel <= 0 || m_Skills[i].NextCastTime > dwTime
+#ifdef _SERVER
+		|| (m_nNpcIndex > 0 && Npc[m_nNpcIndex].IsPlayer() && m_Skills[i].SkillStatus != 3)
+#endif
+		)
 		return FALSE;
 	
 	return TRUE;
@@ -571,7 +578,7 @@ int KSkillList::LoadPlayerSkill(int nSkillID, int nLevel)
 	m_Skills[nIndex].SkillId = nSkillID;
 	m_Skills[nIndex].SkillLevel = nLevel;
 	m_Skills[nIndex].CurrentSkillLevel = nLevel;
-	m_Skills[nIndex].SkillStatus = 1;
+	m_Skills[nIndex].SkillStatus = nLevel > 1 ? 3 : 1;
 	return nIndex;
 }
 
@@ -664,7 +671,8 @@ BOOL KSkillList::LoadPlayerInitialSkills(int nSeries)
 				break;
 			}
 		}
-		m_Skills[nIndex].SkillStatus = btStatus;
+		if (m_Skills[nIndex].SkillStatus != 3)
+			m_Skills[nIndex].SkillStatus = btStatus;
 	}
 	return TRUE;
 }
@@ -710,5 +718,334 @@ int		KSkillList::ClearSkillLevel(bool bClearPhysicalLevel)
 		}
 	}
 	return nTotalSkillPoint;
+}
+#endif
+
+#ifdef _SERVER
+BOOL KSkillList::IsPlayerSkillLearned(int nSkillID)
+{
+	int nIndex = FindSame(nSkillID);
+	return nIndex && m_Skills[nIndex].SkillStatus == 3 && m_Skills[nIndex].SkillLevel > 0;
+}
+
+BOOL KSkillList::CanLearnPlayerSkill(int nSkillID)
+{
+	const PLAYER_SKILL_RULE* pRule = g_SkillManager.GetPlayerRule(nSkillID);
+	if (!pRule || pRule->BaseSkill || pRule->NewBirthSkill || !FindSame(nSkillID) ||
+		m_nNpcIndex <= 0 || !Npc[m_nNpcIndex].IsPlayer() ||
+		Npc[m_nNpcIndex].m_Level < pRule->PlayerLevel)
+		return FALSE;
+	for (int i = 0; pRule->UseSkillParent && i < pRule->ParentCount; i++)
+	{
+		if (!IsPlayerSkillLearned(pRule->ParentId[i]) ||
+			GetLevel(pRule->ParentId[i]) < pRule->ParentLevel[i])
+			return FALSE;
+	}
+	if (IsPlayerSkillLearned(nSkillID))
+	{
+		int nLevel = GetLevel(nSkillID);
+		if (nLevel < 10 || nLevel >= 13 || nLevel >= pRule->MaxLevel)
+			return FALSE;
+		for (int i = 0; i < pRule->ActiveCount; i++)
+		{
+			if (pRule->ActiveLevel[i] == nLevel)
+				return TRUE;
+		}
+		return FALSE;
+	}
+	return TRUE;
+}
+
+BOOL KSkillList::LearnPlayerSkill(int nSkillID)
+{
+	if (!CanLearnPlayerSkill(nSkillID))
+		return FALSE;
+	int nIndex = FindSame(nSkillID);
+	NPCSKILL& Skill = m_Skills[nIndex];
+	const PLAYER_SKILL_RULE* pRule = g_SkillManager.GetPlayerRule(nSkillID);
+	if (Skill.SkillStatus != 3)
+	{
+		Skill.SkillLevel = 1;
+		Skill.TotalExp = 0;
+		Skill.SkillStatus = 3;
+	}
+	else
+	{
+		if (Skill.SkillLevel < 10 || Skill.SkillLevel >= 13 || Skill.SkillLevel >= pRule->MaxLevel)
+			return FALSE;
+		BOOL bActiveLevel = FALSE;
+		for (int i = 0; i < pRule->ActiveCount; i++)
+		{
+			if (pRule->ActiveLevel[i] == Skill.SkillLevel)
+				bActiveLevel = TRUE;
+		}
+		if (!bActiveLevel)
+			return FALSE;
+		Skill.SkillLevel++;
+		if (Skill.TotalExp < pRule->LevelExp[Skill.SkillLevel - 1])
+			Skill.TotalExp = pRule->LevelExp[Skill.SkillLevel - 1];
+	}
+	RefreshPlayerSkillLevels();
+	SyncPlayerSkill(nIndex);
+	return TRUE;
+}
+
+void KSkillList::SyncPlayerSkill(int nIndex)
+{
+	if (nIndex <= 0 || nIndex >= MAX_NPCSKILL || m_nNpcIndex <= 0 ||
+		!Npc[m_nNpcIndex].IsPlayer() || !g_pServer)
+		return;
+	int nPlayer = Npc[m_nNpcIndex].GetPlayerIdx();
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || Player[nPlayer].m_nNetConnectIdx < 0)
+		return;
+	const NPCSKILL& Skill = m_Skills[nIndex];
+	GAME_SKILL_LEVEL_SYNC Sync;
+	Sync.ProtocolType = 0x74;
+	Sync.SkillId = Skill.SkillId;
+	Sync.SkillLevel = Skill.SkillLevel;
+	Sync.SkillStatus = Skill.SkillStatus;
+	Sync.TotalExp = Skill.TotalExp;
+	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Sync, sizeof(Sync));
+}
+
+BOOL KSkillList::IncreasePlayerSkillExp(int nSkillID, DWORD dwExp)
+{
+	int nIndex = FindSame(nSkillID);
+	const PLAYER_SKILL_RULE* pRule = g_SkillManager.GetPlayerRule(nSkillID);
+	if (!nIndex || !dwExp || !pRule || pRule->BaseSkill || pRule->NewBirthSkill ||
+		!IsPlayerSkillLearned(nSkillID) || pRule->MaxLevel <= 1)
+		return FALSE;
+	NPCSKILL& Skill = m_Skills[nIndex];
+	int nMaxLevel = pRule->MaxLevel < 10 ? pRule->MaxLevel : 10;
+	if (Skill.SkillLevel >= nMaxLevel)
+		return FALSE;
+	DWORD dwMaxExp = pRule->LevelExp[nMaxLevel - 1];
+	if (Skill.TotalExp >= dwMaxExp)
+		return FALSE;
+	if (dwExp > dwMaxExp - Skill.TotalExp)
+		dwExp = dwMaxExp - Skill.TotalExp;
+	Skill.TotalExp += dwExp;
+	int nOldLevel = Skill.SkillLevel;
+	while (Skill.SkillLevel < nMaxLevel && Skill.TotalExp >= pRule->LevelExp[Skill.SkillLevel])
+		Skill.SkillLevel++;
+	if (nOldLevel != Skill.SkillLevel)
+		RefreshPlayerSkillLevels();
+	SyncPlayerSkill(nIndex);
+	return TRUE;
+}
+
+// 命中敌人的技能由子弹伤害结算增加；辅助及被动技能随实际打怪所得经验修炼。
+void KSkillList::AddMonsterSkillExp(int nExp)
+{
+	if (nExp <= 0)
+		return;
+	ULONGLONG ullExp = (ULONGLONG)nExp * g_SkillManager.GetSupportSkillExpRate() *
+		GetSkillExpMultiplier() / 100;
+	DWORD dwExp = ullExp > MAXDWORD ? MAXDWORD : (DWORD)ullExp;
+	if (!dwExp)
+		return;
+	for (int i = 1; i < MAX_NPCSKILL; i++)
+	{
+		if (!IsPlayerSkillLearned(m_Skills[i].SkillId))
+			continue;
+		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId, m_Skills[i].CurrentSkillLevel);
+		if (pSkill && !pSkill->IsTargetEnemy())
+			IncreasePlayerSkillExp(m_Skills[i].SkillId, dwExp);
+	}
+}
+
+void KSkillList::RefreshPlayerSkillLevels()
+{
+	DWORD dwNow = (DWORD)time(NULL);
+	for (int i = 1; i < MAX_NPCSKILL; i++)
+	{
+		NPCSKILL& Skill = m_Skills[i];
+		if (!Skill.SkillId)
+			continue;
+		int nBonus = 0;
+		if (Skill.SkillStatus == 3)
+		{
+			for (int j = 0; j < 16; j++)
+			{
+				const PLAYER_SKILL_BUFF& Buff = m_SkillBuffs[j];
+				if (Buff.EndTime <= dwNow || (Buff.SkillId && Buff.SkillId != Skill.SkillId))
+					continue;
+				if (Buff.BuffId == 7 || Buff.BuffId == 8 || Buff.BuffId == 23)
+					nBonus += Buff.Value;
+			}
+		}
+		if (nBonus > 2)
+			nBonus = 2;
+		Skill.CurrentSkillLevel = Skill.SkillLevel + nBonus;
+		if (Skill.CurrentSkillLevel >= MAX_SKILLLEVEL)
+			Skill.CurrentSkillLevel = MAX_SKILLLEVEL - 1;
+	}
+	ApplyPlayerPassiveSkills();
+}
+
+int KSkillList::GetPlayerSkillBuffTime(DWORD dwBuffId)
+{
+	DWORD dwNow = (DWORD)time(NULL);
+	for (int i = 0; i < 16; i++)
+	{
+		if (m_SkillBuffs[i].BuffId == dwBuffId && m_SkillBuffs[i].EndTime > dwNow)
+			return m_SkillBuffs[i].EndTime - dwNow;
+	}
+	return 0;
+}
+
+int KSkillList::GetSkillExpMultiplier()
+{
+	int nMultiplier = 1;
+	for (int i = 0; i < 16; i++)
+	{
+		const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(m_SkillBuffs[i].BuffId);
+		if (pRule && GetPlayerSkillBuffTime(pRule->BuffId) && pRule->Multiplier > nMultiplier)
+			nMultiplier = pRule->Multiplier;
+	}
+	return nMultiplier;
+}
+
+BOOL KSkillList::AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, int nValue, BOOL bAddTime)
+{
+	if (nSeconds <= 0 || nSeconds > 100 * 3600 || nValue <= 0 || nValue > 5 ||
+		(dwBuffId == 8 && (!nSkillId || !IsPlayerSkillLearned(nSkillId))) ||
+		(dwBuffId != 8 && nSkillId != 0) ||
+		(dwBuffId != 7 && dwBuffId != 8 && dwBuffId != 23 && dwBuffId != 107 && dwBuffId != 271 && dwBuffId != 272))
+		return FALSE;
+	ExpirePlayerSkillBuffs();
+	int nFree = -1;
+	for (int i = 0; i < 16; i++)
+	{
+		if (m_SkillBuffs[i].BuffId == dwBuffId)
+		{
+			nFree = i;
+			break;
+		}
+		if (!m_SkillBuffs[i].BuffId && nFree < 0)
+			nFree = i;
+	}
+	if (nFree < 0)
+		return FALSE;
+	int nLeft = bAddTime ? GetPlayerSkillBuffTime(dwBuffId) : 0;
+	const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(dwBuffId);
+	int nMaxDuration = pRule ? pRule->MaxDuration : 100 * 3600;
+	if (nLeft > nMaxDuration - nSeconds)
+		return FALSE;
+	PLAYER_SKILL_BUFF& Buff = m_SkillBuffs[nFree];
+	Buff.BuffId = dwBuffId;
+	Buff.EndTime = (DWORD)time(NULL) + nLeft + nSeconds;
+	Buff.SkillId = nSkillId;
+	Buff.Value = nValue;
+	RefreshPlayerSkillLevels();
+	SyncPlayerSkillBuffs();
+	return TRUE;
+}
+
+BOOL KSkillList::RemovePlayerSkillBuff(DWORD dwBuffId)
+{
+	for (int i = 0; i < 16; i++)
+	{
+		if (m_SkillBuffs[i].BuffId != dwBuffId)
+			continue;
+		memset(&m_SkillBuffs[i], 0, sizeof(m_SkillBuffs[i]));
+		RefreshPlayerSkillLevels();
+		SyncPlayerSkillBuffs();
+		return TRUE;
+	}
+	return FALSE;
+}
+
+void KSkillList::ExpirePlayerSkillBuffs()
+{
+	DWORD dwNow = (DWORD)time(NULL);
+	BOOL bChanged = FALSE;
+	for (int i = 0; i < 16; i++)
+	{
+		if (m_SkillBuffs[i].BuffId && m_SkillBuffs[i].EndTime <= dwNow)
+		{
+			memset(&m_SkillBuffs[i], 0, sizeof(m_SkillBuffs[i]));
+			bChanged = TRUE;
+		}
+	}
+	if (bChanged)
+	{
+		RefreshPlayerSkillLevels();
+		SyncPlayerSkillBuffs();
+	}
+}
+
+void KSkillList::SyncPlayerSkillBuffs(BOOL bInitial)
+{
+	if (m_nNpcIndex <= 0 || !Npc[m_nNpcIndex].IsPlayer() || !g_pServer)
+		return;
+	int nPlayer = Npc[m_nNpcIndex].GetPlayerIdx();
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || Player[nPlayer].m_nNetConnectIdx < 0)
+		return;
+	int nClient = Player[nPlayer].m_nNetConnectIdx;
+	// 全量E5不能覆盖已有项；增量先撤销再添加，避免反复叠加客户端技能等级。
+	if (!bInitial)
+	{
+		int Kinds[] = {7, 8, 23};
+		for (int i = 0; i < 3; i++)
+		{
+			GAME_SKILL_BUFF_CHANGE Sync;
+			memset(&Sync, 0, sizeof(Sync));
+			Sync.ProtocolType = 0xE5;
+			Sync.Length = sizeof(Sync) - 1;
+			Sync.SubType = 3;
+			Sync.Buff.BuffKind = Kinds[i];
+			g_pServer->PackDataToClient(nClient, &Sync, sizeof(Sync));
+		}
+	}
+	GAME_SKILL_BUFF_SYNC Sync;
+	memset(&Sync, 0, sizeof(Sync));
+	Sync.ProtocolType = 0xE5;
+	for (int i = 0; i < 16; i++)
+	{
+		const PLAYER_SKILL_BUFF& Buff = m_SkillBuffs[i];
+		int nLeft = GetPlayerSkillBuffTime(Buff.BuffId);
+		if (!nLeft || (Buff.BuffId != 7 && Buff.BuffId != 8 && Buff.BuffId != 23))
+			continue;
+		GAME_SKILL_BUFF_DATA& Data = Sync.Buffs[Sync.Count++];
+		Data.RemainingSeconds = nLeft;
+		Data.BuffKind = (BYTE)Buff.BuffId;
+		Data.Value1 = Buff.BuffId == 8 ? Buff.SkillId : Buff.Value;
+		Data.Value2 = Buff.BuffId == 8 ? Buff.Value : 0;
+	}
+	Sync.Length = 4 + sizeof(GAME_SKILL_BUFF_DATA) * Sync.Count;
+	g_pServer->PackDataToClient(nClient, &Sync, Sync.Length + 1);
+
+	// IB状态与经典技能加级状态分开同步；实例标识1..3只用于本模块三种临仙露。
+	// 新增记录+2的DWORD须与尾部删除标识一致；+10的BYTE是属性参数，不是实例号。
+	// 同包先删除旧实例再加入当前剩余时间，重饮及其他技能增益变化不会堆叠图标。
+	BYTE Buffer[5 + 3 * sizeof(GAME_IB_BUFF_DATA) + 3 * sizeof(DWORD)];
+	memset(Buffer, 0, sizeof(Buffer));
+	Buffer[0] = 0xF7;
+	int BuffIds[] = {107, 271, 272};
+	int nOffset = 5;
+	for (int i = 0; i < 3; i++)
+	{
+		int nLeft = GetPlayerSkillBuffTime(BuffIds[i]);
+		if (!nLeft)
+			continue;
+		GAME_IB_BUFF_DATA Data;
+		memset(&Data, 0, sizeof(Data));
+		Data.TemplateId = BuffIds[i];
+		Data.RemainingSeconds = nLeft;
+		Data.InstanceId = i + 1;
+		Data.unknown_1 = 1;
+		memcpy(Buffer + nOffset, &Data, sizeof(Data));
+		nOffset += sizeof(Data);
+		Buffer[4]++;
+	}
+	for (DWORD dwInstance = 1; dwInstance <= 3; dwInstance++)
+	{
+		memcpy(Buffer + nOffset, &dwInstance, sizeof(dwInstance));
+		nOffset += sizeof(dwInstance);
+	}
+	WORD wLength = nOffset - 1;
+	memcpy(Buffer + 1, &wLength, sizeof(wLength));
+	g_pServer->PackDataToClient(nClient, Buffer, nOffset);
 }
 #endif

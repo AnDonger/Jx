@@ -68,6 +68,7 @@ public:
 	int			GetActiveAttribNum(int nIdx);					// nIdx指游戏世界中道具数组的编号
 	int			GetWeaponType();								// 取得武器的类型，近程武器(equip_meleeweapon)还是远程武器(equip_rangeweapon)
 	int			GetWeaponParticular();							// 取得武器的具体类型，用于计算不同的伤害加强
+	int			GetWeaponSkillType();					// 当前资源的武器技能类别（需求属性44）
 	void		GetWeaponDamage(int* nMin, int* nMax);			// 取得武器的伤害
 	int			Add(int nIdx, int nPlace, int nX, int nY);		// nIdx指游戏世界中道具数组的编号
 	BOOL		Remove(int nIdx);								// nIdx指游戏世界中道具数组的编号
@@ -106,6 +107,9 @@ public:
 	void		SyncItemCount(int nIdx);
 	void		SyncItem(int nIdx, BOOL bRefresh = FALSE);
 	BOOL		SplitItem(ItemPos* pSource, DWORD dwCount);
+	int			CountNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, BOOL bQuick = FALSE);
+	BOOL		ConsumeNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, int nCount, BOOL bQuick = FALSE);
+	BOOL		ConsumeItem(int nIdx, int nCount);
 	void		Abrade(int nType);
 	void		TradeMoveMoney(int nMoney);			// 调用此接口必须保证传入的nMoney是一个有效数(正数且不超过所有钱数)
 	void		SendMoneySync();					// 服务器发money同步信息给客户端

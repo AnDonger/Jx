@@ -32,6 +32,7 @@
 //#include "MyAssert.h"
 #include "MsgGenreDef.h"
 #include "KItemSet.h"
+#include "KItemGenerator.h"
 #include "KTaskFuns.h"
 #include "Text.h"
 
@@ -217,6 +218,8 @@ void	KPlayer::Active()
 	//时间任务的处理
 	m_TimerTask.Activate(g_PlayerTimerCallBackFun);
 	this->SendCurNormalSyncData();
+	if (m_bFinishLoading && m_nIndex > 0)
+		Npc[m_nIndex].m_SkillList.ExpirePlayerSkillBuffs();
 	
 	this->m_cChat.TimerAdd();
 	
@@ -890,12 +893,16 @@ BOOL KPlayer::SendSyncData_Skill()
 		sSkill.m_sAllSkill[nCount].SkillId = Skill.SkillId;
 		sSkill.m_sAllSkill[nCount].SkillLevel = Skill.SkillLevel;
 		sSkill.m_sAllSkill[nCount].SkillStatus = Skill.SkillStatus ? Skill.SkillStatus : 1;
+		sSkill.m_sAllSkill[nCount].TotalExp = Skill.TotalExp;
 		nCount++;
 	}
 	sSkill.m_wProtocolLong = 2 + sizeof(GAME_SKILL_SYNC_DATA) * nCount;
 
 	if (SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSkill, sSkill.m_wProtocolLong + 1)))
+	{
+		Npc[m_nIndex].m_SkillList.SyncPlayerSkillBuffs(TRUE);
 		return TRUE;
+	}
 
 	printf("player Packing skill sync data failed...\n");
 	return FALSE;
@@ -2256,6 +2263,7 @@ void	KPlayer::AddSelfExp(int nExp, int nTarLevel)
 	if (nGetExp <= 0)
 		nGetExp = 1;
 	
+	Npc[m_nIndex].m_SkillList.AddMonsterSkillExp(nGetExp);
 	m_nExp += nGetExp;
 	g_DebugLog("[数值]%s实际增加经验%d点", Npc[m_nIndex].Name, nGetExp);
 #ifdef _SERVER
@@ -3562,101 +3570,11 @@ void	KPlayer::AddBaseAttribute(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 //	功能：收到客户端要求增加某个技能的点数
 //-------------------------------------------------------------------------
-void	KPlayer::AddSkillPoint(BYTE* pProtocol)
+void KPlayer::AddSkillPoint(BYTE* pProtocol)
 {
-	PLAYER_ADD_SKILL_POINT_COMMAND	*pAdd = (PLAYER_ADD_SKILL_POINT_COMMAND*)pProtocol;
-	
-	int		nSkillIndex, nSkillLevel;
-	
-	nSkillIndex = Npc[m_nIndex].m_SkillList.FindSame(pAdd->m_nSkillID);
-	if (nSkillIndex == 0)
-		return;
-	nSkillLevel = Npc[m_nIndex].m_SkillList.GetSkillIdxLevel(nSkillIndex);
-	
-	
-	if (m_nSkillPoint >= pAdd->m_nAddPoint && nSkillIndex )//&& nSkillLevel + pAdd->m_nAddPoint <= MAX_SKILLLEVEL
-	{
-		ISkill * pSkill = NULL;
-		if (nSkillLevel == 0)
-		{
-			pSkill =  g_SkillManager.GetSkill(pAdd->m_nSkillID, 1);
-		}
-		else
-		{
-			pSkill =  g_SkillManager.GetSkill(pAdd->m_nSkillID, nSkillLevel);
-		}
-		
-		if (pSkill)
-		{
-			//有对应的技能升级脚本,优先执行脚本
-			if (pSkill->GetSkillLevelUpScriptId())
-			{
-				ExecuteScript(pSkill->GetSkillLevelUpScriptId(), "main", pAdd->m_nAddPoint);
-				nSkillLevel = Npc[m_nIndex].m_SkillList.GetSkillIdxLevel(nSkillIndex);
-			}
-			else
-			{
-			/*
-			技能升级的常规
-			1。所有能够加点的技能，最高只能加到20级。
-			2。假设一个玩家的等级是x,一个技能的基本学习等级是y，那么他能够学习这个技能的最高等级是x-y。
-			3。使用技能需要加入一些情况的判断，第一，是否是骑马状态；第二，他装备的武器的详细类别是否为指定数值，-1表示没有需求。
-				*/
-				switch(pSkill->GetSkillStyle())
-				{
-				case SKILL_SS_Missles:			//	子弹类		本技能用于发送子弹类
-				case SKILL_SS_Melee:
-				case SKILL_SS_InitiativeNpcState:	//	主动类		本技能用于改变当前Npc的主动状态
-				case SKILL_SS_PassivityNpcState:		//	被动类		本技能用于改变Npc的被动状态
-					{
-						int nWantToBeLevel = nSkillLevel + pAdd->m_nAddPoint;
-						//Limit2
-						if (nWantToBeLevel <= g_SkillManager.GetSkillMaxLevel(pAdd->m_nSkillID) && nWantToBeLevel <= Npc[m_nIndex].m_Level - ((KSkill*)pSkill)->GetSkillReqLevel() + 1)
-						{
-							if ( !Npc[m_nIndex].m_SkillList.IncreaseLevel(nSkillIndex, pAdd->m_nAddPoint) )
-								return;
-							m_nSkillPoint -= pAdd->m_nAddPoint;
-							nSkillLevel += pAdd->m_nAddPoint;
-						}
-						else
-						{
-							if (nWantToBeLevel >=  g_SkillManager.GetSkillMaxLevel(pAdd->m_nSkillID))
-							{
-								char szMsg[100];
-								sprintf(szMsg, "您的%s技能等级已经达到极限，不能再升级了。", pSkill->GetSkillName());
-								KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能升级消息", (char *) szMsg, strlen(szMsg) );
-							}
-							else 
-							{
-								char szMsg[100];
-								sprintf(szMsg, "您的战斗技能必须达到%d级才能升级%s技能。", ((KSkill *)pSkill)->GetSkillReqLevel() -1 +  pAdd->m_nAddPoint + nSkillLevel,  ((KSkill*)pSkill)->GetSkillName());
-								KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能升级消息", (char *) szMsg, strlen(szMsg) );
-							}
-							
-						}
-					}
-					break;
-					
-				case SKILL_SS_Thief:
-					{
-						return;
-					}break;
-					
-				}
-				
-			}
-			
-			// 把当前此技能的点数和剩余技能点发给客户端
-			PLAYER_SKILL_LEVEL_SYNC	sSkill;
-			sSkill.ProtocolType = s2c_playerskilllevel;
-			sSkill.m_nSkillID = pAdd->m_nSkillID;
-			sSkill.m_nSkillLevel = nSkillLevel;
-			sSkill.m_nLeavePoint = m_nSkillPoint;
-			g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSkill, sizeof(PLAYER_SKILL_LEVEL_SYNC));
-		}
-	}
-	
-	
+	// 当前客户端技能依靠技能书和熟练度升级，不能使用旧版加点协议绕过条件。
+	char szMessage[] = "请使用对应技能书学习技能，通过打怪提高熟练度。";
+	KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szMessage, strlen(szMessage));
 }
 #endif
 
@@ -3783,7 +3701,19 @@ void	KPlayer::EatItem(BYTE* pProtocol)
 		return;
 	int nRoom = pEat->Place == pos_equiproom ? room_equipment : room_immediacy;
 	int nItem = m_ItemList.m_Room[nRoom].FindItem(pEat->X, pEat->Y);
-	if (nItem <= 0 || nItem >= MAX_ITEM || Item[nItem].GetGenre() != item_medicine)
+	if (nItem <= 0 || nItem >= MAX_ITEM)
+		return;
+	if (Item[nItem].GetGenre() == item_skillbook)
+	{
+		UseSkillBook(nItem);
+		return;
+	}
+	if (Item[nItem].GetGenre() == item_magicorscript)
+	{
+		UseSkillBuffItem(nItem);
+		return;
+	}
+	if (Item[nItem].GetGenre() != item_medicine)
 		return;
 	// item_id是客户端使用函数的原始标识，不作为服务器数组下标。
 	if (m_ItemList.EatMecidine(pEat->Place, pEat->X, pEat->Y))
@@ -6535,3 +6465,232 @@ int KPlayer::GetExtPointChanged()
 //         服务器处理完后原样发回来；
 
 // 交易的处理还没有
+
+#ifdef _SERVER
+BOOL KPlayer::UseSkillBook(int nItem)
+{
+	if (nItem <= 0 || nItem >= MAX_ITEM || Item[nItem].GetGenre() != item_skillbook)
+		return FALSE;
+	KItem& Book = Item[nItem];
+	int nSkill = Book.GetParticular();
+	KSkillList& List = Npc[m_nIndex].m_SkillList;
+	int nIndex = List.FindSame(nSkill);
+	const PLAYER_SKILL_RULE* pRule = g_SkillManager.GetPlayerRule(nSkill);
+	char szMessage[256];
+	if (!nIndex || !pRule || !List.CanLearnPlayerSkill(nSkill))
+	{
+		sprintf(szMessage, "当前职业、人物等级或前置技能不满足学习条件。");
+		KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szMessage, strlen(szMessage));
+		return FALSE;
+	}
+	int nBooks = 1;
+	BOOL bAdvanced = List.IsPlayerSkillLearned(nSkill);
+	if (bAdvanced)
+	{
+		int nLevel = List.GetLevel(nSkill);
+		if (nLevel < 10 || nLevel >= 13 || nLevel >= pRule->MaxLevel)
+		{
+			sprintf(szMessage, "该技能已学会；1至10级通过打怪修炼，13级后通过装备或限时道具提升。");
+			KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szMessage, strlen(szMessage));
+			return FALSE;
+		}
+		nBooks = nLevel - 9;
+		if (m_ItemList.CountNormalItem(item_materials, 290, 0, 0) < 1)
+		{
+			sprintf(szMessage, "提升10级以后的技能需要神兽之羽和对应技能书。");
+			KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szMessage, strlen(szMessage));
+			return FALSE;
+		}
+	}
+	int nDetail = Book.GetDetailType();
+	int nItemLevel = Book.GetLevel();
+	if (m_ItemList.CountNormalItem(item_skillbook, nDetail, nSkill, nItemLevel, TRUE) < nBooks)
+	{
+		sprintf(szMessage, "本次升级需要%d本对应技能书。", nBooks);
+		KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szMessage, strlen(szMessage));
+		return FALSE;
+	}
+	// 主线程内先完整校验所有材料，再扣除并更新技能，不把消耗留到客户端确认。
+	if (!m_ItemList.ConsumeNormalItem(item_skillbook, nDetail, nSkill, nItemLevel, nBooks, TRUE))
+		return FALSE;
+	if (bAdvanced && !m_ItemList.ConsumeNormalItem(item_materials, 290, 0, 0, 1))
+		return FALSE;
+	if (!List.LearnPlayerSkill(nSkill))
+		return FALSE;
+	KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(nSkill, List.GetCurrentLevel(nSkill));
+	sprintf(szMessage, "%s已提升至%d级。", pSkill ? pSkill->GetSkillName() : "技能", List.GetLevel(nSkill));
+	KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szMessage, strlen(szMessage));
+	SendCurNormalSyncData();
+	return TRUE;
+}
+
+BOOL KPlayer::UseSkillBuffItem(int nItem)
+{
+	if (nItem <= 0 || nItem >= MAX_ITEM || Item[nItem].GetGenre() != item_magicorscript)
+		return FALSE;
+	BOOL bOwned = FALSE;
+	for (PlayerItem* pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
+	{
+		if (pItem->nIdx == nItem &&
+			(pItem->nPlace == pos_equiproom || pItem->nPlace == pos_immediacy))
+		{
+			bOwned = TRUE;
+			break;
+		}
+	}
+	if (!bOwned)
+		return FALSE;
+	KItem& Data = Item[nItem];
+	if (Data.GetDetailType() != 1 || Data.GetLevel() != 1)
+		return FALSE;
+	int nParticular = Data.GetParticular();
+	if (nParticular == 1139)
+	{
+		// 八景太极丹为一次性增加非被动技能经验；原脚本尚缺，不能猜测数值扣物品。
+		char szText[] = "该物品暂未开放使用。";
+		KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szText, strlen(szText));
+		return FALSE;
+	}
+	int nSeconds = 0;
+	DWORD dwBuff = 0;
+	int nValue = 1;
+	BOOL bAddTime = FALSE;
+	int nRequiredSeries = -1;
+	// 原magicscript.txt和龙魂丹/五行丹/翼神丹原脚本；丹的等级效果为限时+1。
+	if (nParticular >= 482 && nParticular <= 484)
+	{
+		nRequiredSeries = nParticular - 482;
+		nSeconds = 300;
+		dwBuff = 23;
+	}
+	else if (nParticular >= 485 && nParticular <= 487)
+	{
+		nRequiredSeries = nParticular - 485;
+		nSeconds = 1200;
+		dwBuff = 23;
+	}
+	else if (nParticular >= 568 && nParticular <= 570)
+	{
+		nRequiredSeries = nParticular - 568;
+		nSeconds = 3600;
+		dwBuff = 23;
+	}
+	else if (nParticular == 987 || nParticular == 612 || nParticular == 625)
+	{
+		// 青鸾之灵和技能秘籍共用第二个技能增益，只累加剩余时间。
+		nSeconds = nParticular == 987 ? 900 : 1800;
+		dwBuff = 7;
+		bAddTime = TRUE;
+	}
+	else if (nParticular == 508 || nParticular == 512 || nParticular == 1091)
+	{
+		dwBuff = 107;
+		nValue = 2;
+		nSeconds = 3600;
+		bAddTime = TRUE;
+	}
+	else if (nParticular == 942 || nParticular == 943 || nParticular == 1092)
+	{
+		dwBuff = 271;
+		nValue = 5;
+		nSeconds = 3600;
+		bAddTime = TRUE;
+	}
+	else if (nParticular == 944 || nParticular == 945 || nParticular == 1093)
+	{
+		dwBuff = 272;
+		nValue = 3;
+		nSeconds = 3600;
+		bAddTime = TRUE;
+	}
+	else
+		return FALSE;
+	if (nRequiredSeries >= 0 && Npc[m_nIndex].m_Series != nRequiredSeries)
+	{
+		char szText[] = "你不适合使用该物品。";
+		KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szText, strlen(szText));
+		return FALSE;
+	}
+	KSkillList& List = Npc[m_nIndex].m_SkillList;
+	const PLAYER_SKILL_BUFF_RULE* pBuffRule = g_SkillManager.GetPlayerBuffRule(dwBuff);
+	if (pBuffRule)
+	{
+		nSeconds = pBuffRule->Duration;
+		nValue = pBuffRule->Multiplier;
+	}
+	// 临仙露三种倍率互斥，不把同时存在的倍率相乘。
+	if (dwBuff >= 100)
+	{
+		DWORD DewIds[] = {107, 271, 272};
+		for (int i = 0; i < 3; i++)
+		{
+			if (dwBuff != DewIds[i] && List.GetPlayerSkillBuffTime(DewIds[i]))
+			{
+				char szText[] = "已有其他临仙露效果，请等待效果结束后使用。";
+				KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szText, strlen(szText));
+				return FALSE;
+			}
+		}
+	}
+
+	const KBASICPROP_NORMALITEM* pTemplate = ItemGen.GetNormalItemTemplate(Data.GetGenre(),
+		Data.GetDetailType(), nParticular, Data.GetLevel(), Data.m_GeneratorParam.nVersion);
+	if (pTemplate && pTemplate->m_szScript[0] && !g_GetScript(pTemplate->m_szScript))
+		ReLoadScript(pTemplate->m_szScript);
+	if (pTemplate && pTemplate->m_szScript[0] && g_GetScript(pTemplate->m_szScript))
+	{
+		DWORD dwScript = g_FileName2Id((char*)pTemplate->m_szScript);
+		if (!CheckNpcScriptFunction(dwScript, "main"))
+			return FALSE;
+		PLAYER_SKILL_BUFF PreviousBuffs[16];
+		memcpy(PreviousBuffs, List.m_SkillBuffs, sizeof(PreviousBuffs));
+		int nVersion = Data.m_GeneratorParam.nVersion;
+		int nDetail = Data.GetDetailType();
+		int nLevel = Data.GetLevel();
+		if (pTemplate->m_bConsumeOnUse && !m_ItemList.ConsumeItem(nItem, 1))
+			return FALSE;
+		// 原临仙露的main仅弹确认框，由yes回调按原脚本扣除物品。
+		int nPreviousNpc = m_nPeapleIdx;
+		m_nPeapleIdx = 0;
+		BOOL bExecuted = ExecuteScript(dwScript, "main", 0);
+		m_nPeapleIdx = nPreviousNpc;
+		if (bExecuted)
+			return TRUE;
+		memcpy(List.m_SkillBuffs, PreviousBuffs, sizeof(PreviousBuffs));
+		List.RefreshPlayerSkillLevels();
+		List.SyncPlayerSkillBuffs();
+		if (pTemplate->m_bConsumeOnUse)
+		{
+			int nRefund = ItemSet.Add(item_magicorscript, 0, nLevel, 0, nDetail, nParticular, NULL, nVersion);
+			if (nRefund > 0 && !m_ItemList.AddPickupItem(nRefund, -1, -1))
+				ItemSet.Remove(nRefund);
+			g_DebugLog("[SkillItem] Script failed, item restored: player=%d item=%d script=%lu",
+				m_nPlayerIndex, nParticular, dwScript);
+		}
+		return FALSE;
+	}
+
+	PLAYER_SKILL_BUFF PreviousBuffs[16];
+	memcpy(PreviousBuffs, List.m_SkillBuffs, sizeof(PreviousBuffs));
+	if (dwBuff == 23)
+		List.RemovePlayerSkillBuff(8);
+	if (!List.AddPlayerSkillBuff(dwBuff, nSeconds, 0, nValue, bAddTime))
+	{
+		memcpy(List.m_SkillBuffs, PreviousBuffs, sizeof(PreviousBuffs));
+		List.RefreshPlayerSkillLevels();
+		List.SyncPlayerSkillBuffs();
+		return FALSE;
+	}
+	if (!m_ItemList.ConsumeItem(nItem, 1))
+	{
+		memcpy(List.m_SkillBuffs, PreviousBuffs, sizeof(PreviousBuffs));
+		List.RefreshPlayerSkillLevels();
+		List.SyncPlayerSkillBuffs();
+		return FALSE;
+	}
+	char szText[256];
+	sprintf(szText, "技能增益已生效，剩余%d秒。", List.GetPlayerSkillBuffTime(dwBuff));
+	KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szText, strlen(szText));
+	return TRUE;
+}
+#endif

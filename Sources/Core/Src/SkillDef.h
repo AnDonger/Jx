@@ -192,6 +192,7 @@ typedef struct
 	int nWaitTime;
 	int nTargetId;
 	DWORD dwTargetNpcID;
+	int nExpSkillId;
 }
 TOrdinSkillParam, * LPOrdinSkillParam;
 

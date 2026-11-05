@@ -184,7 +184,8 @@ private:
 	void				Vanish(KMissle *) const;
 	void				FlyEvent(KMissle *)  const ;
 	void				Collidsion(KMissle *) const ;
-	BOOL				CastMissles(int nLauncher,	int nParam1, int nParam2, int nWaitTime = 0 , eSkillLauncherType eLauncherType = SKILL_SLT_Npc) const ;
+	BOOL				CastWithSkillExp(int nLauncher, int nParam1, int nParam2, int nWaitTime, eSkillLauncherType eLauncherType, int nExpSkillId) const;
+	BOOL				CastMissles(int nLauncher,	int nParam1, int nParam2, int nWaitTime = 0 , eSkillLauncherType eLauncherType = SKILL_SLT_Npc, int nExpSkillId = 0) const ;
 	BOOL				CastInitiativeSkill(int nLauncher, int nParam1, int nParam2, int nWaitTime) const ;
 	BOOL				CastPassivitySkill(int nLauncher, int nParam1, int nParam2, int nWaitTime) const ;
 	

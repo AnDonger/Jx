@@ -69,6 +69,7 @@ public:
 	int					m_nLifeTime;			//	生命周期
 	int					m_nSpeed;				//	飞行速度
 	int					m_nSkillId;				//	对应哪个技能
+	int					m_nExpSkillId;			// 发起本次施法的主技能，子技能命中仍计入主技能修炼。
 	BOOL				m_bRangeDamage;			//	是否为区域伤害，即是否多人受到伤害
 	int					m_eRelation;			//	目标与发射者的关系
 	BOOL				m_bAutoExplode;			//  Is Missle Would AutoExpode ItSelf For Collision When It's LiftTime Is Over;

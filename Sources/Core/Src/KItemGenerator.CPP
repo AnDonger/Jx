@@ -817,6 +817,13 @@ BOOL KItemGenerator::Gen_Material(IN int nDetailType,
 	return TRUE;
 }
 
+const KBASICPROP_NORMALITEM* KItemGenerator::GetNormalItemTemplate(int nGenre, int nDetail,
+	int nParticular, int nLevel, int nVersion)
+{
+	KLibOfBPT* pLibrary = GetVersionLibrary(nVersion);
+	return pLibrary ? pLibrary->FindNormalItem(nGenre, nDetail, nParticular, nLevel) : NULL;
+}
+
 BOOL KItemGenerator::Gen_NormalItem(IN int nGenre,
 									 IN int nDetailType,
 									 IN int nParticularType,

@@ -4719,10 +4719,18 @@ void KNpc::GetNpcCopyFromTemplate(int nNpcTemplateId, int nLevel)
 		KLuaScript * pLevelScript = NULL;		
 
 #ifdef _SERVER
-			pLevelScript = (KLuaScript*)g_GetScript(
-			g_pNpcTemplate[nNpcTemplateId][0]->m_dwLevelSettingScript
-			);
-		
+		pLevelScript = (KLuaScript*)g_GetScript(
+			g_pNpcTemplate[nNpcTemplateId][0]->m_dwLevelSettingScript);
+		if (!pLevelScript && g_pNpcTemplate[nNpcTemplateId][0]->m_dwLevelSettingScript)
+		{
+			// Resources中的原模板脚本按需加载，与技能和NPC对话脚本使用同一缓存。
+			char szLevelScript[MAX_PATH];
+			g_NpcSetting.GetString(nNpcTemplateId + 2, "LevelScript", "",
+				szLevelScript, sizeof(szLevelScript));
+			if (szLevelScript[0] && ReLoadScript(szLevelScript))
+				pLevelScript = (KLuaScript*)g_GetScript(szLevelScript);
+		}
+
 		if (pLevelScript == NULL)
 			pLevelScript = g_pNpcLevelScript;
 #else

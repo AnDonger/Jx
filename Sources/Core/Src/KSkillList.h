@@ -15,7 +15,17 @@ typedef struct tagNpcSkill
 	DWORD	NextCastTime;		//下次可发送时的最小时间
 	int		CurrentSkillLevel;
 	BYTE	SkillStatus;
+	DWORD	TotalExp;
 } NPCSKILL, *LPNPCSKILL;
+// 技能增益使用独立到期时间，不改写永久等级。
+struct PLAYER_SKILL_BUFF
+{
+	DWORD BuffId;
+	DWORD EndTime;
+	int SkillId;
+	int Value;
+};
+
 struct TDBPlayerData;
 #ifndef TOOLVERSION
 class KSkillList
@@ -27,6 +37,7 @@ public:
 	int			m_nTrapNpcID[5];
 	NPCSKILL	m_Skills[MAX_NPCSKILL];//下标从1开始，0为无效index
 	int			m_nNpcIndex;
+	PLAYER_SKILL_BUFF m_SkillBuffs[16];
 public:
 	KSkillList();
 	~KSkillList();
@@ -85,7 +96,11 @@ public:
 		return 0;
 	}
 
-	void		Clear(){memset(m_Skills, 0, sizeof(m_Skills));};
+	void		Clear()
+	{
+		memset(m_Skills, 0, sizeof(m_Skills));
+		memset(m_SkillBuffs, 0, sizeof(m_SkillBuffs));
+	};
 #ifndef _SERVER
 	void		SetSkillLevel(int nId, int nLevel);
 	BOOL		SetLevel(int nIndex, int nLevel);		// 把某个编号技能设为某一级
@@ -119,6 +134,19 @@ public:
 #ifdef _SERVER
 	int		UpdateDBSkillList(BYTE *);
 	int		LoadPlayerSkill(int nSkillID, int nLevel);
+	BOOL	IsPlayerSkillLearned(int nSkillID);
+	BOOL	CanLearnPlayerSkill(int nSkillID);
+	BOOL	LearnPlayerSkill(int nSkillID);
+	BOOL	IncreasePlayerSkillExp(int nSkillID, DWORD dwExp);
+	void	AddMonsterSkillExp(int nExp);
+	void	SyncPlayerSkill(int nIndex);
+	void	RefreshPlayerSkillLevels();
+	BOOL	AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, int nValue, BOOL bAddTime);
+	BOOL	RemovePlayerSkillBuff(DWORD dwBuffId);
+	int		GetPlayerSkillBuffTime(DWORD dwBuffId);
+	void	ExpirePlayerSkillBuffs();
+	void	SyncPlayerSkillBuffs(BOOL bInitial = FALSE);
+	int		GetSkillExpMultiplier();
 	void			ApplyPlayerPassiveSkills();
 	BOOL	LoadPlayerInitialSkills(int nSeries);
 	void	SetNpcSkill(int nSkillNo, int nSkillId, int nSkillLevel);//sometime , npc's AI SkillList may have same skills.IT ONLY BE USED FOR NPC(NO PLAYER)

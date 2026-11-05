@@ -251,6 +251,8 @@ public:
 	void			ExecuteObjectScript(int nObjIndex);
 	BOOL			OpenStoreBox(int nBox);
 	BOOL			CanUseStoreBox();
+	BOOL			UseSkillBook(int nItem);
+	BOOL			UseSkillBuffItem(int nItem);
 	void			CloseStoreBox();
 #endif
 	void			SetFirstDamage();

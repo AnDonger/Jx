@@ -1223,6 +1223,8 @@ BOOL KBPT_NormalItem::LoadRecord(int i, KTabFile* pTF)
 	pTF->GetInteger(nRow, "五行属性", 0, &pBuf->m_nSeries);
 	// 原技能书表没有等级列；商店和存档均以等级1引用。
 	pTF->GetInteger(nRow, "等级", 1, &pBuf->m_nLevel);
+	pTF->GetString(nRow, "脚本名(参数1)", "", pBuf->m_szScript, sizeof(pBuf->m_szScript));
+	pTF->GetInteger(nRow, "使用后是否消失", 0, &pBuf->m_bConsumeOnUse);
 	pBuf->m_bValid = bRead && pBuf->m_szName[0] && pBuf->m_nItemGenre == m_nGenre &&
 		pBuf->m_nDetailType >= 0 && pBuf->m_nParticularType >= 0 &&
 		pBuf->m_nLevel >= 0 && pBuf->m_nWidth > 0 && pBuf->m_nHeight > 0 &&

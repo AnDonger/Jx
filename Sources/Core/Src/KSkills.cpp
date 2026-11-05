@@ -186,24 +186,8 @@ relationisvalid:
 #else
 			int nPlayerIdx		= CLIENT_PLAYER_INDEX;
 #endif
-			int nDetailType		= Player[nPlayerIdx].m_ItemList.GetWeaponType();
-			int nParticularType = Player[nPlayerIdx].m_ItemList.GetWeaponParticular();
-			
-			//近身武器
-			if (nDetailType == 0)
-			{
-				
-			}//远程武器
-			else if (nDetailType == 1)
-			{
-				nParticularType += MAX_MELEEWEAPON_PARTICULARTYPE_NUM;
-			}//空手
-			else if (nDetailType == -1)
-			{
-				nParticularType = -1;
-			}
-			
-			if (nParticularType != m_nEquiptLimited)
+			int nWeaponType = Player[nPlayerIdx].m_ItemList.GetWeaponSkillType();
+			if (nWeaponType != m_nEquiptLimited)
 				return FALSE;
 		}
 		
@@ -299,6 +283,12 @@ relationisvalid:
 *****************************************************************************/
 BOOL	KSkill::Cast(int nLauncher, int nParam1, int nParam2, int nWaitTime, eSkillLauncherType eLauncherType)  const 
 {
+	return CastWithSkillExp(nLauncher, nParam1, nParam2, nWaitTime, eLauncherType, m_nId);
+}
+
+BOOL KSkill::CastWithSkillExp(int nLauncher, int nParam1, int nParam2, int nWaitTime,
+	eSkillLauncherType eLauncherType, int nExpSkillId) const
+{
 	//-----------------接口函数入口点，检测参数合法性-------------------------------
 	
 	if (nLauncher < 0 )
@@ -379,7 +369,7 @@ BOOL	KSkill::Cast(int nLauncher, int nParam1, int nParam2, int nWaitTime, eSkill
 	case	SKILL_SS_Attack:
 	case	SKILL_SS_Missles:				//发子弹
 		{
-			CastMissles(nLauncher, nParam1, nParam2, nWaitTime, eLauncherType);
+			CastMissles(nLauncher, nParam1, nParam2, nWaitTime, eLauncherType, nExpSkillId);
 		}
 		break;
 		
@@ -462,7 +452,7 @@ BOOL	KSkill::Cast(int nLauncher, int nParam1, int nParam2, int nWaitTime, eSkill
 		if (!pOrdinSkill) 
             return FALSE;
 		
-        pOrdinSkill->Cast(nLauncher, nParam1, nParam2, nWaitTime, eLauncherType);
+        pOrdinSkill->CastWithSkillExp(nLauncher, nParam1, nParam2, nWaitTime, eLauncherType, nExpSkillId);
 	}
 	
 	return TRUE;	  
@@ -563,14 +553,14 @@ BOOL KSkill::OnMissleEvent(unsigned short usEvent, KMissle * pMissle)  const
 	{
 		if (pOrdinSkill->GetSkillStyle() == SKILL_SS_Missles)
 		{
-			bRetCode = pOrdinSkill->CastMissles(pMissle->m_nMissleId, nDesPX, nDesPY, 0, SKILL_SLT_Missle);
+			bRetCode = pOrdinSkill->CastMissles(pMissle->m_nMissleId, nDesPX, nDesPY, 0, SKILL_SLT_Missle, pMissle->m_nExpSkillId);
 		}
 	}
 	else
 	{
 		if (pOrdinSkill->GetSkillStyle() == SKILL_SS_Missles)
 		{   
-            bRetCode = pOrdinSkill->CastMissles(nLauncherIdx, nDesPX, nDesPY, 0, SKILL_SLT_Npc);
+            bRetCode = pOrdinSkill->CastMissles(nLauncherIdx, nDesPX, nDesPY, 0, SKILL_SLT_Npc, pMissle->m_nExpSkillId);
 		}
 	}
 	
@@ -615,7 +605,7 @@ void	KSkill::Collidsion(KMissle * pMissle)  const
 // Comments		:
 // Author		: RomanDou
 *****************************************************************************/
-BOOL	KSkill::CastMissles(int nLauncher, int nParam1, int nParam2, int nWaitTime  , eSkillLauncherType eLauncherType )  const 
+BOOL	KSkill::CastMissles(int nLauncher, int nParam1, int nParam2, int nWaitTime  , eSkillLauncherType eLauncherType, int nExpSkillId) const
 {
 	int nRegionId		=	0;
 	int	nDesMapX		=	0;//地图坐标
@@ -640,6 +630,7 @@ BOOL	KSkill::CastMissles(int nLauncher, int nParam1, int nParam2, int nWaitTime 
 	SkillParam.eParentType = (eSkillLauncherType)0;
 	SkillParam.nWaitTime = nWaitTime;
 	SkillParam.nTargetId = 0;
+	SkillParam.nExpSkillId = nExpSkillId > 0 ? nExpSkillId : m_nId;
 	if (nLauncher <= 0) return FALSE;
 	
 	switch(m_eMisslesForm)
@@ -1142,6 +1133,7 @@ int KSkill::CastZone(TOrdinSkillParam * pSkillParam , int nDir, int nRefPX, int 
 						Missle[nMissleIndex].m_nParentMissleIndex = 0;
 					
 					Missle[nMissleIndex].m_nSkillId			= m_nId;
+					Missle[nMissleIndex].m_nExpSkillId		= pSkillParam->nExpSkillId;
 					Missle[nMissleIndex].m_nStartLifeTime	= pSkillParam->nWaitTime + GetMissleGenerateTime(i * m_nChildSkillNum + j);
 					Missle[nMissleIndex].m_nLifeTime		+= Missle[nMissleIndex].m_nStartLifeTime;
 					Missle[nMissleIndex].m_nRefPX			= nDesSubX;
@@ -1164,9 +1156,9 @@ int KSkill::CastZone(TOrdinSkillParam * pSkillParam , int nDir, int nRefPX, int 
 				if (pOrdinSkill) 
 				{
 					if (!pSkillParam->nParent)
-						nCastMissleNum += pOrdinSkill->Cast(nLauncher, nBeginPX + j * SubWorld[Npc[nLauncher].m_SubWorldIndex].m_nCellWidth , nBeginPY +  i * SubWorld[Npc[nLauncher].m_SubWorldIndex].m_nCellHeight, pSkillParam->nWaitTime + GetMissleGenerateTime(i * m_nChildSkillNum + j ), eLauncherType);
+						nCastMissleNum += pOrdinSkill->CastWithSkillExp(nLauncher, nBeginPX + j * SubWorld[Npc[nLauncher].m_SubWorldIndex].m_nCellWidth , nBeginPY +  i * SubWorld[Npc[nLauncher].m_SubWorldIndex].m_nCellHeight, pSkillParam->nWaitTime + GetMissleGenerateTime(i * m_nChildSkillNum + j ), eLauncherType, pSkillParam->nExpSkillId);
 					else 
-						nCastMissleNum += pOrdinSkill->Cast(pSkillParam->nLauncher, nBeginPX + j * SubWorld[Npc[nLauncher].m_SubWorldIndex].m_nCellWidth , nBeginPY +  i * SubWorld[Npc[nLauncher].m_SubWorldIndex].m_nCellHeight, pSkillParam->nWaitTime + GetMissleGenerateTime(i * m_nChildSkillNum + j ), pSkillParam->eLauncherType);
+						nCastMissleNum += pOrdinSkill->CastWithSkillExp(pSkillParam->nLauncher, nBeginPX + j * SubWorld[Npc[nLauncher].m_SubWorldIndex].m_nCellWidth , nBeginPY +  i * SubWorld[Npc[nLauncher].m_SubWorldIndex].m_nCellHeight, pSkillParam->nWaitTime + GetMissleGenerateTime(i * m_nChildSkillNum + j ), pSkillParam->eLauncherType, pSkillParam->nExpSkillId);
 				}
 			}
 			
@@ -1250,6 +1242,7 @@ int		KSkill::CastLine(TOrdinSkillParam *pSkillParam, int nDir, int nRefPX, int n
 				Missle[nMissleIndex].m_nParentMissleIndex = 0;
 			
 			Missle[nMissleIndex].m_nSkillId			= m_nId;
+			Missle[nMissleIndex].m_nExpSkillId		= pSkillParam->nExpSkillId;
 			Missle[nMissleIndex].m_nStartLifeTime	= pSkillParam->nWaitTime + GetMissleGenerateTime(i);
 			Missle[nMissleIndex].m_nLifeTime		+= Missle[nMissleIndex].m_nStartLifeTime;	
 			Missle[nMissleIndex].m_nRefPX			= nDesSubX;
@@ -1273,9 +1266,9 @@ int		KSkill::CastLine(TOrdinSkillParam *pSkillParam, int nDir, int nRefPX, int n
 			if (pOrdinSkill) 
 			{
 				if (!pSkillParam->nParent)
-					nCastMissleNum += pOrdinSkill->Cast(nLauncher, nDesSubX, nDesSubY, pSkillParam->nWaitTime + GetMissleGenerateTime(i), eLauncherType);
+					nCastMissleNum += pOrdinSkill->CastWithSkillExp(nLauncher, nDesSubX, nDesSubY, pSkillParam->nWaitTime + GetMissleGenerateTime(i), eLauncherType, pSkillParam->nExpSkillId);
 				else
-					nCastMissleNum += pOrdinSkill->Cast(pSkillParam->nParent, nDesSubX, nDesSubY, pSkillParam->nWaitTime + GetMissleGenerateTime(i), pSkillParam->eParentType);
+					nCastMissleNum += pOrdinSkill->CastWithSkillExp(pSkillParam->nParent, nDesSubX, nDesSubY, pSkillParam->nWaitTime + GetMissleGenerateTime(i), pSkillParam->eParentType, pSkillParam->nExpSkillId);
 				
 			}
 		}
@@ -1352,6 +1345,7 @@ int		KSkill::CastExtractiveLineMissle(TOrdinSkillParam* pSkillParam,  int nDir,i
 				Missle[nMissleIndex].m_nParentMissleIndex = 0;
 			
 			Missle[nMissleIndex].m_nSkillId			= m_nId;
+			Missle[nMissleIndex].m_nExpSkillId		= pSkillParam->nExpSkillId;
 			Missle[nMissleIndex].m_nStartLifeTime	= pSkillParam->nWaitTime + GetMissleGenerateTime(0);
 			Missle[nMissleIndex].m_nLifeTime		+= Missle[nMissleIndex].m_nStartLifeTime;	
 			Missle[nMissleIndex].m_nRefPX			= nSrcX;
@@ -1388,9 +1382,9 @@ int		KSkill::CastExtractiveLineMissle(TOrdinSkillParam* pSkillParam,  int nDir,i
 			if (pOrdinSkill) 
 			{
 				if (!pSkillParam->nParent)
-					nCastMissleNum += pOrdinSkill->Cast(nLauncher, nDesSubX, nDesSubY, pSkillParam->nWaitTime + GetMissleGenerateTime(0), pSkillParam->eLauncherType);
+					nCastMissleNum += pOrdinSkill->CastWithSkillExp(nLauncher, nDesSubX, nDesSubY, pSkillParam->nWaitTime + GetMissleGenerateTime(0), pSkillParam->eLauncherType, pSkillParam->nExpSkillId);
 				else
-					nCastMissleNum += pOrdinSkill->Cast(pSkillParam->nParent, nDesSubX, nDesSubY, pSkillParam->nWaitTime + GetMissleGenerateTime(0), pSkillParam->eParentType);
+					nCastMissleNum += pOrdinSkill->CastWithSkillExp(pSkillParam->nParent, nDesSubX, nDesSubY, pSkillParam->nWaitTime + GetMissleGenerateTime(0), pSkillParam->eParentType, pSkillParam->nExpSkillId);
 				
 			}
 		}
@@ -1505,6 +1499,7 @@ int KSkill::CastWall(TOrdinSkillParam * pSkillParam,  int nDir , int nRefPX , in
 			
 			
 			Missle[nMissleIndex].m_nSkillId			= m_nId;
+			Missle[nMissleIndex].m_nExpSkillId		= pSkillParam->nExpSkillId;
 			Missle[nMissleIndex].m_nStartLifeTime	= pSkillParam->nWaitTime + GetMissleGenerateTime(i);
 			Missle[nMissleIndex].m_nLifeTime		+= Missle[nMissleIndex].m_nStartLifeTime;
 			Missle[nMissleIndex].m_nRefPX			= nDesSubX;
@@ -1529,9 +1524,9 @@ int KSkill::CastWall(TOrdinSkillParam * pSkillParam,  int nDir , int nRefPX , in
 			if (pOrdinSkill) 
 			{
 				if (!pSkillParam->nParent)
-					nCastMissleNum += pOrdinSkill->Cast(nLauncher, nDesSubX, nDesSubY, pSkillParam->nWaitTime + GetMissleGenerateTime(i), eLauncherType);
+					nCastMissleNum += pOrdinSkill->CastWithSkillExp(nLauncher, nDesSubX, nDesSubY, pSkillParam->nWaitTime + GetMissleGenerateTime(i), eLauncherType, pSkillParam->nExpSkillId);
 				else
-					nCastMissleNum += pOrdinSkill->Cast(pSkillParam->nParent, nDesSubX, nDesSubY, pSkillParam->nWaitTime +  GetMissleGenerateTime(i), pSkillParam->eParentType);
+					nCastMissleNum += pOrdinSkill->CastWithSkillExp(pSkillParam->nParent, nDesSubX, nDesSubY, pSkillParam->nWaitTime +  GetMissleGenerateTime(i), pSkillParam->eParentType, pSkillParam->nExpSkillId);
 			}
 		}
 		
@@ -1633,6 +1628,7 @@ int		KSkill::CastCircle(TOrdinSkillParam * pSkillParam, int nDir, int nRefPX, in
 			
 			
 			Missle[nMissleIndex].m_nSkillId			= m_nId;
+			Missle[nMissleIndex].m_nExpSkillId		= pSkillParam->nExpSkillId;
 			Missle[nMissleIndex].m_nStartLifeTime	= pSkillParam->nWaitTime + GetMissleGenerateTime(i);
 			Missle[nMissleIndex].m_nLifeTime		+= Missle[nMissleIndex].m_nStartLifeTime;
 			Missle[nMissleIndex].m_nRefPX			= nDesSubPX;
@@ -1659,9 +1655,9 @@ int		KSkill::CastCircle(TOrdinSkillParam * pSkillParam, int nDir, int nRefPX, in
 			if (pOrdinSkill) 
 			{
 				if (!pSkillParam->nParent)
-					nCastMissleNum += pOrdinSkill->Cast(nLauncher, nDesSubPX, nDesSubPY, pSkillParam->nWaitTime + GetMissleGenerateTime(i), eLauncherType);
+					nCastMissleNum += pOrdinSkill->CastWithSkillExp(nLauncher, nDesSubPX, nDesSubPY, pSkillParam->nWaitTime + GetMissleGenerateTime(i), eLauncherType, pSkillParam->nExpSkillId);
 				else
-					nCastMissleNum += pOrdinSkill->Cast(pSkillParam->nParent, nDesSubPX, nDesSubPY, pSkillParam->nWaitTime + GetMissleGenerateTime(i), pSkillParam->eParentType);
+					nCastMissleNum += pOrdinSkill->CastWithSkillExp(pSkillParam->nParent, nDesSubPX, nDesSubPY, pSkillParam->nWaitTime + GetMissleGenerateTime(i), pSkillParam->eParentType, pSkillParam->nExpSkillId);
 			}
 		}
 		
@@ -1807,6 +1803,7 @@ int		KSkill::CastSpread(TOrdinSkillParam * pSkillParam, int nDir, int nRefPX, in
 				Missle[nMissleIndex].m_nParentMissleIndex = 0;
 			
 			Missle[nMissleIndex].m_nSkillId			= m_nId;
+			Missle[nMissleIndex].m_nExpSkillId		= pSkillParam->nExpSkillId;
 			Missle[nMissleIndex].m_nStartLifeTime	= pSkillParam->nWaitTime + GetMissleGenerateTime(i);
 			Missle[nMissleIndex].m_nLifeTime		+= Missle[nMissleIndex].m_nStartLifeTime;
 			Missle[nMissleIndex].m_nXFactor			= nCosAB;
@@ -1826,9 +1823,9 @@ int		KSkill::CastSpread(TOrdinSkillParam * pSkillParam, int nDir, int nRefPX, in
 			if (pOrdinSkill) 
 			{
 				if (!pSkillParam->nParent)
-					nCastMissleNum +=  pOrdinSkill->Cast(nLauncher,  nRefPX, nRefPY , pSkillParam->nWaitTime + GetMissleGenerateTime(i), eLauncherType);
+					nCastMissleNum +=  pOrdinSkill->CastWithSkillExp(nLauncher,  nRefPX, nRefPY , pSkillParam->nWaitTime + GetMissleGenerateTime(i), eLauncherType, pSkillParam->nExpSkillId);
 				else
-					nCastMissleNum +=  pOrdinSkill->Cast(pSkillParam->nParent,  nRefPX, nRefPY , pSkillParam->nWaitTime + GetMissleGenerateTime(i), pSkillParam->eParentType); 
+					nCastMissleNum +=  pOrdinSkill->CastWithSkillExp(pSkillParam->nParent,  nRefPX, nRefPY , pSkillParam->nWaitTime + GetMissleGenerateTime(i), pSkillParam->eParentType, pSkillParam->nExpSkillId);
 			}
 		}
 		
@@ -2124,6 +2121,12 @@ void		KSkill::LoadSkillLevelData(unsigned long  nLevel /* =0*/, int nParam)
 	}
 	
 	pScript = (KLuaScript*)g_GetScript(m_dwSkillLevelDataScriptId);
+	if (!pScript)
+	{
+		g_OrdinSkillsSetting.GetString(nRowId, "LvlSetScript", "", szSettingScriptName, MAX_PATH);
+		if (szSettingScriptName[0] && ReLoadScript(szSettingScriptName))
+			pScript = (KLuaScript*)g_GetScript(m_dwSkillLevelDataScriptId);
+	}
 	
 	if (!pScript)
 	{

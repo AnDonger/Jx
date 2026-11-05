@@ -8,6 +8,32 @@
 #include "KSkills.h"
 typedef eSKillStyle eSkillStyle ;
 
+// skills.ini 保存累计熟练度门槛及学习条件。
+struct PLAYER_SKILL_RULE
+{
+	BOOL Loaded;
+	BOOL BaseSkill;
+	BOOL NewBirthSkill;
+	BOOL UseSkillParent;
+	int PlayerLevel;
+	int MaxLevel;
+	DWORD LevelExp[MAX_SKILLLEVEL];
+	int ParentCount;
+	int ParentId[16];
+	int ParentLevel[16];
+	int ActiveCount;
+	int ActiveLevel[MAX_SKILLLEVEL];
+};
+
+struct PLAYER_SKILL_BUFF_RULE
+{
+	int BuffId;
+	int Duration;
+	int MaxDuration;
+	int Multiplier;
+	BOOL OfflineTime;
+};
+
 class KSkillManager
 {
     friend class KSkill;
@@ -23,6 +49,10 @@ class KSkillManager
 private:
 	
 	TSkillInfo m_SkillInfo[MAX_SKILL];
+	PLAYER_SKILL_RULE m_PlayerRules[MAX_SKILL];
+	PLAYER_SKILL_BUFF_RULE m_PlayerBuffRules[3];
+	int m_nHitSkillExpRate;
+	int m_nSupportSkillExpRate;
 	//TOrdinSkillCommonData * m_pOrdinSkillCommonData[MAX_SKILL];
 	ISkill*			m_pOrdinSkill[MAX_SKILL][MAX_SKILLLEVEL];// 
 	
@@ -36,6 +66,18 @@ public:
 	~KSkillManager();
 
 	BOOL Init();
+	const PLAYER_SKILL_RULE* GetPlayerRule(int nSkill) const;
+	BOOL LoadPlayerRules();
+	BOOL LoadPlayerBuffRules();
+	const PLAYER_SKILL_BUFF_RULE* GetPlayerBuffRule(int nBuffId) const;
+	int GetHitSkillExpRate() const
+	{
+		return m_nHitSkillExpRate;
+	};
+	int GetSupportSkillExpRate() const
+	{
+		return m_nSupportSkillExpRate;
+	};
 	ISkill *GetSkill(int nSkill, int nSkillLevel);
 	ISkill *GetSkill(int nSkillID, int nSkillLevel, eSkillStyle eStyle);
 	unsigned long	GetSkillMaxLevel(int nSkill)

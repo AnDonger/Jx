@@ -2492,6 +2492,22 @@ int KItemList::GetWeaponParticular()
 	return -1;
 }
 
+int KItemList::GetWeaponSkillType()
+{
+	int nItem = m_EquipItem[itempart_weapon];
+	if (nItem <= 0)
+		return 8;
+	// 当前客户端从原始需求属性44取得武器类别；详细类别是物品标识，不能用于施法限制。
+	// 无此属性的装备类别为9，无武器为8，与客户端默认值保持一致。
+	const KItem& Weapon = Item[nItem];
+	for (int i = 0; i < sizeof(Weapon.m_aryRequireAttrib) / sizeof(Weapon.m_aryRequireAttrib[0]); i++)
+	{
+		if (Weapon.m_aryRequireAttrib[i].nAttribType == magic_item_reserve1)
+			return Weapon.m_aryRequireAttrib[i].nValue[0];
+	}
+	return 9;
+}
+
 #ifdef _SERVER
 BOOL KItemList::IsTaskItemExist(int nDetailType)
 {
@@ -3050,5 +3066,78 @@ void KItemList::Abrade(int nType)
 			}
 		}
 	}
+}
+#endif
+
+#ifdef _SERVER
+int KItemList::CountNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, BOOL bQuick)
+{
+	int nCount = 0;
+	for (PlayerItem* p = GetFirstItem(); p; p = GetNextItem())
+	{
+		if (p->nPlace != pos_equiproom && (!bQuick || p->nPlace != pos_immediacy))
+			continue;
+		KItem& Data = Item[p->nIdx];
+		if (Data.GetGenre() == nGenre && Data.GetDetailType() == nDetail &&
+			Data.GetParticular() == nParticular && Data.GetLevel() == nLevel)
+			nCount += Data.GetStackCount();
+	}
+	return nCount;
+}
+
+BOOL KItemList::ConsumeItem(int nIdx, int nCount)
+{
+	if (nIdx <= 0 || nIdx >= MAX_ITEM || nCount <= 0)
+		return FALSE;
+	BOOL bOwned = FALSE;
+	for (PlayerItem* p = GetFirstItem(); p; p = GetNextItem())
+	{
+		if (p->nIdx == nIdx && (p->nPlace == pos_equiproom || p->nPlace == pos_immediacy))
+		{
+			bOwned = TRUE;
+			break;
+		}
+	}
+	if (!bOwned || Item[nIdx].GetStackCount() < nCount)
+		return FALSE;
+	int nLeft = Item[nIdx].GetStackCount() - nCount;
+	if (nLeft > 0)
+	{
+		if (!Item[nIdx].SetStackCount(nLeft))
+			return FALSE;
+		SyncItemCount(nIdx);
+		return TRUE;
+	}
+	if (!Remove(nIdx))
+		return FALSE;
+	ItemSet.Remove(nIdx);
+	return TRUE;
+}
+
+BOOL KItemList::ConsumeNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, int nCount, BOOL bQuick)
+{
+	if (nCount <= 0 || CountNormalItem(nGenre, nDetail, nParticular, nLevel, bQuick) < nCount)
+		return FALSE;
+	int Indices[MAX_PLAYER_ITEM];
+	int nItems = 0;
+	for (PlayerItem* p = GetFirstItem(); p; p = GetNextItem())
+	{
+		if (p->nPlace != pos_equiproom && (!bQuick || p->nPlace != pos_immediacy))
+			continue;
+		KItem& Data = Item[p->nIdx];
+		if (Data.GetGenre() == nGenre && Data.GetDetailType() == nDetail &&
+			Data.GetParticular() == nParticular && Data.GetLevel() == nLevel)
+			Indices[nItems++] = p->nIdx;
+	}
+	for (int i = 0; i < nItems && nCount > 0; i++)
+	{
+		int nTake = Item[Indices[i]].GetStackCount();
+		if (nTake > nCount)
+			nTake = nCount;
+		if (!ConsumeItem(Indices[i], nTake))
+			return FALSE;
+		nCount -= nTake;
+	}
+	return nCount == 0;
 }
 #endif

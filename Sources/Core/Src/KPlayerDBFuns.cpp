@@ -23,6 +23,155 @@
 #include "KTaskFuns.h"
 
 
+// 可选技能扩展紧随标准战斗技能，dwLSkillOffset 指向扩展之后。
+// 保留旧 TDBSkillData ABI；没有扩展的旧存档仍按初始化列表加载。
+struct PLAYER_SKILL_EXT_HEADER
+{
+	DWORD Magic;
+	DWORD Version;
+	DWORD SkillCount;
+	DWORD BuffCount;
+};
+
+struct PLAYER_SKILL_EXT_RECORD
+{
+	DWORD SkillId;
+	DWORD SkillStatus;
+	DWORD TotalExp;
+};
+
+static const DWORD PLAYER_SKILL_EXT_MAGIC = 0x31475053; // SPG1
+
+static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List)
+{
+	DWORD dwOffset = pRole->dwFSkillOffset + pRole->nFightSkillCount * sizeof(TDBSkillData);
+	if (dwOffset > pRole->dwLSkillOffset || pRole->dwLSkillOffset > pRole->dwDataLen)
+		return FALSE;
+	DWORD dwLength = pRole->dwLSkillOffset - dwOffset;
+	if (!dwLength)
+		return TRUE;
+	if (dwLength < sizeof(PLAYER_SKILL_EXT_HEADER))
+		return FALSE;
+	const BYTE* pData = (const BYTE*)pRole + dwOffset;
+	PLAYER_SKILL_EXT_HEADER Header;
+	memcpy(&Header, pData, sizeof(Header));
+	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || Header.Version != 1 ||
+		Header.SkillCount != pRole->nFightSkillCount || Header.BuffCount > 16 ||
+		dwLength != sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD) +
+		Header.BuffCount * sizeof(PLAYER_SKILL_BUFF))
+		return FALSE;
+	BOOL Seen[MAX_NPCSKILL];
+	PLAYER_SKILL_EXT_RECORD Records[MAX_NPCSKILL];
+	PLAYER_SKILL_BUFF Buffs[16];
+	memset(Seen, 0, sizeof(Seen));
+	memset(Records, 0, sizeof(Records));
+	memset(Buffs, 0, sizeof(Buffs));
+	pData += sizeof(Header);
+	for (DWORD i = 0; i < Header.SkillCount; i++)
+	{
+		PLAYER_SKILL_EXT_RECORD Record;
+		memcpy(&Record, pData, sizeof(Record));
+		pData += sizeof(Record);
+		int nIndex = List.FindSame(Record.SkillId);
+		if (!nIndex || Seen[nIndex] || Record.SkillStatus < 1 || Record.SkillStatus > 4)
+			return FALSE;
+		Seen[nIndex] = TRUE;
+		Records[nIndex] = Record;
+	}
+	DWORD dwNow = (DWORD)time(NULL);
+	for (DWORD i = 0; i < Header.BuffCount; i++)
+	{
+		PLAYER_SKILL_BUFF Buff;
+		memcpy(&Buff, pData, sizeof(Buff));
+		pData += sizeof(Buff);
+		const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(Buff.BuffId);
+		if (pRule && !pRule->OfflineTime)
+		{
+			// 在线计时的存档字段保存剩余秒数，重登重新建立当前会话到期时间。
+			if (Buff.EndTime > (DWORD)pRule->MaxDuration)
+				return FALSE;
+			Buff.EndTime += dwNow;
+		}
+		if ((Buff.BuffId != 7 && Buff.BuffId != 8 && Buff.BuffId != 23 &&
+			Buff.BuffId != 107 && Buff.BuffId != 271 && Buff.BuffId != 272) ||
+			Buff.Value <= 0 || Buff.Value > 5 || Buff.SkillId < 0 || Buff.SkillId >= MAX_SKILL ||
+			(Buff.BuffId != 8 && Buff.SkillId != 0) ||
+			(pRule && Buff.Value != pRule->Multiplier) ||
+			(Buff.EndTime > dwNow && Buff.EndTime - dwNow > 100 * 3600))
+			return FALSE;
+		if (Buff.BuffId == 8)
+		{
+			int nIndex = List.FindSame(Buff.SkillId);
+			if (!nIndex || Records[nIndex].SkillStatus != 3)
+				return FALSE;
+		}
+		for (DWORD j = 0; j < i; j++)
+		{
+			if (Buffs[j].BuffId == Buff.BuffId)
+				return FALSE;
+			if (pRule && Buff.EndTime > dwNow && Buffs[j].EndTime > dwNow &&
+				g_SkillManager.GetPlayerBuffRule(Buffs[j].BuffId))
+				return FALSE;
+		}
+		Buffs[i] = Buff;
+	}
+	// 完整验证后再恢复状态，损坏的扩展不能写入一半技能或BUFF。
+	for (int i = 1; i < MAX_NPCSKILL; i++)
+	{
+		if (Seen[i])
+		{
+			List.m_Skills[i].SkillStatus = (BYTE)Records[i].SkillStatus;
+			List.m_Skills[i].TotalExp = Records[i].TotalExp;
+		}
+	}
+	memset(List.m_SkillBuffs, 0, sizeof(List.m_SkillBuffs));
+	for (DWORD i = 0; i < Header.BuffCount; i++)
+	{
+		if (Buffs[i].EndTime > dwNow)
+			List.m_SkillBuffs[i] = Buffs[i];
+	}
+	return TRUE;
+}
+
+static int SavePlayerSkillExtension(KSkillList& List, BYTE* pData, DWORD dwCapacity)
+{
+	DWORD dwNow = (DWORD)time(NULL);
+	DWORD dwBuffCount = 0;
+	for (int i = 0; i < 16; i++)
+	{
+		if (List.m_SkillBuffs[i].BuffId && List.m_SkillBuffs[i].EndTime > dwNow)
+			dwBuffCount++;
+	}
+	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 1, List.GetCount(), dwBuffCount};
+	DWORD dwSize = sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD) +
+		dwBuffCount * sizeof(PLAYER_SKILL_BUFF);
+	if (dwSize > dwCapacity)
+		return -1;
+	memcpy(pData, &Header, sizeof(Header));
+	pData += sizeof(Header);
+	for (int i = 1; i < MAX_NPCSKILL; i++)
+	{
+		const NPCSKILL& Skill = List.m_Skills[i];
+		if (!Skill.SkillId)
+			continue;
+		PLAYER_SKILL_EXT_RECORD Record = {(DWORD)Skill.SkillId, Skill.SkillStatus, Skill.TotalExp};
+		memcpy(pData, &Record, sizeof(Record));
+		pData += sizeof(Record);
+	}
+	for (int i = 0; i < 16; i++)
+	{
+		PLAYER_SKILL_BUFF Buff = List.m_SkillBuffs[i];
+		if (!Buff.BuffId || Buff.EndTime <= dwNow)
+			continue;
+		const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(Buff.BuffId);
+		if (pRule && !pRule->OfflineTime)
+			Buff.EndTime -= dwNow;
+		memcpy(pData, &Buff, sizeof(Buff));
+		pData += sizeof(Buff);
+	}
+	return dwSize;
+}
+
 // 是否将数据库存取档的数据保存下来以供调试
 //#define DEBUGOPT_DB_ROLEDATA_OUT 
 
@@ -207,8 +356,7 @@ int KPlayer::LoadDBPlayerInfo(BYTE *pPlayerInfo, int &nStep, unsigned int &nPara
 		{
 			if (nRet == -1)
 			{
-				nStep++;
-				nParam = 0;
+				g_DebugLog("[SkillStorage] Rejected invalid skill data: player=%s", m_PlayerName);
 				return 0;
 			}
 			else
@@ -355,7 +503,8 @@ int KPlayer::UpdateDBPlayerInfo(BYTE* pPlayerInfo)
 	SavePlayerBaseInfo(pPlayerInfo);
 
 	// 玩家的战斗技能列表
-	SavePlayerFightSkillList(pPlayerInfo);
+	if (SavePlayerFightSkillList(pPlayerInfo) != 1)
+		return -1;
 
 	// 玩家的生活技能列表
 	SavePlayerLifeSkilllList(pPlayerInfo);
@@ -818,7 +967,9 @@ int	KPlayer::LoadPlayerFightSkillList(BYTE * pRoleBuffer, BYTE * &pFightBuffer, 
 	// For existing roles, add missing initial skills without changing learned levels.
 	if (!Npc[m_nIndex].m_SkillList.LoadPlayerInitialSkills(Npc[m_nIndex].m_Series))
 		return -1;
-	Npc[m_nIndex].m_SkillList.ApplyPlayerPassiveSkills();
+	if (!LoadPlayerSkillExtension((const TRoleData*)pRoleBuffer, Npc[m_nIndex].m_SkillList))
+		return -1;
+	Npc[m_nIndex].m_SkillList.RefreshPlayerSkillLevels();
 	return 1;
 }
 
@@ -1155,24 +1306,25 @@ int	KPlayer::SavePlayerItemList(BYTE * pRoleBuffer)
 	return 1;
 }
 
-int	KPlayer::SavePlayerFightSkillList(BYTE * pRoleBuffer)
+int KPlayer::SavePlayerFightSkillList(BYTE* pRoleBuffer)
 {
-	_ASSERT(pRoleBuffer);
-	if (m_nIndex <= 0) 
-		return FALSE;
-	TRoleData * pRoleData = (TRoleData *)pRoleBuffer;
-	TDBSkillData * pSkillData = (TDBSkillData *) (pRoleBuffer + pRoleData->dwFSkillOffset);
-	int nCount = Npc[m_nIndex].m_SkillList.UpdateDBSkillList((BYTE *)pSkillData);
-	if (nCount > 0)
-	{
-		pRoleData->nFightSkillCount = nCount;
-		pRoleData->dwLSkillOffset = (BYTE*)pSkillData - pRoleBuffer + sizeof(TDBSkillData) * nCount;
-	}
-	else
-	{
-		pRoleData->nFightSkillCount  = 0;
-		pRoleData->dwLSkillOffset = (BYTE*)pSkillData - pRoleBuffer;
-	}
+	if (!pRoleBuffer || m_nIndex <= 0)
+		return -1;
+	TRoleData* pRoleData = (TRoleData*)pRoleBuffer;
+	KSkillList& List = Npc[m_nIndex].m_SkillList;
+	DWORD dwOffset = pRoleData->dwFSkillOffset;
+	DWORD dwStandardSize = List.GetCount() * sizeof(TDBSkillData);
+	if (dwOffset > sizeof(m_SaveBuffer) || dwStandardSize > sizeof(m_SaveBuffer) - dwOffset)
+		return -1;
+	int nCount = List.UpdateDBSkillList(pRoleBuffer + dwOffset);
+	if (nCount < 0)
+		return -1;
+	pRoleData->nFightSkillCount = nCount;
+	dwOffset += dwStandardSize;
+	int nSize = SavePlayerSkillExtension(List, pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
+	if (nSize < 0)
+		return -1;
+	pRoleData->dwLSkillOffset = dwOffset + nSize;
 	return 1;
 }
 

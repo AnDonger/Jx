@@ -105,6 +105,8 @@ typedef struct
 	BOOL		m_bStack;
 	int			m_nWeight;			// 原表负重；本次不改变玩家负重计算。
 	BOOL		m_bValid;
+	char		m_szScript[260];
+	BOOL		m_bConsumeOnUse;
 } KBASICPROP_NORMALITEM;
 
 // 以下结构用于描述一对最大,最小值

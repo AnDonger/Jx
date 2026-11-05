@@ -215,6 +215,53 @@ struct GAME_SKILL_SYNC_DATA
 	DWORD TotalExp;
 };
 
+// 当前客户端 7BE0E0 / 712450：状态、累计熟练度、技能号、永久等级。
+struct GAME_SKILL_LEVEL_SYNC
+{
+	BYTE ProtocolType;
+	BYTE SkillStatus;
+	DWORD TotalExp;
+	DWORD SkillId;
+	DWORD SkillLevel;
+};
+
+struct GAME_SKILL_BUFF_DATA
+{
+	int RemainingSeconds;
+	BYTE BuffKind;
+	WORD Value1;
+	WORD Value2;
+};
+
+struct GAME_SKILL_BUFF_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	BYTE Count;
+	GAME_SKILL_BUFF_DATA Buffs[16];
+};
+
+struct GAME_SKILL_BUFF_CHANGE
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	BYTE ApplyEffect;
+	GAME_SKILL_BUFF_DATA Buff;
+};
+
+// Game.unpacked.20261103: F7 -> 7C4F00 -> 707260。
+// 增加记录为15字节，记录之后为DWORD实例标识的删除列表；Length不含协议字节。
+struct GAME_IB_BUFF_DATA
+{
+	WORD TemplateId;
+	DWORD InstanceId;		// +2，客户端删除分支按此DWORD匹配实例。
+	DWORD RemainingSeconds;
+	BYTE unknown_1;			// +10，客户端属性计算参数；单层临仙露固定为1。
+	DWORD unknown_2;
+};
+
 struct GAME_SKILL_SYNC
 {
 	BYTE ProtocolType;
@@ -575,6 +622,8 @@ static_assert(sizeof(GAME_CURPLAYER_SYNC) == 98, "44 current player");
 static_assert(sizeof(GAME_CURPLAYER_NORMAL_SYNC) == 12, "46 resources");
 static_assert(sizeof(GAME_NPC_NORMAL_SYNC) == 29, "4D entity update");
 static_assert(sizeof(GAME_NPC_PLAYER_NORMAL_SYNC) == 24, "4E player position");
+static_assert(sizeof(GAME_SKILL_LEVEL_SYNC) == 14, "74 skill update");
+static_assert(sizeof(GAME_SKILL_BUFF_DATA) == 9, "E5 timed buff record");
 static_assert(sizeof(GAME_SKILL_SYNC_DATA) == 9, "45 skill record");
 static_assert(sizeof(GAME_ITEM_SYNC) == 58, "CB item sync");
 static_assert(sizeof(GAME_AURA_SKILL_SYNC) == 16, "Aura skill sync");

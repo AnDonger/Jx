@@ -562,6 +562,163 @@ static int CountNormalItems(KItemList& List, int nGenre, int nDetail, int nParti
 	return nCount;
 }
 
+
+#ifdef _SERVER
+// 这些接口供原技能丹、临仙露脚本使用；未适配的BUFF编号不能产生占位效果。
+static KSkillList* GetPlayerScriptSkills(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER ||
+		Player[nPlayer].m_nIndex <= 0 || Player[nPlayer].m_nIndex >= MAX_NPC)
+		return NULL;
+	return &Npc[Player[nPlayer].m_nIndex].m_SkillList;
+}
+
+int LuaIsSkillActived(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nSkill = (int)Lua_ValueToNumber(L, 1);
+	Lua_PushNumber(L, pSkills && pSkills->IsPlayerSkillLearned(nSkill) ? 1 : 0);
+	return 1;
+}
+
+int LuaIsExistBuff(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nBuff = (int)Lua_ValueToNumber(L, 1);
+	Lua_PushNumber(L, pSkills && pSkills->GetPlayerSkillBuffTime(nBuff) ? 1 : 0);
+	return 1;
+}
+
+int LuaGetIBBuffLeftTimes(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nBuff = (int)Lua_ValueToNumber(L, 1);
+	Lua_PushNumber(L, pSkills ? pSkills->GetPlayerSkillBuffTime(nBuff) : 0);
+	return 1;
+}
+
+int LuaRemoveBuff(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nBuff = (int)Lua_ValueToNumber(L, 1);
+	Lua_PushNumber(L, pSkills && pSkills->RemovePlayerSkillBuff(nBuff) ? 1 : 0);
+	return 1;
+}
+
+int LuaAddBuff(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	if (!pSkills || Lua_GetTopIndex(L) != 5)
+	{
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	int nBuff = (int)Lua_ValueToNumber(L, 1);
+	int nTime = (int)Lua_ValueToNumber(L, 2);
+	int nFirst = (int)Lua_ValueToNumber(L, 3);
+	int nSecond = (int)Lua_ValueToNumber(L, 4);
+	BOOL bAdded = FALSE;
+	if (nBuff == 7 || nBuff == 23)
+		bAdded = pSkills->AddPlayerSkillBuff(nBuff, nTime, 0, nFirst, FALSE);
+	else if (nBuff == 8)
+		bAdded = pSkills->AddPlayerSkillBuff(nBuff, nTime, nFirst, nSecond, FALSE);
+	Lua_PushNumber(L, bAdded ? 1 : 0);
+	return 1;
+}
+
+static BOOL CanAddScriptDew(KSkillList& Skills, int nBuff)
+{
+	int Buffs[] = {107, 271, 272};
+	const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(nBuff);
+	if (!pRule || Skills.GetPlayerSkillBuffTime(nBuff) > pRule->MaxDuration - pRule->Duration)
+		return FALSE;
+	for (int i = 0; i < 3; i++)
+	{
+		if (nBuff != Buffs[i] && Skills.GetPlayerSkillBuffTime(Buffs[i]))
+			return FALSE;
+	}
+	return TRUE;
+}
+
+// 原临仙露回调先DelNormalItem再AddIBBuff；扣物品时再次检查互斥和100小时上限。
+static BOOL CanConsumeScriptDew(Lua_State* L, int nGenre, int nDetail, int nParticular)
+{
+	if (nGenre != item_magicorscript || nDetail != 1)
+		return TRUE;
+	int nBuff = 0;
+	if (nParticular == 508 || nParticular == 512 || nParticular == 1091)
+		nBuff = 107;
+	else if (nParticular == 942 || nParticular == 943 || nParticular == 1092)
+		nBuff = 271;
+	else if (nParticular == 944 || nParticular == 945 || nParticular == 1093)
+		nBuff = 272;
+	if (!nBuff)
+		return TRUE;
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	return pSkills && CanAddScriptDew(*pSkills, nBuff);
+}
+
+int LuaAddIBBuff(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nBuff = (int)Lua_ValueToNumber(L, 1);
+	const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(nBuff);
+	BOOL bAdded = pSkills && pRule && CanAddScriptDew(*pSkills, nBuff) &&
+		pSkills->AddPlayerSkillBuff(nBuff, pRule->Duration, 0, pRule->Multiplier, TRUE);
+	Lua_PushNumber(L, bAdded ? 1 : 0);
+	return 1;
+}
+
+static int QuickScriptItem(Lua_State* L, BOOL bConsume)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || Lua_GetTopIndex(L) != 4)
+	{
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	int nGenre = (int)Lua_ValueToNumber(L, 1);
+	int nDetail = (int)Lua_ValueToNumber(L, 2);
+	int nParticular = (int)Lua_ValueToNumber(L, 3);
+	int nLevel = (int)Lua_ValueToNumber(L, 4);
+	KItemList& Items = Player[nPlayer].m_ItemList;
+	int nCount = 0;
+	for (PlayerItem* pItem = Items.GetFirstItem(); pItem; pItem = Items.GetNextItem())
+	{
+		if (pItem->nPlace != pos_immediacy || pItem->nIdx <= 0 || pItem->nIdx >= MAX_ITEM)
+			continue;
+		KItem& Data = Item[pItem->nIdx];
+		if (Data.GetGenre() != nGenre || Data.GetDetailType() != nDetail ||
+			Data.GetParticular() != nParticular || Data.GetLevel() != nLevel)
+			continue;
+		if (bConsume)
+		{
+			BOOL bAllowed = CanConsumeScriptDew(L, nGenre, nDetail, nParticular);
+			Lua_PushNumber(L, bAllowed && Items.ConsumeItem(pItem->nIdx, 1) ? 1 : 0);
+			return 1;
+		}
+		nCount += Data.GetStackCount();
+	}
+	Lua_PushNumber(L, nCount);
+	return 1;
+}
+
+int LuaHaveNormalItemInQuick(Lua_State* L)
+{
+	return QuickScriptItem(L, FALSE);
+}
+
+int LuaDelNormalItemInQuick(Lua_State* L)
+{
+	return QuickScriptItem(L, TRUE);
+}
+#endif
+
 int LuaHaveNormalItem(Lua_State *L)
 {
 	int nParamNum = Lua_GetTopIndex(L);
@@ -592,7 +749,11 @@ int LuaDelNormalItem(Lua_State *L)
 	int nLevel = (int)Lua_ValueToNumber(L, 4);
 	int nCount = nParamNum == 5 ? (int)Lua_ValueToNumber(L, 5) : 1;
 	KItemList& List = Player[nPlayerIndex].m_ItemList;
-	if (nCount <= 0 || CountNormalItems(List, nGenre, nDetail, nParticular, nLevel) < nCount)
+	if (nCount <= 0 || CountNormalItems(List, nGenre, nDetail, nParticular, nLevel) < nCount
+#ifdef _SERVER
+		|| !CanConsumeScriptDew(L, nGenre, nDetail, nParticular)
+#endif
+		)
 	{
 		Lua_PushNumber(L, 0);
 		return 1;
@@ -5442,6 +5603,15 @@ TLua_Funcs GameScriptFuns[] =
 	{"SetTaskByte", LuaSetTaskByte},
 	{"AddNormalItem", LuaAddNormalItem},
 	{"GetPlayerType", LuaGetPlayerType},
+	{"IsSkillActived", LuaIsSkillActived},
+	{"IsExistBuff", LuaIsExistBuff},
+	{"AddBuff", LuaAddBuff},
+	{"RemoveBuff", LuaRemoveBuff},
+	{"HaveIBBuff", LuaIsExistBuff},
+	{"GetIBBuffLeftTimes", LuaGetIBBuffLeftTimes},
+	{"AddIBBuff", LuaAddIBBuff},
+	{"HaveNormalItemInQuick", LuaHaveNormalItemInQuick},
+	{"DelNormalItemInQuick", LuaDelNormalItemInQuick},
 	{"SystemTime", LuaSystemTime},
 	{"GetHMS", LuaGetHMS},
 	{"GetYMD", LuaGetYMD},
@@ -5463,6 +5633,7 @@ TLua_Funcs GameScriptFuns[] =
 	{"GetTeam",			LuaGetTeamId},		//GetTeam()返回玩家队伍ID
 	{"GetTeamSize",		LuaGetTeamSize},	//GetTeamSize()
 	{"LeaveTeam",		LuaLeaveTeam},		//LeaveTeam()让玩家离开自身队伍
+	{"TopMessage",		LuaMsgToPlayer	},
 	{"Msg2Player",		LuaMsgToPlayer	},	//Msg2Player(消息)
 	{"Msg2Team",		LuaMsgToTeam},		//Msg2Team(消息)通知玩家的组
 	{"Msg2SubWorld",	LuaMsgToSubWorld},	//Msg2SubWorld(消息)通知世界
