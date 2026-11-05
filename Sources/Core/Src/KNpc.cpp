@@ -994,6 +994,7 @@ void KNpc::DoDeath(int nMode/* = 0*/)
 		nPlayer = m_cDeathCalcExp.CalcExp();
 	}
 
+	int nOldExp = IsPlayer() ? Player[m_nPlayerIdx].m_nExp : 0;
 	//丢物品
 	DeathPunish(nMode, nPlayer);
 
@@ -1002,7 +1003,19 @@ void KNpc::DoDeath(int nMode/* = 0*/)
 	NetCommand.ProtocolType = (BYTE)s2c_npcdeath;
 	NetCommand.ID = m_dwID;
 
-	NetCommand.DeathKind = (BYTE)nMode;
+	// Wire death kind is player=1 / monster=0, not the internal punishment mode.
+	NetCommand.DeathKind = IsPlayer() ? 1 : 0;
+	if (IsPlayer())
+	{
+		int nExpLoss = nOldExp - Player[m_nPlayerIdx].m_nExp;
+		NetCommand.DeathExpLoss = nExpLoss > 0 ? nExpLoss : 0;
+		// Official player death uses 1 at +14; the field meaning remains unknown.
+		NetCommand.unknown_2 = 1;
+	}
+	static DWORD dwNextDeathToken = 0;
+	if (++dwNextDeathToken == 0)
+		++dwNextDeathToken;
+	NetCommand.DeathSyncToken = dwNextDeathToken;
 	int nMpsX, nMpsY;
 	GetMpsPos(&nMpsX, &nMpsY);
 	NetCommand.MapX = (WORD)nMpsX;
@@ -1104,7 +1117,23 @@ void KNpc::OnDeath()
 		if (m_Kind != kind_partner)//战斗Npc时
 		{
 			DoRevive();
-#ifndef _SERVER
+#ifdef _SERVER
+			// Current clients open the dialog on F0/0A, separately from 5C.
+			// Send only after natural death animation completion, not ExecuteRevive().
+			if (IsPlayer() && m_CurrentLife <= 0 && m_Doing == do_revive && g_pServer)
+			{
+				GAME_NPC_DEATH_DIALOG_SYNC Sync;
+				memset(&Sync, 0, sizeof(Sync));
+				Sync.ProtocolType = 0xF0;
+				Sync.Length = sizeof(Sync) - 1;
+				Sync.SubType = 0x0A;
+				Sync.ID = m_dwID;
+				g_pServer->PackDataToClient(Player[m_nPlayerIdx].m_nNetConnectIdx,
+					&Sync, sizeof(Sync));
+				g_DebugLog("[Revive] Death dialog sent: player=%d npc=%lu",
+					m_nPlayerIdx, m_dwID);
+			}
+#else
 			// 客户端把NPC删除
 			if (m_Kind != kind_player)
 			{
@@ -3631,7 +3660,8 @@ void KNpc::BroadCastRevive(int nType)
 	if (m_RegionIndex < 0)
 		return;
 
-	NPC_REVIVE_SYNC	NpcReviveSync;
+	GAME_NPC_REVIVE_SYNC	NpcReviveSync;
+	memset(&NpcReviveSync, 0, sizeof(NpcReviveSync));
 	NpcReviveSync.ProtocolType = s2c_playerrevive;
 	NpcReviveSync.ID = m_dwID;
 	NpcReviveSync.Type = (BYTE)nType;
@@ -3648,14 +3678,14 @@ void KNpc::BroadCastRevive(int nType)
 		{16, 32},
 	};
 	int nMaxCount = MAX_BROADCAST_COUNT;
-	CURREGION.BroadCast((BYTE*)&NpcReviveSync, sizeof(NPC_REVIVE_SYNC), nMaxCount, m_MapX, m_MapY);
+	CURREGION.BroadCast((BYTE*)&NpcReviveSync, sizeof(NpcReviveSync), nMaxCount, m_MapX, m_MapY);
 	int j;
 	for (j = 0; j < 8; j++)
 	{
 		int nConRegion = CURREGION.m_nConnectRegion[j];
 		if (nConRegion == -1)
 			continue;
-		SubWorld[m_SubWorldIndex].m_Region[nConRegion].BroadCast((BYTE*)&NpcReviveSync, sizeof(NPC_REVIVE_SYNC), nMaxCount, m_MapX - POff[j].x, m_MapY - POff[j].y);
+		SubWorld[m_SubWorldIndex].m_Region[nConRegion].BroadCast((BYTE*)&NpcReviveSync, sizeof(NpcReviveSync), nMaxCount, m_MapX - POff[j].x, m_MapY - POff[j].y);
 	}
 }
 

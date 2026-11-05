@@ -4456,37 +4456,105 @@ void KPlayer::BackToTownPortal()
 //-------------------------------------------------------------------------
 void KPlayer::Revive(int nType)
 {
-	int	nSubWorldID = 0;
+	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC || !m_bFinishLoading || m_bExchangeServer)
+		return;
+	KNpc& Npc = ::Npc[m_nIndex];
+	if (!Npc.IsPlayer() || Npc.GetPlayerIdx() != m_nPlayerIndex || Npc.m_bExchangeServer ||
+		Npc.m_SubWorldIndex < 0 || Npc.m_RegionIndex < 0 || Npc.m_CurrentLife > 0 ||
+		(Npc.m_Doing != do_death && Npc.m_Doing != do_revive))
+		return;
+	if (nType != REMOTE_REVIVE_TYPE && nType != LOCAL_REVIVE_TYPE)
+		return;
+
+	int nSubWorldID = 0;
 	int nMpsX = 0, nMpsY = 0;
-
-	NPC_REVIVE_SYNC	Sync;
-	Sync.ProtocolType = s2c_playerrevive;
-	Sync.ID = Npc[m_nIndex].m_dwID;
-	Sync.Type = nType;
-	g_pServer->PackDataToClient(m_nNetConnectIdx, (const void*)&Sync, sizeof(NPC_REVIVE_SYNC));
-	Npc[m_nIndex].BroadCastRevive(nType);
-
-	switch(nType)
+	if (nType == REMOTE_REVIVE_TYPE)
 	{
-	case REMOTE_REVIVE_TYPE:
 		GetDeathRevivalPos(&nSubWorldID, &nMpsX, &nMpsY);
-		Npc[m_nIndex].ChangeWorld(nSubWorldID, nMpsX, nMpsY);
-		Npc[m_nIndex].m_FightMode = 0;
-		break;
-	case LOCAL_REVIVE_TYPE:
-		Npc[m_nIndex].m_FightMode = 1;
-		break;
-	default:
-		break;
+		int nWorld = g_SubWorldSet.SearchWorld(nSubWorldID);
+		int nRegion = -1, nMapX, nMapY, nOffX, nOffY;
+		if (nWorld >= 0 && nMpsX > 0 && nMpsY > 0)
+			SubWorld[nWorld].Mps2Map(nMpsX, nMpsY, &nRegion, &nMapX, &nMapY, &nOffX, &nOffY);
+		if (nRegion < 0)
+		{
+			g_DebugLog("[Revive] Invalid revival point: player=%d map=%d position=(%d,%d)",
+				m_nPlayerIndex, nSubWorldID, nMpsX, nMpsY);
+			return;
+		}
 	}
-	
-	Npc[m_nIndex].m_CurrentLife = Npc[m_nIndex].m_CurrentLifeMax;
-	Npc[m_nIndex].m_CurrentMana = Npc[m_nIndex].m_CurrentManaMax;
-	Npc[m_nIndex].m_CurrentStamina = Npc[m_nIndex].m_CurrentStaminaMax;
-	//RestoreLiveData();	
-	Npc[m_nIndex].SendCommand(do_revive);
-}
 
+
+	if (nType == LOCAL_REVIVE_TYPE)
+	{
+		if (CheckTrading())
+			return;
+		// 与奇货商场相同，只使用背包内的铜钱（questkey.txt：4,47）。
+		// 先确认死亡状态，再扣一枚；复活后重复请求不会再次扣除。
+		int nCopper = 0;
+		for (PlayerItem* pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
+		{
+			if (pItem->nPlace == pos_equiproom && Item[pItem->nIdx].GetGenre() == item_task &&
+				Item[pItem->nIdx].GetDetailType() == 47 && Item[pItem->nIdx].GetStackCount() > 0)
+			{
+				nCopper = pItem->nIdx;
+				break;
+			}
+		}
+		if (!nCopper || !m_ItemList.ConsumeItem(nCopper, 1))
+		{
+			PLAYER_SCRIPTACTION_SYNC Info;
+			memset(&Info, 0, sizeof(Info));
+			Info.m_bUIId = UI_MSGINFO;
+			Info.m_bParam2 = 1;
+			g_StrCpyLen(Info.m_pContent, "铜钱不足，原地复活需要1个铜钱。", sizeof(Info.m_pContent));
+			Info.m_nBufferLen = strlen(Info.m_pContent);
+			DoScriptAction(&Info);
+			g_DebugLog("[Revive] Insufficient copper: player=%d", m_nPlayerIndex);
+			return;
+		}
+		GAME_CURRENCY_NOTICE_SYNC Notice;
+		memset(&Notice, 0, sizeof(Notice));
+		Notice.ProtocolType = 0xCC;
+		Notice.ChangeType = 0;
+		Notice.Currency = 1;
+		Notice.Amount = 1;
+		g_pServer->PackDataToClient(m_nNetConnectIdx, &Notice, sizeof(Notice));
+		g_DebugLog("[Revive] Copper consumed: player=%d count=1", m_nPlayerIndex);
+	}
+
+	static DWORD dwNextReviveToken = 0;
+	GAME_NPC_REVIVE_SYNC Sync;
+	memset(&Sync, 0, sizeof(Sync));
+	Sync.ProtocolType = s2c_playerrevive;
+	Sync.ID = Npc.m_dwID;
+	Sync.Type = (BYTE)nType;
+	if (++dwNextReviveToken == 0)
+		++dwNextReviveToken;
+	Sync.SyncToken = dwNextReviveToken;
+	g_pServer->PackDataToClient(m_nNetConnectIdx, &Sync, sizeof(Sync));
+	Npc.BroadCastRevive(nType);
+
+	// The death animation may still be playing when the player confirms revival.
+	// Clear death states before restoring maxima and before the destination snapshot.
+	Npc.ExecuteRevive();
+	Npc.m_CurrentLife = Npc.m_CurrentLifeMax;
+	Npc.m_CurrentMana = Npc.m_CurrentManaMax;
+	Npc.m_CurrentStamina = Npc.m_CurrentStaminaMax;
+	Npc.SetFightMode(nType == LOCAL_REVIVE_TYPE);
+	m_nPeapleIdx = 0;
+	m_nObjectIdx = 0;
+	Npc.m_nPeopleIdx = 0;
+	Npc.m_nObjectIdx = 0;
+	if (nType == REMOTE_REVIVE_TYPE)
+		Npc.ChangeWorld(nSubWorldID, nMpsX, nMpsY);
+	Npc.SendCommand(do_revive);
+	Npc.ProcCommand(0);
+	Npc.GetMpsPos(&Npc.m_DesX, &Npc.m_DesY);
+	SendCurNormalSyncData();
+	g_DebugLog("[Revive] Restored player=%d type=%d map=%d position=(%d,%d) life=%d mana=%d",
+		m_nPlayerIndex, nType, SubWorld[Npc.m_SubWorldIndex].m_SubWorldID,
+		Npc.m_DesX, Npc.m_DesY, Npc.m_CurrentLife, Npc.m_CurrentMana);
+}
 
 void KPlayer::RestoreLiveData()
 {

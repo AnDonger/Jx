@@ -536,6 +536,42 @@ struct GAME_NPC_HURT_SYNC
 	WORD OffY;
 };
 
+// Current client: 7E 00 returns to town; the paid local-revival button sends 7E 05.
+// Wire choices are different from the internal REMOTE/LOCAL_REVIVE_TYPE values.
+enum GAME_REVIVE_CHOICE
+{
+	GAME_REVIVE_RETURN = 0,
+	GAME_REVIVE_COPPER = 5,
+};
+struct GAME_REVIVE_COMMAND
+{
+	BYTE ProtocolType;
+	BYTE Type;
+};
+
+struct GAME_NPC_REVIVE_SYNC
+{
+	BYTE ProtocolType;
+	DWORD ID;
+	BYTE Type;
+	DWORD SyncToken;
+};
+
+// B8/21 acknowledges 5C position and token; it does not supply an authoritative position.
+struct GAME_DEATH_ACK_COMMAND
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	DWORD SimulationFrame;
+	WORD MapX;
+	WORD MapY;
+	BYTE MapHigh;
+	WORD OffX;
+	WORD OffY;
+	DWORD DeathSyncToken;
+};
+
 struct GAME_NPC_DEATH_SYNC
 {
 	BYTE ProtocolType;
@@ -550,6 +586,15 @@ struct GAME_NPC_DEATH_SYNC
 	WORD OffX;
 	WORD OffY;
 	DWORD DeathSyncToken;
+};
+
+// F0/0A requests the local player death dialog after the death animation.
+struct GAME_NPC_DEATH_DIALOG_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	DWORD ID;
 };
 
 struct GAME_DAMAGE_SYNC
@@ -610,6 +655,10 @@ static_assert(sizeof(GAME_SKILL_CAST_SYNC) == 25, "5F skill cast");
 static_assert(sizeof(GAME_PLAYER_LEVEL_UP_SYNC) == 42, "71 level up");
 static_assert(sizeof(GAME_NPC_HURT_SYNC) == 18, "5B hurt");
 static_assert(sizeof(GAME_NPC_DEATH_SYNC) == 29, "5C death");
+static_assert(sizeof(GAME_NPC_DEATH_DIALOG_SYNC) == 8, "F0/0A death dialog");
+static_assert(sizeof(GAME_REVIVE_COMMAND) == 2, "7E revive request");
+static_assert(sizeof(GAME_NPC_REVIVE_SYNC) == 10, "94 revive sync");
+static_assert(sizeof(GAME_DEATH_ACK_COMMAND) == 21, "B8/21 death acknowledgement");
 static_assert(sizeof(GAME_DAMAGE_SYNC) == 16, "EA damage");
 static_assert(sizeof(GAME_STATE_ATTRIBUTE) == 52, "92 state attribute");
 static_assert(sizeof(GAME_OBJECT_ADD_SYNC) - 80 == 39, "4F object prefix");

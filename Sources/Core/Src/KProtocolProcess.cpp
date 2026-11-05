@@ -220,6 +220,7 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[0x61] = &KProtocolProcess::PlayerEatItem;
 	ProcessFunc[0x62] = &KProtocolProcess::CurrentPickupCommand;
 	ProcessFunc[0x78] = &KProtocolProcess::ChangeAuraSkill;
+	ProcessFunc[0x7E] = &KProtocolProcess::NpcReviveCommand;
 	ProcessFunc[0xA4] = &KProtocolProcess::CurrentPickupCommand;
 	ProcessFunc[0x85] = &KProtocolProcess::CurrentMountCommand;
 	ProcessFunc[0x94] = &KProtocolProcess::CurrentSplitItemCommand;
@@ -3542,6 +3543,15 @@ void KProtocolProcess::CurrentExtensionCommand(int nIndex, BYTE* pProtocol)
 		g_pServer->PackDataToClient(Player[nIndex].m_nNetConnectIdx, Finished, sizeof(Finished));
 		return;
 	}
+	if (pProtocol[3] == 0x21)
+	{
+		if (wLength + 1 != sizeof(GAME_DEATH_ACK_COMMAND))
+			return;
+		const GAME_DEATH_ACK_COMMAND* pAck = (const GAME_DEATH_ACK_COMMAND*)pProtocol;
+		g_DebugLog("[Revive] Death acknowledgement: player=%d frame=%lu token=%lu",
+			nIndex, pAck->SimulationFrame, pAck->DeathSyncToken);
+		return;
+	}
 	if (pProtocol[3] == 0x38)
 	{
 		if (wLength + 1 < sizeof(GAME_MALL_COMMAND))
@@ -4051,9 +4061,21 @@ void KProtocolProcess::StoreMoneyCommand(int nIndex, BYTE* pProtocol)
 
 void KProtocolProcess::NpcReviveCommand(int nIndex, BYTE* pProtocol)
 {
-//	NPC_REVIVE_COMMAND*		pCommand = (NPC_REVIVE_COMMAND *)pProtocol;
-
-	Player[nIndex].Revive(REMOTE_REVIVE_TYPE);
+	if (pProtocol[0] != 0x7E)
+		return;
+	const GAME_REVIVE_COMMAND* pCommand = (const GAME_REVIVE_COMMAND*)pProtocol;
+	switch (pCommand->Type)
+	{
+	case GAME_REVIVE_RETURN:
+		Player[nIndex].Revive(REMOTE_REVIVE_TYPE);
+		break;
+	case GAME_REVIVE_COPPER:
+		Player[nIndex].Revive(LOCAL_REVIVE_TYPE);
+		break;
+	default:
+		g_DebugLog("[Revive] Unsupported choice: player=%d type=%u", nIndex, pCommand->Type);
+		break;
+	}
 }
 
 void KProtocolProcess::c2sTradeReplyStart(int nIndex, BYTE* pProtocol)
