@@ -141,6 +141,11 @@ public:
 private:
 	int		m_nIndex;							// 自身在道具数组中的索引
 	DWORD	m_dwID;								// 独立的ID，用于客户端与服务器端的交流
+	DWORD	m_dwUpgradeData;
+	BYTE	m_btGenerationFlags;
+	BYTE	m_btStateFlags;
+	BYTE	m_btBindingMode;
+	BYTE	m_btReforgeLuck;
 	int		m_nStackCount;						// 堆叠数量，旧存档默认一件。
 	int		m_nCurrentDur;						// 当前耐久度
 #ifndef _SERVER
@@ -167,6 +172,7 @@ public:
 	char*	GetName() const { return (char *)m_CommonAttrib.szItemName; };
 	int		GetObjIdx() { return m_CommonAttrib.nObjIdx;};
 	void*	GetRequirement(IN int);
+	BOOL	IsBound() const { return (m_btStateFlags & 1) != 0; };
 	int		GetStackCount() const { return m_nStackCount > 0 ? m_nStackCount : 1; };
 	int		GetMaxStackCount() const;
 	BOOL	CanStackWith(const KItem& Other) const;

@@ -3771,6 +3771,8 @@ void	KPlayer::ServerThrowAwayItem(BYTE* pProtocol)
 		return;
 	
 	int nItemIdx = m_ItemList.m_Hand;
+	if (Item[nItemIdx].IsBound())
+		return;
 	GetAboutPos(&sMapPos);
 	if (m_ItemList.Remove(nItemIdx))
 	{

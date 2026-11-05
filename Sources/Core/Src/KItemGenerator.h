@@ -32,6 +32,10 @@ protected:
 	KLibOfBPT	m_BPTLib;
 	int			m_nCurrentVersion;
 	UINT		m_uRandomSeed;
+	BOOL	m_bReforgeEnabled;
+	int		m_nReforgeBaseRate;
+	int		m_nReforgeLuckMin;
+	int		m_nReforgeLuckMax;
 	std::map<int, KLibOfBPT*> m_VersionLibraries;
 
 // 以下是辅助成员变量
@@ -45,6 +49,10 @@ protected:
 // 以下是对外接口
 public:
 	BOOL Init();
+	BOOL InitReforge();
+	BOOL GetReforgeRule(int* pnBaseRate, int* pnLuckMin, int* pnLuckMax);
+	const KBASICPROP_EQUIPMENT* GetEquipmentTemplate(int nDetail, int nParticular, int nLevel, int nVersion);
+	BOOL PrepareReforge(const KItem& Source, int nParticular, int nLevel, BOOL bImprove, BOOL bFull, KItem* pResult);
 	void SetRandomSeed(UINT uSeed);
 	int GetRandomNumber(int nMin, int nMax);
 	BOOL Gen_Item(IN int, IN int, IN int, IN int, IN OUT KItem*);

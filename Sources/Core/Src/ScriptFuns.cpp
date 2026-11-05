@@ -734,6 +734,129 @@ int LuaHaveNormalItem(Lua_State *L)
 	return 1;
 }
 
+#ifdef _SERVER
+static BOOL ReadReforgeInteger(Lua_State* L, int nTable, const char* pszKey, int* pnValue)
+{
+	Lua_PushString(L, pszKey);
+	Lua_GetTable(L, nTable);
+	BOOL bValid = Lua_IsNumber(L, -1);
+	if (bValid)
+		*pnValue = (int)Lua_ValueToNumber(L, -1);
+	Lua_Pop(L, 1);
+	return bValid;
+}
+
+int LuaGetCopperCashCount(Lua_State* L)
+{
+	int nPlayer = GetPlayerIndex(L);
+	Lua_PushNumber(L, nPlayer > 0 ? Player[nPlayer].m_ItemList.GetCopperCashCount() : 0);
+	return 1;
+}
+
+int LuaImproveItemMagicAttr(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	int Args[10] = {0};
+	BOOL bValid = nPlayer > 0 && nTop == 10;
+	for (int i = 0; i < 10 && bValid; i++)
+	{
+		bValid = Lua_IsNumber(L, i + 1);
+		if (bValid)
+			Args[i] = (int)Lua_ValueToNumber(L, i + 1);
+	}
+	if (!bValid || Args[0] != item_equip || Args[4] != item_equip || Args[1] != Args[5])
+	{
+		Lua_PushNumber(L, -1);
+		return 1;
+	}
+	// 第九参数1000保留原脚本位置，其业务含义未确认，不解释为概率。
+	// 第十参数仅用于回查当前原脚本的SuitMaterial、ItemCostIBIndex，费用不另建表。
+	Lua_GetGlobal(L, "SuitMaterial");
+	int nTable = Lua_GetTopIndex(L);
+	bValid = Lua_IsTable(L, nTable);
+	if (bValid)
+	{
+		Lua_RawGetI(L, nTable, Args[9]);
+		nTable = Lua_GetTopIndex(L);
+		bValid = Lua_IsTable(L, nTable);
+	}
+	int Identity[4] = {0};
+	const char* Keys[] = {"id1", "id2", "id3", "id4"};
+	for (int i = 0; i < 4 && bValid; i++)
+		bValid = ReadReforgeInteger(L, nTable, Keys[i], &Identity[i]);
+	bValid = bValid && Identity[0] == Args[4] && Identity[1] == Args[5] &&
+		Identity[2] == Args[6] && Args[7] >= Identity[3] && Args[7] <= 10;
+	int nCostSlot = 0;
+	int nCount = 0;
+	if (bValid)
+	{
+		Lua_PushString(L, "CostItem");
+		Lua_GetTable(L, nTable);
+		nTable = Lua_GetTopIndex(L);
+		bValid = Lua_IsTable(L, nTable);
+		for (int i = 1; i <= 6 && bValid; i++)
+		{
+			Lua_RawGetI(L, nTable, i);
+			bValid = Lua_IsNumber(L, -1);
+			int nValue = bValid ? (int)Lua_ValueToNumber(L, -1) : -1;
+			Lua_Pop(L, 1);
+			if (nValue < 0 || nValue > 1000 || (nValue && nCostSlot))
+				bValid = FALSE;
+			if (nValue > 0)
+			{
+				nCostSlot = i;
+				nCount = nValue;
+			}
+		}
+	}
+	int Cost[4] = {0};
+	int nCopperUnit = 0;
+	if (bValid && nCostSlot)
+	{
+		Lua_GetGlobal(L, "ItemCostIBIndex");
+		nTable = Lua_GetTopIndex(L);
+		bValid = Lua_IsTable(L, nTable);
+		if (bValid)
+		{
+			Lua_RawGetI(L, nTable, nCostSlot);
+			nTable = Lua_GetTopIndex(L);
+			bValid = Lua_IsTable(L, nTable);
+		}
+		for (int i = 0; i < 4 && bValid; i++)
+			bValid = ReadReforgeInteger(L, nTable, Keys[i], &Cost[i]);
+		if (bValid)
+			bValid = ReadReforgeInteger(L, nTable, "Coppernums", &nCopperUnit);
+	}
+	else
+		bValid = FALSE;
+	Lua_SetTopIndex(L, nTop);
+	int nResult = -1;
+	if (bValid && nCopperUnit > 0 && nCopperUnit <= 100 && Cost[0] == item_materials)
+	{
+		KItemList& List = Player[nPlayer].m_ItemList;
+		int nItem = 0;
+		int nMatches = 0;
+		for (PlayerItem* p = List.GetFirstItem(); p; p = List.GetNextItem())
+		{
+			if (MatchNormalItem(p, Args[0], Args[1], Args[2], Args[3]))
+			{
+				nItem = p->nIdx;
+				nMatches += Item[nItem].GetStackCount();
+			}
+		}
+		if (nMatches == 1)
+			nResult = List.ReforgeItem(nItem, Args[6], Args[7], Cost[0], Cost[1], Cost[2], Cost[3],
+				nCount, nCopperUnit * nCount);
+	}
+	if (nResult < 0)
+		g_DebugLog("[Reforge] Rejected script transaction: player=%d table=%d", nPlayer, Args[9]);
+	Lua_PushNumber(L, nResult);
+	return 1;
+}
+#endif
+
 int LuaDelNormalItem(Lua_State *L)
 {
 	int nParamNum = Lua_GetTopIndex(L);
@@ -5577,6 +5700,11 @@ TLua_Funcs GameScriptFuns[] =
 	{"TaskNote", LuaTaskNote},
 	{"MsgBox", LuaMsgBox},
 	{"HaveNormalItem", LuaHaveNormalItem},
+#ifdef _SERVER
+	{"HaveItem2", LuaHaveNormalItem},
+	{"GetCopperCashCount", LuaGetCopperCashCount},
+	{"ImproveItemMagicAttr", LuaImproveItemMagicAttr},
+#endif
 	{"DelNormalItem", LuaDelNormalItem},
 	{"Talk", LuaTalkUI},
 	{"GetTaskTemp", LuaGetTempTaskValue},

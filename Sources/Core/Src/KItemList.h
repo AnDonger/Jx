@@ -106,6 +106,8 @@ public:
 	void		SyncItemPosition(int nIdx);
 	void		SyncItemCount(int nIdx);
 	void		SyncItem(int nIdx, BOOL bRefresh = FALSE);
+	int		ReforgeItem(int nIdx, int nParticular, int nLevel, int nCostGenre, int nCostDetail, int nCostParticular, int nCostLevel, int nMaterialCount, int nCopperCount);
+	int		GetCopperCashCount();
 	BOOL		SplitItem(ItemPos* pSource, DWORD dwCount);
 	int			CountNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, BOOL bQuick = FALSE);
 	BOOL		ConsumeNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, int nCount, BOOL bQuick = FALSE);

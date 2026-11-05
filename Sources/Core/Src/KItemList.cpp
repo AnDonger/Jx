@@ -2,6 +2,7 @@
 #include	"MyAssert.H"
 #include	"KItem.h"
 #include	"KItemSet.h"
+#include	"KItemGenerator.h"
 #include	"KNpc.h"
 #include	"KMath.h"
 #include	"KPlayer.h"
@@ -214,6 +215,10 @@ void KItemList::SyncItem(int nIdx, BOOL bRefresh)
 	sItem.m_RandomSeed = Item[nIdx].m_GeneratorParam.uRandomSeed;
 	sItem.m_Version = Item[nIdx].m_GeneratorParam.nVersion;
 	sItem.m_Durability = Item[nIdx].GetDurability();
+	sItem.unknown_1 = Item[nIdx].m_dwUpgradeData;
+	sItem.unknown_2 = Item[nIdx].m_btGenerationFlags;
+	sItem.StateFlags = Item[nIdx].m_btStateFlags;
+	sItem.BindingMode = Item[nIdx].m_btBindingMode;
 	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC) - sizeof(sItem.unknown_9));
 }
 
@@ -2046,7 +2051,7 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 		if ( !Player[m_PlayerIdx].CheckTrading() )	// 不在交易
 			return;
 #ifdef _SERVER
-		if (m_Hand && Item[m_Hand].GetGenre() == item_task)
+		if (m_Hand && (Item[m_Hand].GetGenre() == item_task || Item[m_Hand].IsBound()))
 		{
 			// 通知界面，任务道具，不能交易
 			SHOW_MSG_SYNC	sMsg;
@@ -2873,7 +2878,7 @@ void	KItemList::AutoLoseItemFromEquipmentRoom(int nRate)
 		nItemIdx = m_Room[room_equipment].GetNextItem(nItemIdx, nXpos, nYpos, &nXpos, &nYpos);
 		if (nItemIdx == 0)
 			break;
-		if (item_task == Item[nItemIdx].GetGenre())
+		if (item_task == Item[nItemIdx].GetGenre() || Item[nItemIdx].IsBound())
 			continue;
 		ItemSet.m_sLoseItemFromEquipmentRoom[nPos].nIdx = nItemIdx;
 		ItemSet.m_sLoseItemFromEquipmentRoom[nPos].nPlace = pos_equiproom;
@@ -2937,7 +2942,7 @@ void	KItemList::AutoLoseEquip()
 
 	for (i = 0; i < itempart_num; i++)
 	{
-		if (m_EquipItem[i] <= 0)
+		if (m_EquipItem[i] <= 0 || Item[m_EquipItem[i]].IsBound())
 			continue;
 		if (i == itempart_horse)
 			continue;
@@ -2956,7 +2961,7 @@ void	KItemList::AutoLoseEquip()
 
 	for (i = 0; i < itempart_num; i++)
 	{
-		if (m_EquipItem[i] <= 0)
+		if (m_EquipItem[i] <= 0 || Item[m_EquipItem[i]].IsBound())
 			continue;
 		nTotalPower += g_nEquipPower[i];
 		ItemSet.m_sLoseEquipItem[nPos].nIdx = m_EquipItem[i];
@@ -3139,5 +3144,134 @@ BOOL KItemList::ConsumeNormalItem(int nGenre, int nDetail, int nParticular, int 
 		nCount -= nTake;
 	}
 	return nCount == 0;
+}
+#endif
+
+#ifdef _SERVER
+static void ReforgeMessage(int nPlayer, const char* pszMessage)
+{
+	PLAYER_SCRIPTACTION_SYNC Info;
+	memset(&Info, 0, sizeof(Info));
+	Info.m_bUIId = UI_MSGINFO;
+	Info.m_bParam2 = 1;
+	g_StrCpyLen(Info.m_pContent, pszMessage, sizeof(Info.m_pContent));
+	Info.m_nBufferLen = strlen(Info.m_pContent);
+	Player[nPlayer].DoScriptAction(&Info);
+}
+
+int KItemList::GetCopperCashCount()
+{
+	int nCount = 0;
+	for (int nList = m_UseIdx.GetNext(0); nList; nList = m_UseIdx.GetNext(nList))
+	{
+		KItem& Data = Item[m_Items[nList].nIdx];
+		if (m_Items[nList].nPlace == pos_equiproom && Data.GetGenre() == item_task &&
+			Data.GetDetailType() == 47)
+			nCount += Data.GetStackCount();
+	}
+	return nCount;
+}
+
+int KItemList::ReforgeItem(int nIdx, int nParticular, int nLevel, int nCostGenre,
+	int nCostDetail, int nCostParticular, int nCostLevel, int nMaterialCount, int nCopperCount)
+{
+	int nBase, nLuckMin, nLuckMax;
+	int nList = FindSame(nIdx);
+	if (!nList || m_Items[nList].nPlace != pos_equiproom || m_Hand ||
+		Player[m_PlayerIdx].CheckTrading() || Item[nIdx].GetGenre() != item_equip ||
+		nMaterialCount <= 0 || nCopperCount <= 0 || nMaterialCount > 1000 || nCopperCount > 100000 ||
+		!ItemGen.GetReforgeRule(&nBase, &nLuckMin, &nLuckMax))
+	{
+		ReforgeMessage(m_PlayerIdx, "当前无法重铸，请放下鼠标物品并确认装备位于背包中。 ");
+		return -1;
+	}
+	KItem& Source = Item[nIdx];
+	const KBASICPROP_EQUIPMENT* pTarget = ItemGen.GetEquipmentTemplate(Source.GetDetailType(),
+		nParticular, nLevel, Source.m_GeneratorParam.nVersion);
+	if (!pTarget)
+	{
+		ReforgeMessage(m_PlayerIdx, "没有找到对应的原始重铸装备资源，本次不扣费。");
+		return -1;
+	}
+	BOOL bFull = TRUE;
+	for (int i = 0; i < 10; i++)
+	{
+		if (Source.m_aryBaseAttrib[i].nValue[0] < pTarget->m_aryPropBasic[i].sRange.nMax)
+			bFull = FALSE;
+	}
+	if (bFull)
+	{
+		ReforgeMessage(m_PlayerIdx, "该装备属性已经全满，无需再次重铸，本次不扣费。");
+		return -1;
+	}
+	BOOL bMaterial = CountNormalItem(nCostGenre, nCostDetail, nCostParticular, nCostLevel) >= nMaterialCount;
+	if (!bMaterial && GetCopperCashCount() < nCopperCount)
+	{
+		ReforgeMessage(m_PlayerIdx, "重铸材料及替代铜钱不足，本次不扣费。");
+		return -1;
+	}
+	int nLuck = Source.m_btReforgeLuck + nLuckMin + g_Random(nLuckMax - nLuckMin + 1);
+	if (nLuck > 100)
+		nLuck = 100;
+	int nRate = nBase + nLuck;
+	if (nRate > 100)
+		nRate = 100;
+	BOOL bSuccess = nRate == 100 || g_Random(100) < nRate;
+	KItem Result;
+	if (!ItemGen.PrepareReforge(Source, nParticular, nLevel, bSuccess, nRate == 100, &Result))
+	{
+		ReforgeMessage(m_PlayerIdx, "装备属性无法按原资源完整还原，本次不扣费，请联系管理员查看日志。");
+		return -1;
+	}
+	// 全部校验和结果生成完成后才进入扣费阶段。背包操作在同一游戏线程顺序执行。
+	if (bMaterial)
+	{
+		if (!ConsumeNormalItem(nCostGenre, nCostDetail, nCostParticular, nCostLevel, nMaterialCount))
+			return -1;
+	}
+	else
+	{
+		int nLeft = nCopperCount;
+		int nCosts[MAX_PLAYER_ITEM];
+		int nCostsCount = 0;
+		for (int n = m_UseIdx.GetNext(0); n; n = m_UseIdx.GetNext(n))
+		{
+			int nItem = m_Items[n].nIdx;
+			if (m_Items[n].nPlace == pos_equiproom && Item[nItem].GetGenre() == item_task &&
+				Item[nItem].GetDetailType() == 47)
+				nCosts[nCostsCount++] = nItem;
+		}
+		for (int n = 0; n < nCostsCount && nLeft; n++)
+		{
+			int nTake = Item[nCosts[n]].GetStackCount();
+			if (nTake > nLeft)
+				nTake = nLeft;
+			if (!ConsumeItem(nCosts[n], nTake))
+				return -1;
+			nLeft -= nTake;
+		}
+		GAME_CURRENCY_NOTICE_SYNC Notice;
+		memset(&Notice, 0, sizeof(Notice));
+		Notice.ProtocolType = 0xCC;
+		Notice.Currency = 1;
+		Notice.Amount = nCopperCount;
+		g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &Notice, sizeof(Notice));
+	}
+	// 同时只保留当前一件装备的幸运值，切换后旧件清零；元数据随物品存档。
+	for (int n = m_UseIdx.GetNext(0); n; n = m_UseIdx.GetNext(n))
+		Item[m_Items[n].nIdx].m_btReforgeLuck = 0;
+	Result.m_btReforgeLuck = bSuccess ? 0 : nLuck;
+	Item[nIdx] = Result;
+	SyncItem(nIdx, TRUE);
+	char szMessage[180];
+	sprintf(szMessage, "本次重铸成功率%d%%，%s；当前幸运值%d。", nRate,
+		bSuccess ? (nRate == 100 ? "重铸成功，属性全满" : "重铸成功，属性提升") : "魔法属性保持不变",
+		Result.m_btReforgeLuck);
+	ReforgeMessage(m_PlayerIdx, szMessage);
+	g_DebugLog("[Reforge] player=%s item=%lu target=%d,%d,%d cost=%s:%d rate=%d success=%d luck=%d seed=%u",
+		Player[m_PlayerIdx].m_PlayerName, Result.GetID(), Result.GetDetailType(), nParticular, nLevel,
+		bMaterial ? "material" : "copper", bMaterial ? nMaterialCount : nCopperCount, nRate,
+		bSuccess, Result.m_btReforgeLuck, Result.m_GeneratorParam.uRandomSeed);
+	return bSuccess ? 1 : 0;
 }
 #endif

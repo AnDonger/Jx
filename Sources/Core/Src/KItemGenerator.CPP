@@ -19,6 +19,10 @@ KItemGenerator::KItemGenerator()
 {
 	m_nCurrentVersion = -1;
 	m_uRandomSeed = 42;
+	m_bReforgeEnabled = FALSE;
+	m_nReforgeBaseRate = 0;
+	m_nReforgeLuckMin = 5;
+	m_nReforgeLuckMax = 10;
 }
 
 // 当前客户端物品使用MSVC随机序列，不能沿用引擎旧随机序列。
@@ -122,6 +126,9 @@ BOOL KItemGenerator::Init()
 		}
 	}
 	m_MedNumOfEntries = m_BPTLib.GetMedicineRecordNumber();
+#ifdef _SERVER
+	InitReforge();
+#endif
 	return TRUE;
 /*
 	m_BPTLib.Init();
@@ -289,7 +296,7 @@ BOOL KItemGenerator::Gen_Equipment(IN int nDetailType,
 	pItem->SetAttrib_CBR(pEqu);
 	pItem->SetSeries(nSeriesReq);
 
-	if (NULL == pnaryMALevel)
+	if (NULL == pnaryMALevel || pEqu->m_nSeries != 0)
 		return TRUE;
 	// 确定装备的魔法属性
 	KItemNormalAttrib	sMA[6];	// 道具的魔法属性
@@ -782,7 +789,7 @@ BOOL KItemGenerator::Gen_ExistEquipment(IN int nDetailType,
 	pItem->SetAttrib_CBR(pEqu);
 	pItem->SetSeries(nSeriesReq);
 
-	if (NULL == pnaryMALevel)
+	if (NULL == pnaryMALevel || pEqu->m_nSeries != 0)
 		return TRUE;
 	// 确定装备的魔法属性
 	KItemNormalAttrib	sMA[6];	// 道具的魔法属性
@@ -893,3 +900,186 @@ BOOL KItemGenerator::Gen_TownPortal(IN OUT KItem* pItem)
 	*pItem = *pPortal;
 	return TRUE;
 }
+
+#ifdef _SERVER
+BOOL KItemGenerator::InitReforge()
+{
+	m_bReforgeEnabled = FALSE;
+	KIniFile Config;
+	if (!Config.Load("\\ServerConfig\\EquipmentReforge.ini"))
+	{
+		g_DebugLog("[Reforge] Configuration missing; reforging disabled.");
+		return FALSE;
+	}
+	int nEnabled = 0;
+	Config.GetInteger("Reforge", "Enabled", 0, &nEnabled);
+	Config.GetInteger("Reforge", "BaseSuccessRate", 10, &m_nReforgeBaseRate);
+	Config.GetInteger("Reforge", "LuckMin", 5, &m_nReforgeLuckMin);
+	Config.GetInteger("Reforge", "LuckMax", 10, &m_nReforgeLuckMax);
+	if (m_nReforgeBaseRate < 0 || m_nReforgeBaseRate > 100 ||
+		m_nReforgeLuckMin < 1 || m_nReforgeLuckMin > m_nReforgeLuckMax ||
+		m_nReforgeLuckMax > 100 || (nEnabled != 0 && nEnabled != 1))
+	{
+		g_DebugLog("[Reforge] Invalid configuration; reforging disabled.");
+		return FALSE;
+	}
+	m_bReforgeEnabled = nEnabled != 0;
+	g_DebugLog("[Reforge] enabled=%d base=%d luck=%d..%d", m_bReforgeEnabled,
+		m_nReforgeBaseRate, m_nReforgeLuckMin, m_nReforgeLuckMax);
+	return TRUE;
+}
+
+BOOL KItemGenerator::GetReforgeRule(int* pnBaseRate, int* pnLuckMin, int* pnLuckMax)
+{
+	*pnBaseRate = m_nReforgeBaseRate;
+	*pnLuckMin = m_nReforgeLuckMin;
+	*pnLuckMax = m_nReforgeLuckMax;
+	return m_bReforgeEnabled;
+}
+
+const KBASICPROP_EQUIPMENT* KItemGenerator::GetEquipmentTemplate(int nDetail,
+	int nParticular, int nLevel, int nVersion)
+{
+	KLibOfBPT* pLibrary = GetVersionLibrary(nVersion == -1 ? m_nCurrentVersion : nVersion);
+	return pLibrary ? pLibrary->FindEquipment(nDetail, nParticular, nLevel) : NULL;
+}
+
+// 根据客户端的MSVC随机序列反求种子，不发送客户端不能还原的独立属性。
+// 以范围最大的属性为锚点，逆推种子，再完整校验所有属性；不改变游戏随机序列。
+static BOOL FindReforgeSeed(const KEQCP_BASIC* pBasic, const int* pValues, int nLuck, UINT* puSeed)
+{
+	int nAnchor = -1;
+	int nAnchorStep = 0;
+	int nSteps = 0;
+	int nLargest = 0;
+	for (int i = 0; i < 10; i++)
+	{
+		int nRange = pBasic[i].sRange.nMax - pBasic[i].sRange.nMin + 1;
+		if (nRange <= 0 || nRange > 32768 || pValues[i] < pBasic[i].sRange.nMin ||
+			pValues[i] > pBasic[i].sRange.nMax)
+			return FALSE;
+		if (i < 5 && !nLuck)
+		{
+			if (pValues[i] != pBasic[i].sRange.nMin)
+				return FALSE;
+			continue;
+		}
+		nSteps++;
+		if (nRange > nLargest)
+		{
+			nLargest = nRange;
+			nAnchor = i;
+			nAnchorStep = nSteps;
+		}
+	}
+	if (nAnchor < 0)
+		return FALSE;
+	// 214013 * 0xB9B33155 == 1 (mod 2^32).
+	for (UINT nHigh = pValues[nAnchor] - pBasic[nAnchor].sRange.nMin;
+		nHigh < 32768; nHigh += nLargest)
+	{
+		for (UINT nLow = 0; nLow < 65536; nLow++)
+		{
+			UINT uSeed = (nHigh << 16) | nLow;
+			for (int n = 0; n < nAnchorStep; n++)
+				uSeed = (uSeed - 2531011U) * 0xB9B33155U;
+			UINT uState = uSeed;
+			BOOL bMatch = TRUE;
+			for (int j = 0; j < 10; j++)
+			{
+				if (j < 5 && !nLuck)
+					continue;
+				uState = uState * 214013U + 2531011U;
+				int nRange = pBasic[j].sRange.nMax - pBasic[j].sRange.nMin + 1;
+				int nValue = pBasic[j].sRange.nMin + ((uState >> 16) & 0x7fff) % nRange;
+				if (nValue != pValues[j])
+				{
+					bMatch = FALSE;
+					break;
+				}
+			}
+			if (bMatch)
+			{
+				*puSeed = uSeed;
+				return TRUE;
+			}
+		}
+	}
+	return FALSE;
+}
+
+BOOL KItemGenerator::PrepareReforge(const KItem& Source, int nParticular, int nLevel,
+	BOOL bImprove, BOOL bFull, KItem* pResult)
+{
+	const KBASICPROP_EQUIPMENT* pOld = GetEquipmentTemplate(Source.m_CommonAttrib.nDetailType,
+		Source.m_CommonAttrib.nParticularType, Source.m_CommonAttrib.nLevel, Source.m_GeneratorParam.nVersion);
+	const KBASICPROP_EQUIPMENT* pNew = GetEquipmentTemplate(Source.m_CommonAttrib.nDetailType,
+		nParticular, nLevel, Source.m_GeneratorParam.nVersion);
+	if (!pResult || !pOld || !pNew || !pOld->m_nSeries || !pNew->m_nSeries ||
+		pOld->m_nSeries != pNew->m_nSeries || pOld->m_nWidth != pNew->m_nWidth ||
+		pOld->m_nHeight != pNew->m_nHeight || Source.m_btGenerationFlags != 0)
+		return FALSE;
+
+	int nLuck = 0;
+	int Values[10];
+	int Slots[5];
+	int nSlots = 0;
+	for (int i = 0; i < 10; i++)
+	{
+		if (pOld->m_aryPropBasic[i].nType != pNew->m_aryPropBasic[i].nType)
+			return FALSE;
+		if (i < 5)
+		{
+			Values[i] = pNew->m_aryPropBasic[i].sRange.nMax;
+			if (Values[i] != pNew->m_aryPropBasic[i].sRange.nMin)
+				nLuck = 1;
+		}
+		else
+		{
+			Values[i] = Source.m_aryBaseAttrib[i].nValue[0];
+			if (Values[i] < pNew->m_aryPropBasic[i].sRange.nMin ||
+				Values[i] > pNew->m_aryPropBasic[i].sRange.nMax)
+				return FALSE;
+			if (pNew->m_aryPropBasic[i].nType && Values[i] < pNew->m_aryPropBasic[i].sRange.nMax)
+				Slots[nSlots++] = i;
+			if (bFull)
+				Values[i] = pNew->m_aryPropBasic[i].sRange.nMax;
+		}
+	}
+	if (bImprove && !bFull && nSlots)
+	{
+		// 原资源给出上下限；每一项保底原值，至少一项提升，不允许属性回落。
+		int nGuaranteed = Slots[g_Random(nSlots)];
+		for (int i = 5; i < 10; i++)
+		{
+			int nMin = Values[i] + (i == nGuaranteed ? 1 : 0);
+			int nMax = pNew->m_aryPropBasic[i].sRange.nMax;
+			Values[i] = nMin + g_Random(nMax - nMin + 1);
+		}
+	}
+	UINT uSeed = 0;
+	if (!FindReforgeSeed(pNew->m_aryPropBasic, Values, nLuck, &uSeed))
+	{
+		g_DebugLog("[Reforge] Cannot reconstruct attributes: detail=%d particular=%d level=%d version=%d",
+			Source.m_CommonAttrib.nDetailType, nParticular, nLevel, Source.m_GeneratorParam.nVersion);
+		return FALSE;
+	}
+	*pResult = Source;
+	pResult->m_GeneratorParam.uRandomSeed = uSeed;
+	if (!Gen_ExistEquipment(Source.m_CommonAttrib.nDetailType, nParticular, Source.m_CommonAttrib.nSeries, nLevel,
+		Source.m_GeneratorParam.nGeneratorLevel, nLuck, Source.m_GeneratorParam.nVersion, pResult))
+		return FALSE;
+	for (int i = 0; i < 10; i++)
+	{
+		if (pResult->m_aryBaseAttrib[i].nValue[0] != Values[i])
+			return FALSE;
+	}
+	int nDur = Source.m_nCurrentDur;
+	if (pResult->GetMaxDurability() >= 0 && nDur > pResult->GetMaxDurability())
+		nDur = pResult->GetMaxDurability();
+	pResult->SetDurability(nDur);
+	pResult->m_btStateFlags |= 1;
+	pResult->m_btBindingMode = 2;
+	return TRUE;
+}
+#endif

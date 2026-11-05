@@ -30,6 +30,11 @@ KItem::KItem()
 	::memset(&m_GeneratorParam,	 0, sizeof(m_GeneratorParam));
 	m_nCurrentDur = -1;
 	m_nStackCount = 1;
+	m_dwUpgradeData = 0;
+	m_btGenerationFlags = 0;
+	m_btStateFlags = 0;
+	m_btBindingMode = 0;
+	m_btReforgeLuck = 0;
 #ifndef _SERVER
 	::memset(&m_Image,   0, sizeof(KRUImage));
 #endif
@@ -242,11 +247,12 @@ BOOL KItem::SetAttrib_Base(const KEQCP_BASIC* pBasic)
 		pDst = &(m_aryBaseAttrib[i]);
 		pSrc = &(pBasic[i]);
 		pDst->nAttribType = pSrc->nType;
-		// 当前客户端前五项为基础属性，后五项为固定附加属性。
+		// 当前客户端前五项为基础属性，有颜色的装备再从模板生成五项固定附加属性。
+		// 普通白装不消耗这五次随机数，保持后续随机魔法属性的序列。
 		// Luck为0时基础属性取最小值；非0时按客户端种子生成。
-		if (i >= 5)
+		if (i >= 5 && m_CommonAttrib.nSeries == 0)
 			pDst->nValue[0] = pSrc->sRange.nMax;
-		else if (m_GeneratorParam.nLuck == 0)
+		else if (i < 5 && m_GeneratorParam.nLuck == 0)
 			pDst->nValue[0] = pSrc->sRange.nMin;
 		else
 			pDst->nValue[0] = ItemGen.GetRandomNumber(pSrc->sRange.nMin, pSrc->sRange.nMax);
@@ -685,6 +691,11 @@ void KItem::Remove()
 {
 	m_nIndex = 0;
 	m_nStackCount = 1;
+	m_dwUpgradeData = 0;
+	m_btGenerationFlags = 0;
+	m_btStateFlags = 0;
+	m_btBindingMode = 0;
+	m_btReforgeLuck = 0;
 }
 
 BOOL KItem::SetBaseAttrib(IN const KItemNormalAttrib* pAttrib)
