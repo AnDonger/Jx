@@ -91,7 +91,6 @@ public:
 	void		BroadCast(const char* pBuffer, size_t uSize);
 	BOOL		LoadMap(int nIdx);
 	BOOL		LoadFixedNpc();
-	BOOL		LoadSupplementNpc();
 	void		LoadObject(char* szPath, char* szFile);
 	void		NpcChangeRegion(int nSrcRegionIdx, int nDesRegionIdx, int nNpcIdx);
 	void		PlayerChangeRegion(int nSrcRegionIdx, int nDesRegionIdx, int nObjIdx);

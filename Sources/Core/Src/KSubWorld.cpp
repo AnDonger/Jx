@@ -645,99 +645,6 @@ BOOL KSubWorld::LoadFixedNpc()
 }
 
 
-BOOL KSubWorld::LoadSupplementNpc()
-{
-	const char *pszFile = "\\ServerConfig\\MonsterSpawns.ini";
-	KIniFile IniFile;
-	if (!IniFile.Load(pszFile))
-		return TRUE;
-
-	char szSection[32];
-	sprintf(szSection, "%d", m_SubWorldID);
-	int nEnabled, nCount;
-	IniFile.GetInteger(szSection, "Enabled", 0, &nEnabled);
-	if (!nEnabled)
-		return TRUE;
-	IniFile.GetInteger(szSection, "Count", 0, &nCount);
-	if (nCount < 0 || nCount >= MAX_NPC)
-	{
-		printf("[Spawn] Invalid count for map %d: %s.\n", m_SubWorldID, pszFile);
-		return FALSE;
-	}
-	if (!nCount)
-		return TRUE;
-
-	// 原始区域已有怪物时优先使用原始数据，避免与补充配置重复刷怪。
-	int nUsed = 0;
-	for (int nNpc = NpcSet.GetNextIdx(0); nNpc; nNpc = NpcSet.GetNextIdx(nNpc))
-	{
-		nUsed++;
-		if (Npc[nNpc].m_SubWorldIndex == m_nIndex && Npc[nNpc].m_Kind == kind_normal)
-		{
-			printf("[Spawn] Map %d already has native monsters; supplemental data skipped.\n", m_SubWorldID);
-			return TRUE;
-		}
-	}
-	if (nCount > MAX_NPC - 1 - nUsed)
-	{
-		printf("[Spawn] Insufficient NPC slots for map %d (%d records).\n", m_SubWorldID, nCount);
-		return FALSE;
-	}
-
-	KMemClass Data;
-	KSPNpc *pCells = (KSPNpc *)Data.Alloc(nCount * sizeof(KSPNpc));
-	if (!pCells)
-		return FALSE;
-	memset(pCells, 0, nCount * sizeof(KSPNpc));
-
-	// 先验证整张表，再创建实体；坐标必须使用当前地图的可行走区域。
-	for (int i = 0; i < nCount; i++)
-	{
-		char szKey[32], szValue[128], cExtra;
-		int nTemplate, nLevel, nX, nY, nKind;
-		sprintf(szKey, "Npc%03d", i + 1);
-		if (!IniFile.GetString(szSection, szKey, "", szValue, sizeof(szValue)) ||
-			sscanf(szValue, "%d,%d,%d,%d %c", &nTemplate, &nLevel, &nX, &nY, &cExtra) != 4 ||
-			nTemplate < 0 || nTemplate >= MAX_NPCSTYLE ||
-			nTemplate >= g_NpcSetting.GetHeight() - 1 ||
-			nLevel < 1 || nLevel >= MAX_NPC_LEVEL ||
-			nX < 0 || nY < 0 || GetBarrier(nX, nY) != Obstacle_NULL)
-		{
-			printf("[Spawn] Invalid map %d record %s: %s.\n", m_SubWorldID, szKey, pszFile);
-			return FALSE;
-		}
-		g_NpcSetting.GetInteger(nTemplate + 2, "Kind", -1, &nKind);
-		if (nKind != kind_normal)
-		{
-			printf("[Spawn] Map %d record %s is not a monster template.\n", m_SubWorldID, szKey);
-			return FALSE;
-		}
-
-		KSPNpc& Cell = pCells[i];
-		Cell.nTemplateID = nTemplate;
-		Cell.nLevel = (short)nLevel;
-		Cell.nPositionX = nX;
-		Cell.nPositionY = nY;
-		Cell.shKind = kind_normal;
-		int nCamp, nSeries;
-		g_NpcSetting.GetInteger(nTemplate + 2, "Camp", 0, &nCamp);
-		g_NpcSetting.GetInteger(nTemplate + 2, "Series", 0, &nSeries);
-		Cell.cCamp = (BYTE)nCamp;
-		Cell.cSeries = (BYTE)nSeries;
-		g_NpcSetting.GetString(nTemplate + 2, "Name", "", Cell.szName, sizeof(Cell.szName));
-	}
-
-	int nLoaded = 0;
-	for (int i = 0; i < nCount; i++)
-	{
-		if (NpcSet.Add(m_nIndex, &pCells[i]))
-			nLoaded++;
-	}
-	printf("[Spawn] Map %d: %d/%d monsters loaded from %s.\n",
-		m_SubWorldID, nLoaded, nCount, pszFile);
-	return nLoaded == nCount;
-}
-
 BOOL KSubWorld::LoadMap(int nId)
 {
 	KIniFile	IniFile;
@@ -846,9 +753,6 @@ BOOL KSubWorld::LoadMap(int nId)
 
 	if (nLoadedRegions && !LoadFixedNpc())
 		printf("[FixedNpc] Supplemental fixed NPC data rejected for map %d.\n", nId);
-
-	if (nLoadedRegions && !LoadSupplementNpc())
-		printf("[Spawn] Supplemental monster data rejected for map %d.\n", nId);
 
 	// 客户端区域记录常不带脚本名。仅当原资源确有同地图、同名脚本时补上关联。
 	// 不改变站位，不生成脚本；有显式关联时继续使用原来的路径。
