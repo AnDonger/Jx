@@ -5,6 +5,7 @@
 #include "KItem.h"
 #include "KItemSet.h"
 #include "KItemGenerator.h"
+#include "KMagicDesc.h"
 #ifndef _STANDALONE
 #include "../../../lib/S3DBInterface.h"
 #else
@@ -15,7 +16,6 @@
 #include "ImgRef.h"
 #include "KPlayer.h"
 #include "../../Represent/iRepresent/iRepresentshell.h"
-#include "KMagicDesc.h"
 #endif
 
 KItem	Item[MAX_ITEM];
@@ -656,6 +656,34 @@ int KItem::GetMaxStackCount() const
 	if (m_CommonAttrib.bStack == 1 || m_CommonAttrib.bStack > 255)
 		return 255;
 	return m_CommonAttrib.bStack;
+}
+
+// 发奖脚本需要在入包合叠之前取得说明，避免继续访问已被合并的实例。
+BOOL KItem::GetMagicDescription(char* pszText, int nSize) const
+{
+	if (!pszText || nSize <= 0)
+		return FALSE;
+	pszText[0] = 0;
+	int nLength = 0;
+	for (int i = 0; i < 6; i++)
+	{
+		if (!m_aryMagicAttrib[i].nAttribType)
+			continue;
+		const char* pszDesc = GetGenre() == item_materials ?
+			g_MagicDesc.GetGemDesc(m_aryMagicAttrib[i]) :
+			g_MagicDesc.GetDesc((void*)&m_aryMagicAttrib[i]);
+		if (!pszDesc || !pszDesc[0])
+			return FALSE;
+		int nBytes = strlen(pszDesc);
+		if (nLength + nBytes + (nLength ? 1 : 0) >= nSize)
+			return FALSE;
+		if (nLength)
+			pszText[nLength++] = '\n';
+		memcpy(pszText + nLength, pszDesc, nBytes);
+		nLength += nBytes;
+		pszText[nLength] = 0;
+	}
+	return TRUE;
 }
 
 BOOL KItem::CanStackWith(const KItem& Other) const

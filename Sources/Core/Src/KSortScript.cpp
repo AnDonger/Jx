@@ -165,7 +165,9 @@ static void LoadNpcScriptCalls(DWORD dwScriptId, const char *pszFile)
 			Calls[Function].insert("<dynamic function>");
 		else if (IsScriptNameChar((unsigned char)Token[0]))
 		{
-			if (i > 0 && (Tokens[i - 1] == "." || Tokens[i - 1] == ":"))
+			// 两个点是字符串连接，不能把 ..GetName() 误判为对象方法调用。
+			if (i > 0 && (Tokens[i - 1] == ":" ||
+				Tokens[i - 1] == "." && (i < 2 || Tokens[i - 2] != ".")))
 				Calls[Function].insert("<dynamic function>");
 			else
 				Calls[Function].insert(Token);

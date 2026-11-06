@@ -28,6 +28,7 @@
 #include "KPlayerTask.h"
 #include "KSubWorldSet.h"
 #include "KItemGenerator.h"
+#include "KMagicDesc.h"
 #include "KObjSet.h"
 #include "KItemSet.h"
 #include "KNpc.h"
@@ -72,7 +73,6 @@ unsigned int g_ulAdjustColorCount = 0;
 BOOL	InitTaskSetting();
 
 #ifndef _SERVER
-#include "KMagicDesc.h"
 #include "Scene/KScenePlaceC.h"
 BOOL g_bUISelIntelActiveWithServer = FALSE;//当前选择框是否与服务器端交互
 BOOL g_bUISpeakActiveWithServer = FALSE;
@@ -177,8 +177,8 @@ CORE_API void g_InitCore()
 	ItemGen.Init();
 #ifndef _SERVER
 	InitAdjustColorTab();//加载偏色表......
-	g_MagicDesc.Init();
 #endif
+	g_MagicDesc.Init();
 	g_ItemChangeRes.Init();
 #endif
 	NpcSet.Init();

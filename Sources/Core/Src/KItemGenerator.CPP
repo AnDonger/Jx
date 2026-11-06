@@ -85,6 +85,8 @@ BOOL KItemGenerator::Init()
 		return FALSE;
 	if (!m_BPTLib.Init(m_nCurrentVersion))		// 此调用从若干的tab file中载入所有的初始属性
 		return FALSE;
+	if (!InitGemRules())
+		return FALSE;
 
 	for (int i = equip_meleeweapon; i < equip_detailnum - equip_meleeweapon; i++)
 	{
@@ -800,6 +802,59 @@ BOOL KItemGenerator::Gen_ExistEquipment(IN int nDetailType,
 	return bEC;
 }
 
+// 原表目前每件玉石生成一条属性，类型与数值均由物品种子决定。
+BOOL KItemGenerator::InitGemRules()
+{
+	m_GemRules.clear();
+	KTabFile Table;
+	if (!Table.Load("\\settings\\item\\打孔镶嵌\\宝石属性表_sc.txt"))
+	{
+		g_DebugLog("[Gem] Original gem property table is unavailable.");
+		return FALSE;
+	}
+	for (int nRow = 2; nRow <= Table.GetHeight(); nRow++)
+	{
+		int nGenre, nDetail, nParticular, nLevel, nGenerateCount;
+		Table.GetInteger(nRow, 2, -1, &nGenre);
+		Table.GetInteger(nRow, 3, -1, &nDetail);
+		Table.GetInteger(nRow, 4, -1, &nParticular);
+		Table.GetInteger(nRow, 5, -1, &nLevel);
+		Table.GetInteger(nRow, 8, 0, &nGenerateCount);
+		if (nGenre != item_materials || nDetail < 0 || nParticular != 0 ||
+			nLevel != 0 || nGenerateCount != 1 || m_GemRules.find(nDetail) != m_GemRules.end())
+		{
+			g_DebugLog("[Gem] Unsupported or duplicate original gem row: row=%d", nRow);
+			return FALSE;
+		}
+		GemRule Rule;
+		ZeroMemory(&Rule, sizeof(Rule));
+		int nPrevious = -1;
+		for (int i = 0; i < 10; i++)
+		{
+			GemProperty& Property = Rule.Properties[i];
+			Table.GetInteger(nRow, 9 + i * 5, 0, &Property.nType);
+			if (Property.nType <= 0)
+				break;
+			Table.GetInteger(nRow, 10 + i * 5, 0, &Property.nMin);
+			Table.GetInteger(nRow, 11 + i * 5, 0, &Property.nMax);
+			Table.GetInteger(nRow, 12 + i * 5, 100, &Property.nThreshold);
+			if (Property.nMin < 0 || Property.nMax < Property.nMin ||
+				Property.nThreshold < nPrevious || Property.nThreshold > 100)
+			{
+				g_DebugLog("[Gem] Invalid original gem property: row=%d property=%d", nRow, i + 1);
+				return FALSE;
+			}
+			nPrevious = Property.nThreshold;
+			Rule.nCount++;
+		}
+		if (!Rule.nCount || nPrevious != 100)
+			return FALSE;
+		m_GemRules[nDetail] = Rule;
+	}
+	g_DebugLog("[Gem] Original gem property rules loaded: count=%d", (int)m_GemRules.size());
+	return !m_GemRules.empty();
+}
+
 // 普通材料按原资源的类别、详细类别、等级和版本生成，不占用任务专用物品类型。
 BOOL KItemGenerator::Gen_Material(IN int nDetailType,
 								  IN int nParticularType,
@@ -816,11 +871,36 @@ BOOL KItemGenerator::Gen_Material(IN int nDetailType,
 	if (!pMaterial)
 		return FALSE;
 
+	UINT uSeed = pItem->m_GeneratorParam.uRandomSeed;
 	ZeroMemory(&pItem->m_GeneratorParam, sizeof(pItem->m_GeneratorParam));
 	pItem->m_GeneratorParam.nVersion = nVersion == -1 ? m_nCurrentVersion : nVersion;
 	*pItem = *pMaterial;
 	pItem->SetDurability(-1);
 	pItem->SetStackCount(1);
+	std::map<int, GemRule>::const_iterator it = m_GemRules.find(nDetailType);
+	if (it != m_GemRules.end() && nParticularType == 0 && nLevel == 0)
+	{
+		pItem->m_GeneratorParam.uRandomSeed = uSeed;
+		UINT uPreviousSeed = m_uRandomSeed;
+		SetRandomSeed(uSeed);
+		int nRoll = GetRandomNumber(0, 99);
+		KItemNormalAttrib Attributes[6];
+		ZeroMemory(Attributes, sizeof(Attributes));
+		for (int i = 0; i < it->second.nCount; i++)
+		{
+			const GemProperty& Property = it->second.Properties[i];
+			if (Property.nThreshold >= nRoll)
+			{
+				Attributes[0].nAttribType = Property.nType;
+				Attributes[0].nValue[0] = GetRandomNumber(Property.nMin, Property.nMax);
+				Attributes[0].nValue[1] = -1;
+				Attributes[0].nValue[2] = -1;
+				break;
+			}
+		}
+		SetRandomSeed(uPreviousSeed);
+		pItem->SetMagicAttrib(Attributes);
+	}
 	return TRUE;
 }
 

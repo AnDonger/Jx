@@ -38,6 +38,7 @@
 //#include "KNetServer.h"
 //#include "../MultiServer/Heaven/interface/iServer.h"
 #include "KNewProtocolProcess.h"
+#include <vector>
 #endif
 #include "KSortScript.h"
 #ifndef __linux
@@ -154,6 +155,137 @@ lab_setByte:
 	return 1;
 }
 #ifdef _SERVER
+// 只保留本次NPC回调会修改的随身物品。装备和仓库不参与原任务交材料。
+struct KNpcScriptItem
+{
+	KItem Data;
+	int Place;
+	int X;
+	int Y;
+};
+
+struct KNpcScriptExchange
+{
+	KPlayerTask Task;
+	std::vector<KNpcScriptItem> Items;
+	int Money[room_num];
+	int Depth;
+	int Experience;
+	BOOL Failed;
+};
+
+static KNpcScriptExchange *g_NpcScriptExchange[MAX_PLAYER] = {NULL};
+
+KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
+{
+	m_nPlayer = nPlayer > 0 && nPlayer < MAX_PLAYER ? nPlayer : 0;
+	m_bCommitted = FALSE;
+	if (!m_nPlayer)
+		return;
+	KNpcScriptExchange *&pState = g_NpcScriptExchange[m_nPlayer];
+	if (pState)
+	{
+		pState->Depth++;
+		return;
+	}
+	pState = new KNpcScriptExchange;
+	pState->Task = Player[m_nPlayer].m_cTask;
+	pState->Depth = 1;
+	pState->Experience = 0;
+	pState->Failed = FALSE;
+	KItemList& List = Player[m_nPlayer].m_ItemList;
+	for (int i = 0; i < room_num; i++)
+		pState->Money[i] = List.GetMoney(i);
+	for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
+	{
+		if (pItem->nPlace != pos_equiproom && pItem->nPlace != pos_immediacy &&
+			pItem->nPlace != pos_hand)
+			continue;
+		KNpcScriptItem Saved;
+		Saved.Data = Item[pItem->nIdx];
+		Saved.Place = pItem->nPlace;
+		Saved.X = pItem->nX;
+		Saved.Y = pItem->nY;
+		pState->Items.push_back(Saved);
+	}
+}
+
+KNpcScriptTransaction::~KNpcScriptTransaction()
+{
+	if (!m_nPlayer)
+		return;
+	KNpcScriptExchange *pState = g_NpcScriptExchange[m_nPlayer];
+	if (!m_bCommitted)
+		pState->Failed = TRUE;
+	if (--pState->Depth)
+		return;
+	g_NpcScriptExchange[m_nPlayer] = NULL;
+	KPlayer& Role = Player[m_nPlayer];
+	if (pState->Failed)
+	{
+		KItemList& List = Role.m_ItemList;
+		std::vector<int> Indices;
+		for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
+		{
+			if (pItem->nPlace == pos_equiproom || pItem->nPlace == pos_immediacy ||
+				pItem->nPlace == pos_hand)
+				Indices.push_back(pItem->nIdx);
+		}
+		for (size_t i = 0; i < Indices.size(); i++)
+		{
+			List.Remove(Indices[i]);
+			ItemSet.Remove(Indices[i]);
+		}
+		BOOL bRestored = TRUE;
+		for (size_t i = 0; i < pState->Items.size(); i++)
+		{
+			KNpcScriptItem& Saved = pState->Items[i];
+			int nItem = ItemSet.Add(&Saved.Data);
+			if (nItem > 0)
+			{
+				Item[nItem].SetID(Saved.Data.GetID());
+				if (!List.Add(nItem, Saved.Place, Saved.X, Saved.Y))
+				{
+					ItemSet.Remove(nItem);
+					bRestored = FALSE;
+				}
+			}
+			else
+				bRestored = FALSE;
+		}
+		for (int i = 0; i < room_num; i++)
+			List.SetRoomMoney(i, pState->Money[i]);
+		List.SendMoneySync();
+		Role.m_cTask = pState->Task;
+		Role.m_cTask.SyncNotes(m_nPlayer);
+		Role.m_bWaitingPlayerFeedBack = false;
+		Role.m_nAvailableAnswerNum = 0;
+		PLAYER_SCRIPTACTION_SYNC Info;
+		ZeroMemory(&Info, sizeof(Info));
+		Info.m_bUIId = UI_MSGINFO;
+		Info.m_bParam2 = 1;
+		strcpy(Info.m_pContent, "操作未完成，物品、金钱和任务进度已恢复，请检查背包空间及材料。");
+		Info.m_nBufferLen = strlen(Info.m_pContent);
+		Role.DoScriptAction(&Info);
+		if (!bRestored)
+			Role.m_bFinishLoading = FALSE;
+		g_DebugLog("[NpcScript] Exchange rolled back: player=%d items=%d restored=%d",
+			m_nPlayer, (int)pState->Items.size(), bRestored);
+	}
+	else if (pState->Experience > 0)
+		Role.DirectAddExp(pState->Experience);
+	delete pState;
+}
+
+static void RejectNpcScriptItem(Lua_State *L, int nPlayer)
+{
+	if (nPlayer > 0 && nPlayer < MAX_PLAYER && g_NpcScriptExchange[nPlayer])
+	{
+		g_NpcScriptExchange[nPlayer]->Failed = TRUE;
+		lua_error(L, "NPC item exchange could not be completed");
+	}
+}
+
 int LuaModifyRepute(Lua_State *L)
 {
 	if (Lua_GetTopIndex(L) <1) 
@@ -719,6 +851,57 @@ int LuaDelNormalItemInQuick(Lua_State* L)
 }
 #endif
 
+#ifdef _SERVER
+// 原瑶池脚本的 Item2 系列仍按种类、类别、具体类别、等级匹配。
+// 第四参数是装备资源等级，不是绑定标志；仓库、装备栏和鼠标不参与交材料。
+int LuaGetItemLevel2(Lua_State *L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	int nLevel = 0;
+	if (nPlayer > 0 && nTop == 3)
+	{
+		int nGenre = (int)Lua_ValueToNumber(L, 1);
+		int nDetail = (int)Lua_ValueToNumber(L, 2);
+		int nParticular = (int)Lua_ValueToNumber(L, 3);
+		KItemList& List = Player[nPlayer].m_ItemList;
+		for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
+		{
+			if (pItem->nPlace != pos_equiproom || pItem->nIdx <= 0 || pItem->nIdx >= MAX_ITEM)
+				continue;
+			KItem& Data = Item[pItem->nIdx];
+			if (Data.GetGenre() == nGenre && Data.GetDetailType() == nDetail &&
+				Data.GetParticular() == nParticular && Data.GetLevel() > nLevel)
+				nLevel = Data.GetLevel();
+		}
+	}
+	Lua_PushNumber(L, nLevel);
+	return 1;
+}
+
+// Credit 与本服现有 AddRepute/GetRepute 共用持久声望，不能另建隐形余额。
+int LuaDecCredit(Lua_State *L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	int nResult = 0;
+	if (nPlayer > 0 && nTop == 1 && Lua_IsNumber(L, 1))
+	{
+		double nAmount = Lua_ValueToNumber(L, 1);
+		int nCredit = Player[nPlayer].m_cTask.GetSaveVal(TASKVALUE_REPUTE);
+		if (nAmount > 0 && nAmount <= nCredit && nAmount == (int)nAmount)
+		{
+			Player[nPlayer].m_cTask.SetSaveVal(TASKVALUE_REPUTE, nCredit - (int)nAmount);
+			nResult = 1;
+		}
+	}
+	Lua_PushNumber(L, nResult);
+	return 1;
+}
+#endif
+
 int LuaHaveNormalItem(Lua_State *L)
 {
 	int nParamNum = Lua_GetTopIndex(L);
@@ -750,6 +933,57 @@ int LuaGetCopperCashCount(Lua_State* L)
 {
 	int nPlayer = GetPlayerIndex(L);
 	Lua_PushNumber(L, nPlayer > 0 ? Player[nPlayer].m_ItemList.GetCopperCashCount() : 0);
+	return 1;
+}
+
+// 原玉石还原脚本的费用来自自身配方，按背包实际铜钱数量扣除并同步通知。
+int LuaWasteCopperCash(Lua_State *L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	if (nPlayer <= 0 || nTop != 1 || !Lua_IsNumber(L, 1))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	double nAmount = Lua_ValueToNumber(L, 1);
+	KItemList& List = Player[nPlayer].m_ItemList;
+	if (nAmount <= 0 || nAmount > List.GetCopperCashCount() || nAmount != (int)nAmount)
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	std::vector<int> Costs;
+	for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
+	{
+		if (pItem->nPlace == pos_equiproom && pItem->nIdx > 0 &&
+			Item[pItem->nIdx].GetGenre() == item_task && Item[pItem->nIdx].GetDetailType() == 47)
+			Costs.push_back(pItem->nIdx);
+	}
+	int nLeft = (int)nAmount;
+	for (size_t i = 0; i < Costs.size() && nLeft > 0; i++)
+	{
+		int nTake = Item[Costs[i]].GetStackCount();
+		if (nTake > nLeft)
+			nTake = nLeft;
+		if (!List.ConsumeItem(Costs[i], nTake))
+		{
+			RejectNpcScriptItem(L, nPlayer);
+			Lua_PushNumber(L, 0);
+			return 1;
+		}
+		nLeft -= nTake;
+	}
+	GAME_CURRENCY_NOTICE_SYNC Notice;
+	ZeroMemory(&Notice, sizeof(Notice));
+	Notice.ProtocolType = 0xCC;
+	Notice.Currency = 1;
+	Notice.Amount = (int)nAmount;
+	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Notice, sizeof(Notice));
+	Lua_PushNumber(L, 1);
 	return 1;
 }
 
@@ -863,6 +1097,9 @@ int LuaDelNormalItem(Lua_State *L)
 	int nPlayerIndex = GetPlayerIndex(L);
 	if (nPlayerIndex <= 0 || nParamNum < 4 || nParamNum > 5)
 	{
+#ifdef _SERVER
+		RejectNpcScriptItem(L, nPlayerIndex);
+#endif
 		Lua_PushNumber(L, 0);
 		return 1;
 	}
@@ -878,6 +1115,9 @@ int LuaDelNormalItem(Lua_State *L)
 #endif
 		)
 	{
+#ifdef _SERVER
+		RejectNpcScriptItem(L, nPlayerIndex);
+#endif
 		Lua_PushNumber(L, 0);
 		return 1;
 	}
@@ -907,6 +1147,10 @@ int LuaDelNormalItem(Lua_State *L)
 			nCount -= nStack;
 		}
 	}
+#ifdef _SERVER
+	if (nCount > 0)
+		RejectNpcScriptItem(L, nPlayerIndex);
+#endif
 	Lua_PushNumber(L, nCount == 0 ? 1 : 0);
 	return 1;
 }
@@ -2023,6 +2267,22 @@ int LuaAddEventItem(Lua_State *L)
 		}
 	}
 	
+#ifdef _SERVER
+	if (g_NpcScriptExchange[nPlayerIndex])
+	{
+		int nItem = ItemSet.Add(item_task, 0, 1, 0, nEventId, 1, NULL,
+			g_SubWorldSet.GetGameVersion());
+		BOOL bAdded = nItem > 0 && Player[nPlayerIndex].m_ItemList.AddPickupItem(nItem, -1, -1);
+		if (!bAdded)
+		{
+			if (nItem > 0)
+				ItemSet.Remove(nItem);
+			RejectNpcScriptItem(L, nPlayerIndex);
+		}
+		Lua_PushNumber(L, bAdded ? 1 : 0);
+		return 1;
+	}
+#endif
 	int nIndex = ItemSet.Add(item_task, 0, 0, 0, nEventId, 0, 0, 1, 0);
 	
 	if (nIndex <= 0) 
@@ -3193,8 +3453,18 @@ int LuaAddOwnExp(Lua_State * L)
 	if (nPlayerIndex > 0)								
 	{									
 		int nExp = (int)Lua_ValueToNumber(L,1);
+#ifdef _SERVER
+		KNpcScriptExchange *pState = g_NpcScriptExchange[nPlayerIndex];
+		if (pState && nExp >= 0)
+		{
+			if (nExp > 0x7fffffff - pState->Experience)
+				RejectNpcScriptItem(L, nPlayerIndex);
+			pState->Experience += nExp;
+			return 0;
+		}
+#endif
 		if (nExp >= 0)
-			Player[nPlayerIndex].DirectAddExp((int)Lua_ValueToNumber(L,1));
+			Player[nPlayerIndex].DirectAddExp(nExp);
 	}
 	return 0;
 }
@@ -3255,8 +3525,10 @@ int LuaAddNormalItem(Lua_State *L)
 {
 	int nParamNum = Lua_GetTopIndex(L);
 	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex <= 0 || nParamNum != 6)
+	if (nPlayerIndex <= 0 || nParamNum < 6 || nParamNum > 7 ||
+		nParamNum == 7 && (!Lua_IsNumber(L, 7) || Lua_ValueToNumber(L, 7) != 0))
 	{
+		RejectNpcScriptItem(L, nPlayerIndex);
 		Lua_PushNumber(L, 0);
 		return 1;
 	}
@@ -3267,6 +3539,7 @@ int LuaAddNormalItem(Lua_State *L)
 		if (!Lua_IsNumber(L, i + 1) || nValue < 0 || nValue > 2147483647.0 ||
 			nValue != (int)nValue)
 		{
+			RejectNpcScriptItem(L, nPlayerIndex);
 			Lua_PushNumber(L, 0);
 			return 1;
 		}
@@ -3275,18 +3548,38 @@ int LuaAddNormalItem(Lua_State *L)
 	int MagicLevels[6] = {0};
 	int nItem = ItemSet.Add(Values[0], Values[4], Values[3], Values[5],
 		Values[1], Values[2], MagicLevels, g_SubWorldSet.GetGameVersion());
+	// 新材料表没有等级列，旧 NPC 发奖仍有等级1的引用；只兼容这一种引用。
+	if (nItem <= 0 && Values[0] == item_materials && Values[3] == 1)
+	{
+		nItem = ItemSet.Add(Values[0], Values[4], 0, Values[5],
+			Values[1], Values[2], MagicLevels, g_SubWorldSet.GetGameVersion());
+	}
 	if (nItem <= 0)
 	{
+		RejectNpcScriptItem(L, nPlayerIndex);
 		Lua_PushNumber(L, 0);
 		return 1;
 	}
 	if (Item[nItem].GetGenre() == item_equip)
 		Item[nItem].SetDurability(Item[nItem].GetMaxDurability());
+	char szMagic[512];
+	if (!Item[nItem].GetMagicDescription(szMagic, sizeof(szMagic)))
+	{
+		ItemSet.Remove(nItem);
+		RejectNpcScriptItem(L, nPlayerIndex);
+		Lua_PushNumber(L, 0);
+		Lua_PushString(L, "");
+		return 2;
+	}
 	BOOL bAdded = Player[nPlayerIndex].m_ItemList.AddPickupItem(nItem, -1, -1);
 	if (!bAdded)
+	{
 		ItemSet.Remove(nItem);
+		RejectNpcScriptItem(L, nPlayerIndex);
+	}
 	Lua_PushNumber(L, bAdded ? 1 : 0);
-	return 1;
+	Lua_PushString(L, bAdded ? szMagic : "");
+	return 2;
 }
 
 // 新资源中的职业编号：0甲士、1道士、2异人，与角色存档和初始技能一致。
@@ -5702,7 +5995,15 @@ TLua_Funcs GameScriptFuns[] =
 	{"HaveNormalItem", LuaHaveNormalItem},
 #ifdef _SERVER
 	{"HaveItem2", LuaHaveNormalItem},
+	{"DelItem2", LuaDelNormalItem},
+	{"GetItemLevel2", LuaGetItemLevel2},
+	{"IsExistItem", LuaHaveNormalItem},
+	{"AddNormalItem2", LuaAddNormalItem},
+	{"AddNormalItemPile", LuaAddNormalItem},
+	{"GetCredit", LuaGetRepute},
+	{"DecCredit", LuaDecCredit},
 	{"GetCopperCashCount", LuaGetCopperCashCount},
+	{"WasteCopperCash", LuaWasteCopperCash},
 	{"ImproveItemMagicAttr", LuaImproveItemMagicAttr},
 #endif
 	{"DelNormalItem", LuaDelNormalItem},

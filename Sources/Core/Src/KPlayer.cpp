@@ -838,6 +838,7 @@ BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 			sSync.Exp = m_nExp;
 			sSync.WorldRank = (WORD)m_nWorldStat;
 			sSync.Money = m_ItemList.GetMoney(room_equipment);
+			sSync.Reputation = m_cTask.GetSaveVal(TASKVALUE_REPUTE);
 			sSync.WeightMax = m_nWeightMax;
 			sSync.ServerTime = (DWORD)time(NULL);
 			if (SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSync, sizeof(GAME_CURPLAYER_SYNC))))
@@ -4650,6 +4651,11 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
 		!CheckNpcScriptFunction(dwScriptId, szFunName))
 		return FALSE;
+	// 瑶池原脚本包含多材料、多奖励交换，异常时不能保留半次操作。
+	KNpcScriptTransaction Exchange(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
+		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
+		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
+		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 52 ? m_nPlayerIndex : 0);
 /*	bool	bCanExecuteScript = true;
 
   //当前脚本未置空
@@ -4707,6 +4713,7 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 			return FALSE;
 		}
 		
+		Exchange.Commit();
 		return TRUE;
 	}
 	catch(...)
@@ -4728,6 +4735,11 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId, char * szFunName, char *  szParams
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
 		!CheckNpcScriptFunction(dwScriptId, szFunName))
 		return FALSE;
+	// 瑶池原脚本包含多材料、多奖励交换，异常时不能保留半次操作。
+	KNpcScriptTransaction Exchange(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
+		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
+		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
+		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 52 ? m_nPlayerIndex : 0);
 /*bool	bCanExecuteScript = true;
 
   //当前脚本未置空
@@ -4799,6 +4811,7 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId, char * szFunName, char *  szParams
 			Npc[m_nIndex].m_ActionScriptID = 0;
 			return FALSE;
 		}
+		Exchange.Commit();
 		return TRUE;
 	}
 	catch(...)

@@ -356,6 +356,96 @@ const char* KMagicDesc::GetDesc(void *pData)
 	return m_szDesc;
 }
 
+// 玉石原表使用当前客户端编号，不能直接按旧内部枚举取说明。
+const char* KMagicDesc::GetGemDesc(const KMagicAttrib& Attrib)
+{
+	const char* pszKey = NULL;
+	switch (Attrib.nAttribType)
+	{
+	case 41: pszKey = "armordefenseenhance_p"; break;
+	case 86: pszKey = "lifemax_p"; break;
+	case 90: pszKey = "manamax_p"; break;
+	case 97: pszKey = "strength_v"; break;
+	case 98: pszKey = "dexterity_v"; break;
+	case 99: pszKey = "constitution_v"; break;
+	case 100: pszKey = "intellect_v"; break;
+	case 104: pszKey = "physicsres_p"; break;
+	case 106: pszKey = "freezetimereduce_p"; break;
+	case 108: pszKey = "poisontimereduce_p"; break;
+	case 110: pszKey = "stuntimereduce_p"; break;
+	case 111: pszKey = "fastwalkrun_p"; break;
+	case 113: pszKey = "fasthitrecover_v"; break;
+	case 115: pszKey = "attackspeed_v"; break;
+	case 116: pszKey = "castspeed_v"; break;
+	case 118: pszKey = "meleedamagereturn_p"; break;
+	case 120: pszKey = "rangedamagereturn_p"; break;
+	case 121: pszKey = "addphysicsdamage_v"; break;
+	case 122: pszKey = "addfiredamage_v"; break;
+	case 123: pszKey = "addcolddamage_v"; break;
+	case 124: pszKey = "addlightingdamage_v"; break;
+	case 126: pszKey = "addphysicsdamage_p"; break;
+	case 134: pszKey = "damagetomana_p"; break;
+	case 146: pszKey = "deadlystrikeenhance_p"; break;
+	case 150: pszKey = "adddefense_v"; break;
+	case 161: pszKey = "coldenhance_p"; break;
+	case 162: pszKey = "fireenhance_p"; break;
+	case 163: pszKey = "lightingenhance_p"; break;
+	case 166: pszKey = "attackratingenhance_v"; break;
+	case 173: pszKey = "earthenhance_p"; break;
+	case 177: pszKey = "addearthdamage_v"; break;
+	case 182: pszKey = "addallattribute_v"; break;
+	case 260: pszKey = "fixmanashield_p"; break;
+	case 269: pszKey = "reducephysicsdeadlystirke"; break;
+	case 270: pszKey = "reducemagicdeadlystirke"; break;
+	case 276: pszKey = "ignoremaigcresist"; break;
+	case 278: pszKey = "ignorelightresist"; break;
+	case 279: pszKey = "ignorecoldresist"; break;
+	case 280: pszKey = "ignoreearthresist"; break;
+	case 281: pszKey = "ignoreexdefence"; break;
+	case 293: pszKey = "magic_absorb_physics_damage"; break;
+	case 294: pszKey = "magic_absorb_fire_damage"; break;
+	case 295: pszKey = "magic_absorb_light_damage"; break;
+	case 296: pszKey = "magic_absorb_cold_damage"; break;
+	case 297: pszKey = "magic_absorb_earth_damage"; break;
+	case 298: pszKey = "magic_lucky_strike"; break;
+	case 311: pszKey = "enhance_hit_recover"; break;
+	case 312: pszKey = "reduce_range_damage_return"; break;
+	case 313: pszKey = "reduce_melee_damage_return"; break;
+	case 314: pszKey = "reduce_physics_deadly_strike"; break;
+	case 315: pszKey = "reduce_allmagic_deadly_strike"; break;
+	default: return NULL;
+	}
+	char szFormat[128];
+	m_IniFile.GetString("Descript", pszKey, "", szFormat, sizeof(szFormat));
+	m_szDesc[0] = 0;
+	int nLength = 0;
+	for (int i = 0; szFormat[i] && nLength < sizeof(m_szDesc) - 1;)
+	{
+		if (szFormat[i] == '#' && szFormat[i + 1] == 'd' &&
+			szFormat[i + 2] >= '1' && szFormat[i + 2] <= '3' && szFormat[i + 3])
+		{
+			int nValue = Attrib.nValue[szFormat[i + 2] - '1'];
+			char szValue[48];
+			if (szFormat[i + 3] == '+')
+				sprintf(szValue, "%s%d", nValue >= 0 ? "增加" : "减少", abs(nValue));
+			else if (szFormat[i + 3] == '~')
+				sprintf(szValue, "%s%d", nValue >= 0 ? "减少" : "增加", abs(nValue));
+			else
+				sprintf(szValue, "%d", nValue);
+			int nBytes = strlen(szValue);
+			if (nLength + nBytes >= sizeof(m_szDesc))
+				return NULL;
+			memcpy(m_szDesc + nLength, szValue, nBytes);
+			nLength += nBytes;
+			i += 4;
+		}
+		else
+			m_szDesc[nLength++] = szFormat[i++];
+	}
+	m_szDesc[nLength] = 0;
+	return m_szDesc[0] ? m_szDesc : NULL;
+}
+
 const char * g_MagicID2String(int nAttrib)
 {
 	if ((nAttrib < 0) || nAttrib >= magic_normal_end) return MAGIC_ATTRIB_STRING[magic_normal_end];

@@ -185,6 +185,11 @@ int KItemSet::Add(int nItemGenre, int nSeries,
 	case item_mine:				// 矿石类
 		break;
 	case item_materials:		// 普通材料
+		if (!nRandomSeed)
+		{
+			pItem->m_GeneratorParam.uRandomSeed = g_GetRandomSeed();
+			g_Random(0xffffffffU);
+		}
 		bGenerated = ItemGen.Gen_Material(nDetailType, nParticularType, nLevel, nVersion, pItem);
 		break;
 	case item_magicorscript:

@@ -38,6 +38,20 @@ protected:
 	int		m_nReforgeLuckMax;
 	std::map<int, KLibOfBPT*> m_VersionLibraries;
 
+	struct GemProperty
+	{
+		int nType;
+		int nMin;
+		int nMax;
+		int nThreshold;
+	};
+	struct GemRule
+	{
+		int nCount;
+		GemProperty Properties[10];
+	};
+	std::map<int, GemRule> m_GemRules;
+
 // 以下是辅助成员变量
 	int			m_GMA_naryMA[2][NUMOFCMA];	// [0][x]: 前缀; [1][x]: 后缀
 	int			m_GMA_nCount[2];
@@ -75,6 +89,7 @@ public:
 	BOOL GetGoldItemByIndex(IN int, OUT KItem*);
 // 以下是辅助函数
 private:
+	BOOL InitGemRules();
 	KLibOfBPT* GetVersionLibrary(int nVersion);
 	BOOL Gen_MagicAttrib(int, const int*, int, int, KItemNormalAttrib*, int nVersion, KLibOfBPT*);
 	const KMAGICATTRIB_TABFILE* GetMARecord(int) const;

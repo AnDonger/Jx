@@ -13,6 +13,7 @@ public:
 	~KMagicDesc();
 	BOOL		Init();
 	const char*	GetDesc(void* pData);
+	const char*	GetGemDesc(const KMagicAttrib& Attrib);
 };
 
 extern KMagicDesc	g_MagicDesc;

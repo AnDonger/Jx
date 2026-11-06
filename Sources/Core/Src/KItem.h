@@ -177,6 +177,7 @@ public:
 	int		GetMaxStackCount() const;
 	BOOL	CanStackWith(const KItem& Other) const;
 	BOOL	SetStackCount(int nCount);
+	BOOL	GetMagicDescription(char* pszText, int nSize) const;
 	int		GetMaxDurability();
 	int		GetTotalMagicLevel();
 	int		GetRepairPrice();
