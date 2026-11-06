@@ -424,6 +424,31 @@ static_assert(sizeof(GAME_MALL_COMMAND) == 9, "B8/38 mall request header");
 static_assert(sizeof(GAME_MALL_BUY_COMMAND) == 16, "B8/38 mall purchase");
 static_assert(sizeof(GAME_MALL_GOODS) == 45, "F8/55 mall goods entry");
 
+// 20261106 official new-compound capture: nine positions, followed by a fixed zero.
+struct GAME_COMPOUND_ITEM_POS
+{
+	int Place;
+	int X;
+	int Y;
+};
+
+struct GAME_COMPOUND_COMMAND
+{
+	BYTE ProtocolType;
+	GAME_COMPOUND_ITEM_POS Materials[9];
+	int unknown_1;
+};
+
+struct GAME_COMPOUND_RESULT
+{
+	BYTE ProtocolType;
+	DWORD unknown_1;
+	int Result;
+};
+
+static_assert(sizeof(GAME_COMPOUND_COMMAND) == 113, "89 compound request");
+static_assert(sizeof(GAME_COMPOUND_RESULT) == 9, "AB compound result");
+
 struct GAME_USE_ITEM_COMMAND
 {
 	BYTE ProtocolType;

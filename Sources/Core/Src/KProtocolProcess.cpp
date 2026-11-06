@@ -223,6 +223,7 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[0x7E] = &KProtocolProcess::NpcReviveCommand;
 	ProcessFunc[0xA4] = &KProtocolProcess::CurrentPickupCommand;
 	ProcessFunc[0x85] = &KProtocolProcess::CurrentMountCommand;
+	ProcessFunc[0x89] = &KProtocolProcess::CurrentCompoundCommand;
 	ProcessFunc[0x94] = &KProtocolProcess::CurrentSplitItemCommand;
 	ProcessFunc[0x98] = &KProtocolProcess::CloseStoreBoxCommand;
 	ProcessFunc[0xAC] = &KProtocolProcess::PlayerBuyBackItem;
@@ -3734,6 +3735,24 @@ void KProtocolProcess::PlayerPickUpItem(int nIndex, BYTE* pProtocol)
 	if (Player[nIndex].CheckTrading())
 		return;
 	Player[nIndex].ServerPickUpItem(pProtocol);
+}
+
+void KProtocolProcess::CurrentCompoundCommand(int nIndex, BYTE* pProtocol)
+{
+	const GAME_COMPOUND_COMMAND* pCommand = (const GAME_COMPOUND_COMMAND*)pProtocol;
+	int nResult = -1;
+	if (Player[nIndex].CanCompoundItems() && pCommand->unknown_1 == 0)
+		nResult = Player[nIndex].m_ItemList.CompoundItems(pCommand->Materials, 9);
+	if (nResult < 0)
+		Player[nIndex].CompoundMessage("合成未完成，请检查配方、材料、金钱、背包空间及是否仍在合成NPC附近。");
+	GAME_COMPOUND_RESULT Result;
+	ZeroMemory(&Result, sizeof(Result));
+	Result.ProtocolType = 0xAB;
+	// 实录：0成功，4概率失败；拒绝请求同时显示明确提示，停止连续合成。
+	Result.Result = nResult > 0 ? 0 : 4;
+	g_pServer->PackDataToClient(Player[nIndex].m_nNetConnectIdx, &Result, sizeof(Result));
+	g_DebugLog("[Compound] Request: player=%d unknown_1=%d result=%d", nIndex,
+		pCommand->unknown_1, nResult);
 }
 
 void KProtocolProcess::CurrentSplitItemCommand(int nIndex, BYTE* pProtocol)

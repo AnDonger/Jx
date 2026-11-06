@@ -8,6 +8,7 @@
 #include	"KPlayer.h"
 #include	"KItemList.h"
 #include	"KItemChangeRes.h"
+#include	"KIniFile.h"
 #ifdef _SERVER
 //#include	"../../Headers/IServer.h"
 #include	"KObjSet.h"
@@ -15,6 +16,60 @@
 #ifndef _SERVER
 #include	"CoreShell.h"
 #include	"../../Headers/IClient.h"
+#endif
+
+#ifdef _SERVER
+static int g_nEquipmentRoomWidth = 0;
+static int g_nEquipmentRoomHeight = 0;
+
+BOOL KItemList::InitEquipmentRoomLayout()
+{
+	KIniFile Layout;
+	if (!Layout.Load("\\ui\\ui3\\随身物品.ini"))
+	{
+		g_DebugLog("[Inventory] Original equipment layout unavailable.");
+		return FALSE;
+	}
+	int nWidth, nHeight;
+	Layout.GetInteger("ItemBox", "HUnits", 0, &nWidth);
+	Layout.GetInteger("ItemBox", "VUnits", 0, &nHeight);
+	if (nWidth <= 0 || nWidth > EQUIPMENT_ROOM_WIDTH ||
+		nHeight <= 0 || nHeight > EQUIPMENT_ROOM_HEIGHT)
+	{
+		g_DebugLog("[Inventory] Invalid original equipment layout: width=%d height=%d", nWidth, nHeight);
+		return FALSE;
+	}
+	g_nEquipmentRoomWidth = nWidth;
+	g_nEquipmentRoomHeight = nHeight;
+	g_DebugLog("[Inventory] Loaded original equipment layout: width=%d height=%d", nWidth, nHeight);
+	return TRUE;
+}
+
+static BOOL IsEquipmentPosition(int nX, int nY, int nWidth, int nHeight)
+{
+	return nWidth > 0 && nHeight > 0 && nX >= 0 && nY >= 0 &&
+		nWidth <= g_nEquipmentRoomWidth && nHeight <= g_nEquipmentRoomHeight &&
+		nX <= g_nEquipmentRoomWidth - nWidth && nY <= g_nEquipmentRoomHeight - nHeight;
+}
+
+static BOOL FindEquipmentRoom(KInventory& Room, int nWidth, int nHeight, POINT* pPos)
+{
+	if (!pPos || !IsEquipmentPosition(0, 0, nWidth, nHeight))
+		return FALSE;
+	for (int nY = 0; nY <= g_nEquipmentRoomHeight - nHeight; nY++)
+	{
+		for (int nX = 0; nX <= g_nEquipmentRoomWidth - nWidth; nX++)
+		{
+			if (Room.CheckRoom(nX, nY, nWidth, nHeight))
+			{
+				pPos->x = nX;
+				pPos->y = nY;
+				return TRUE;
+			}
+		}
+	}
+	return FALSE;
+}
 #endif
 
 // PK死亡惩罚掉穿的装备，各装备掉落的权值
@@ -374,7 +429,10 @@ BOOL KItemList::BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, in
 		if (!PlannedRoom.PlaceItem(m_Items[nList].nX, m_Items[nList].nY, nIdx,
 			Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
 			return FALSE;
-		if (nRemainingItems > 0 && Item[nIdx].CanStackWith(*pTemplate))
+		if (nRemainingItems > 0 &&
+			IsEquipmentPosition(m_Items[nList].nX, m_Items[nList].nY,
+				Item[nIdx].GetWidth(), Item[nIdx].GetHeight()) &&
+			Item[nIdx].CanStackWith(*pTemplate))
 		{
 			int nAdded = Item[nIdx].GetMaxStackCount() - Item[nIdx].GetStackCount();
 			if (nAdded > nRemainingItems)
@@ -393,7 +451,7 @@ BOOL KItemList::BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, in
 	{
 		POINT Pos;
 		if (nNewCount >= nFreeCount || nNewCount >= MAX_PLAYER_ITEM ||
-			!PlannedRoom.FindRoom(pTemplate->GetWidth(), pTemplate->GetHeight(), &Pos))
+			!FindEquipmentRoom(PlannedRoom, pTemplate->GetWidth(), pTemplate->GetHeight(), &Pos))
 			break;
 		int nIdx = ItemSet.Add(pTemplate);
 		if (!nIdx)
@@ -506,7 +564,10 @@ BOOL KItemList::AddPickupItem(int nIdx, int nX, int nY)
 	while (nList && nRemaining > 0)
 	{
 		int nTarget = m_Items[nList].nIdx;
-		if (m_Items[nList].nPlace == pos_equiproom && Item[nTarget].CanStackWith(Item[nIdx]))
+		if (m_Items[nList].nPlace == pos_equiproom &&
+			IsEquipmentPosition(m_Items[nList].nX, m_Items[nList].nY,
+				Item[nTarget].GetWidth(), Item[nTarget].GetHeight()) &&
+			Item[nTarget].CanStackWith(Item[nIdx]))
 		{
 			int nFree = Item[nTarget].GetMaxStackCount() - Item[nTarget].GetStackCount();
 			if (nFree > nRemaining)
@@ -521,10 +582,11 @@ BOOL KItemList::AddPickupItem(int nIdx, int nX, int nY)
 	{
 		if (!FindFree())
 			return FALSE;
-		if (!m_Room[room_equipment].CheckRoom(nX, nY, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
+		if (!IsEquipmentPosition(nX, nY, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()) ||
+			!m_Room[room_equipment].CheckRoom(nX, nY, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
 		{
 			POINT Pos;
-			if (!m_Room[room_equipment].FindRoom(Item[nIdx].GetWidth(), Item[nIdx].GetHeight(), &Pos))
+			if (!FindEquipmentRoom(m_Room[room_equipment], Item[nIdx].GetWidth(), Item[nIdx].GetHeight(), &Pos))
 				return FALSE;
 			nX = Pos.x;
 			nY = Pos.y;
@@ -543,6 +605,8 @@ BOOL KItemList::AddPickupItem(int nIdx, int nX, int nY)
 	{
 		int nTarget = m_Items[nList].nIdx;
 		if (nTarget != nIdx && m_Items[nList].nPlace == pos_equiproom &&
+			IsEquipmentPosition(m_Items[nList].nX, m_Items[nList].nY,
+				Item[nTarget].GetWidth(), Item[nTarget].GetHeight()) &&
 			Item[nTarget].CanStackWith(Item[nIdx]))
 		{
 			int nFree = Item[nTarget].GetMaxStackCount() - Item[nTarget].GetStackCount();
@@ -2695,46 +2759,16 @@ BOOL	KItemList::TradeCheckCanPlace()
 //--------------------------------------------------------------------------
 //	功能：判断一定长宽的物品能否放进物品栏 (为了服务器效率，本函数里面没有调用其他函数)
 //--------------------------------------------------------------------------
-BOOL	KItemList::CheckCanPlaceInEquipment(int nWidth, int nHeight, int *pnX, int *pnY)
+BOOL KItemList::CheckCanPlaceInEquipment(int nWidth, int nHeight, int *pnX, int *pnY)
 {
-	if (nWidth <= 0 || nHeight <= 0 || !pnX || !pnY)
+	if (!pnX || !pnY)
 		return FALSE;
-
-	_ASSERT(m_Room[room_equipment].m_pArray);
-
-	LPINT	pnTempRoom;
-	int		i, j, a, b, nNext;
-
-	pnTempRoom = m_Room[room_equipment].m_pArray;
-
-	for (i = 0; i < EQUIPMENT_ROOM_HEIGHT - nHeight + 1; i++)
-	{
-		for (j = 0; j < EQUIPMENT_ROOM_WIDTH - nWidth + 1; j++)
-		{
-			nNext = 0;
-			for (a = 0; a < nHeight; a++)
-			{
-				for (b = 0; b < nWidth; b++)
-				{
-					if (pnTempRoom[(i + a) * EQUIPMENT_ROOM_WIDTH + j + b])
-					{
-						nNext = 1;
-						break;
-					}
-				}
-				if (nNext)
-					break;
-			}
-			if (!nNext)
-			{
-				*pnX = j;
-				*pnY = i;
-				return TRUE;
-			}
-		}
-	}
-
-	return FALSE;
+	POINT Pos;
+	if (!FindEquipmentRoom(m_Room[room_equipment], nWidth, nHeight, &Pos))
+		return FALSE;
+	*pnX = Pos.x;
+	*pnY = Pos.y;
+	return TRUE;
 }
 #endif
 

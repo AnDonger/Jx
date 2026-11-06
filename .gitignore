@@ -55,3 +55,27 @@ Test/
 /Resources/settings/*
 !Resources/settings/ibshop.txt
 Resources/settings/ibshop.txt
+
+# Reviewed compound sources required by the native server; other PAK extracts stay ignored.
+!Resources/script/
+/Resources/script/*
+!Resources/script/瑶池/
+/Resources/script/瑶池/*
+!Resources/script/瑶池/赤松子.lua
+!Resources/settings/item/
+/Resources/settings/item/*
+!Resources/settings/item/000/
+!Resources/settings/item/001/
+/Resources/settings/item/000/*
+/Resources/settings/item/001/*
+!Resources/settings/item/000/装备合成规则表.txt
+!Resources/settings/item/000/装备合成金钱需求.txt
+!Resources/settings/item/001/装备合成规则表.txt
+!Resources/settings/item/001/装备合成金钱需求.txt
+
+# Original client bag dimensions used by automatic item placement.
+!Resources/ui/
+/Resources/ui/*
+!Resources/ui/ui3/
+/Resources/ui/ui3/*
+!Resources/ui/ui3/随身物品.ini

@@ -25,6 +25,8 @@ typedef struct
 } ItemPos;
 
 
+struct GAME_COMPOUND_ITEM_POS;
+
 class CORE_API KItemList
 {
 private:
@@ -109,6 +111,7 @@ public:
 	int		ReforgeItem(int nIdx, int nParticular, int nLevel, int nCostGenre, int nCostDetail, int nCostParticular, int nCostLevel, int nMaterialCount, int nCopperCount);
 	int		GetCopperCashCount();
 	BOOL		SplitItem(ItemPos* pSource, DWORD dwCount);
+	int		CompoundItems(const GAME_COMPOUND_ITEM_POS* pPositions, int nCount);
 	int			CountNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, BOOL bQuick = FALSE);
 	BOOL		ConsumeNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, int nCount, BOOL bQuick = FALSE);
 	BOOL		ConsumeItem(int nIdx, int nCount);
@@ -120,6 +123,7 @@ public:
 	BOOL		RemoveTaskItem(int nDetailType);
 	void		GetTradeRoomItemInfo();				// 交易中把 trade room 中的 item 的 idx width height 信息写入 itemset 中的 m_psItemInfo 中去
 	BOOL		TradeCheckCanPlace();				// 交易中判断买进的物品能不能完全放进自己的物品栏
+	static BOOL InitEquipmentRoomLayout();
 	BOOL		CheckCanPlaceInEquipment(int nWidth, int nHeight, int *pnX, int *pnY);// 判断一定长宽的物品能否放进物品栏
 	BOOL		EatMecidine(int nPlace, int nX, int nY);		// 吃什么地方的药
 	// 自动把一个药品从room_equipment移动到room_immediacy

@@ -40,6 +40,7 @@ enum	UIInfo //脚本通知显示的界面类型
 	UI_PLAYMUSIC,
 	UI_OPENTONGUI,
 	UI_CLOSEDIALOG,
+	UI_COMPOUND,
 };
 
 // 重生点位置信息
@@ -196,6 +197,9 @@ public:
 	DWORD			m_dwScriptDialogScriptID;
 	DWORD			m_dwScriptDialogNpcID;
 	int				m_nScriptDialogWorld;
+	DWORD			m_dwCompoundNpcID;
+	DWORD			m_dwCompoundScriptID;
+	int				m_nCompoundWorld;
 	int				m_nAvailableAnswerNum;//当前选择界面下，最大回答数。
 	bool			m_bWaitingPlayerFeedBack;	//当前是否正等待玩家在客户端的反馈。该状态下，当前脚本不置空.类式对话选择情况
 //	DWORD			m_dwOutOfDateFeedBackTime;	//当前等待玩家与服务器脚本交互的最大限定时刻，到了这个游戏时间如果玩家仍未反馈则视作废。
@@ -251,6 +255,9 @@ public:
 	void			ExecuteObjectScript(int nObjIndex);
 	BOOL			OpenStoreBox(int nBox);
 	BOOL			CanUseStoreBox();
+	BOOL			OpenItemCompound(BOOL bNewWindow);
+	BOOL			CanCompoundItems();
+	void			CompoundMessage(const char* pszMessage);
 	BOOL			UseSkillBook(int nItem);
 	BOOL			UseSkillBuffItem(int nItem);
 	void			CloseStoreBox();

@@ -5984,6 +5984,24 @@ int LuaPlaySprMovie(Lua_State * L)
 	return 0;
 }
 #endif
+#ifdef _SERVER
+int LuaEnchaseItem(Lua_State* L)
+{
+	int nPlayer = GetPlayerIndex(L);
+	if (nPlayer > 0 && nPlayer < MAX_PLAYER)
+		Player[nPlayer].OpenItemCompound(FALSE);
+	return 0;
+}
+
+int LuaOpenNewCompound(Lua_State* L)
+{
+	int nPlayer = GetPlayerIndex(L);
+	if (nPlayer > 0 && nPlayer < MAX_PLAYER)
+		Player[nPlayer].OpenItemCompound(TRUE);
+	return 0;
+}
+#endif
+
 TLua_Funcs GameScriptFuns[] = 
 {
 	//Í¨ÓÃÖ¸Áî
@@ -5994,6 +6012,8 @@ TLua_Funcs GameScriptFuns[] =
 	{"MsgBox", LuaMsgBox},
 	{"HaveNormalItem", LuaHaveNormalItem},
 #ifdef _SERVER
+	{"EnchaseItem", LuaEnchaseItem},
+	{"OpenNewCompound", LuaOpenNewCompound},
 	{"HaveItem2", LuaHaveNormalItem},
 	{"DelItem2", LuaDelNormalItem},
 	{"GetItemLevel2", LuaGetItemLevel2},

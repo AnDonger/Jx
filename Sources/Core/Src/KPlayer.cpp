@@ -100,6 +100,11 @@ KPlayer::~KPlayer()
 //-------------------------------------------------------------------------
 void	KPlayer::Release()
 {
+#ifdef _SERVER
+	m_dwCompoundNpcID = 0;
+	m_dwCompoundScriptID = 0;
+	m_nCompoundWorld = -1;
+#endif
 #ifndef _SERVER
 	m_RunStatus = 0;
 	m_dwNextLevelLeadExp = 0;
@@ -145,6 +150,9 @@ void	KPlayer::Release()
 	m_dwScriptDialogScriptID = 0;
 	m_nScriptDialogWorld = -1;
 	m_dwScriptDialogNpcID = 0;
+	m_dwCompoundNpcID = 0;
+	m_dwCompoundScriptID = 0;
+	m_nCompoundWorld = -1;
 	m_nAvailableAnswerNum = 0;
 	m_btTryExecuteScriptTimes = 0;	//
 	
@@ -4896,6 +4904,7 @@ void	KPlayer::DoScriptAction(PLAYER_SCRIPTACTION_SYNC * pUIInfo) //要求显示某个U
 		case UI_PLAYMUSIC: Info.UIAction = 6; break;
 		case UI_OPENTONGUI: Info.UIAction = 7; break;
 		case UI_CLOSEDIALOG: Info.UIAction = 15; break;
+		case UI_COMPOUND: Info.UIAction = 8; break;
 		default:
 			g_DebugLog("[ScriptUI] Unsupported UI %u for player=%d", pUIInfo->m_bUIId, m_nPlayerIndex);
 			return;
@@ -5446,6 +5455,7 @@ void	KPlayer::DialogNpc(BYTE * pProtocol)
 			{
 				if (Npc[nIdx].ActionScript[0])
 				{
+					m_dwCompoundNpcID = 0;
 					int nPreviousNpc = m_nPeapleIdx;
 					m_nPeapleIdx = nIdx;
 					ExecuteScript(Npc[nIdx].m_ActionScriptID, "main", "");

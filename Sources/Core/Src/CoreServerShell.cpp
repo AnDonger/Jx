@@ -797,6 +797,7 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 	case 0x78: return nSize == sizeof(GAME_AURA_COMMAND);
 	case 0x7E: return nSize == sizeof(GAME_REVIVE_COMMAND);
 	case 0x85: return nSize == sizeof(GAME_MOUNT_STATE_COMMAND);
+	case 0x89: return nSize == sizeof(GAME_COMPOUND_COMMAND);
 	case 0x94: return nSize == sizeof(GAME_SPLIT_ITEM_COMMAND);
 	case 0x98: return nSize == 1;
 	case 0xA4:

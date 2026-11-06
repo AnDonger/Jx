@@ -131,6 +131,7 @@ public:
 	void	NpcRunCommand(int nIndex, BYTE* pProtocol);
 	void	CurrentSkillCommand(int nIndex, BYTE* pProtocol);
 	void	CurrentPickupCommand(int nIndex, BYTE* pProtocol);
+	void	CurrentCompoundCommand(int nIndex, BYTE* pProtocol);
 	void	CurrentSplitItemCommand(int nIndex, BYTE* pProtocol);
 	void	CurrentMountCommand(int nIndex, BYTE* pProtocol);
 	void	CurrentRunCommand(int nIndex, BYTE* pProtocol);
