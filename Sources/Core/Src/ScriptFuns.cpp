@@ -39,6 +39,8 @@
 //#include "../MultiServer/Heaven/interface/iServer.h"
 #include "KNewProtocolProcess.h"
 #include <vector>
+#include <string>
+#include "KTabFile.h"
 #endif
 #include "KSortScript.h"
 #ifndef __linux
@@ -164,10 +166,23 @@ struct KNpcScriptItem
 	int Y;
 };
 
+struct KNpcScriptNotice
+{
+	PLAYER_SCRIPTACTION_SYNC Action;
+	std::string Chat;
+	BOOL IsChat;
+	KNpcScriptNotice()
+	{
+		ZeroMemory(&Action, sizeof(Action));
+		IsChat = FALSE;
+	}
+};
+
 struct KNpcScriptExchange
 {
 	KPlayerTask Task;
 	std::vector<KNpcScriptItem> Items;
+	std::vector<KNpcScriptNotice> Notices;
 	int Money[room_num];
 	int Depth;
 	int Experience;
@@ -208,6 +223,12 @@ KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
 		Saved.Y = pItem->nY;
 		pState->Items.push_back(Saved);
 	}
+}
+
+BOOL KNpcScriptTransaction::HasFailed() const
+{
+	return !m_nPlayer || !g_NpcScriptExchange[m_nPlayer] ||
+		g_NpcScriptExchange[m_nPlayer]->Failed;
 }
 
 KNpcScriptTransaction::~KNpcScriptTransaction()
@@ -272,8 +293,20 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 		g_DebugLog("[NpcScript] Exchange rolled back: player=%d items=%d restored=%d",
 			m_nPlayer, (int)pState->Items.size(), bRestored);
 	}
-	else if (pState->Experience > 0)
-		Role.DirectAddExp(pState->Experience);
+	else
+	{
+		if (pState->Experience > 0)
+			Role.DirectAddExp(pState->Experience);
+		for (size_t i = 0; i < pState->Notices.size(); i++)
+		{
+			KNpcScriptNotice& Notice = pState->Notices[i];
+			if (Notice.IsChat)
+				KPlayerChat::SendSystemInfo(1, m_nPlayer, MESSAGE_SYSTEM_ANNOUCE_HEAD,
+					(char*)Notice.Chat.c_str(), (int)Notice.Chat.size());
+			else
+				Role.DoScriptAction(&Notice.Action);
+		}
+	}
 	delete pState;
 }
 
@@ -284,6 +317,226 @@ static void RejectNpcScriptItem(Lua_State *L, int nPlayer)
 		g_NpcScriptExchange[nPlayer]->Failed = TRUE;
 		lua_error(L, "NPC item exchange could not be completed");
 	}
+}
+
+struct KNpcSelectedItem
+{
+	int Index;
+	DWORD ID;
+	int Remaining;
+};
+
+struct KNpcSelectedItems
+{
+	std::vector<KNpcSelectedItem> Items;
+	int Result;
+};
+
+static KNpcSelectedItems* g_NpcSelectedItems[MAX_PLAYER] = {NULL};
+
+KNpcScriptSelection::KNpcScriptSelection(int nPlayer, const int* pItems, int nCount)
+{
+	m_nPlayer = 0;
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || !pItems || nCount <= 0 ||
+		nCount > MAX_SCRIPT_SELECTED_ITEMS || g_NpcSelectedItems[nPlayer])
+		return;
+	for (int i = 0; i < nCount; i++)
+	{
+		if (pItems[i] <= 0 || pItems[i] >= MAX_ITEM || !Item[pItems[i]].GetID())
+			return;
+		for (int j = 0; j < i; j++)
+		{
+			if (pItems[i] == pItems[j])
+				return;
+		}
+	}
+	KNpcSelectedItems* pState = new KNpcSelectedItems;
+	pState->Result = -1;
+	for (int i = 0; i < nCount; i++)
+	{
+		KNpcSelectedItem Selected;
+		Selected.Index = pItems[i];
+		Selected.ID = Item[pItems[i]].GetID();
+		Selected.Remaining = Item[pItems[i]].GetStackCount();
+		pState->Items.push_back(Selected);
+	}
+	g_NpcSelectedItems[nPlayer] = pState;
+	m_nPlayer = nPlayer;
+}
+
+KNpcScriptSelection::~KNpcScriptSelection()
+{
+	if (m_nPlayer)
+	{
+		delete g_NpcSelectedItems[m_nPlayer];
+		g_NpcSelectedItems[m_nPlayer] = NULL;
+	}
+}
+
+int KNpcScriptSelection::GetResult() const
+{
+	return m_nPlayer ? g_NpcSelectedItems[m_nPlayer]->Result : -1;
+}
+
+static void SetScriptItemInteger(Lua_State* L, int nTable, const char* pszName, int nValue)
+{
+	Lua_PushString(L, pszName);
+	Lua_PushNumber(L, nValue);
+	Lua_SetTable(L, nTable);
+}
+
+static BOOL ReadScriptItemOption(Lua_State* L, int nTable, const char* pszName,
+	int nMinimum, int nMaximum, int* pnValue)
+{
+	Lua_PushString(L, pszName);
+	Lua_GetTable(L, nTable);
+	BOOL bValid = TRUE;
+	if (!lua_isnil(L, -1))
+	{
+		double nValue = Lua_ValueToNumber(L, -1);
+		bValid = Lua_IsNumber(L, -1) && nValue >= nMinimum &&
+			nValue <= nMaximum && nValue == (int)nValue;
+		if (bValid)
+			*pnValue = (int)nValue;
+	}
+	Lua_Pop(L, 1);
+	return bValid;
+}
+
+// 原资源表按1起始的行、列返回字符串，首行表头与空单元格均保留。
+// 业务解析和缓存由Lua负责；失败返回nil，不创建替代表。
+int LuaReadTabFile(Lua_State* L)
+{
+	const char* pszPath = Lua_ValueToString(L, 1);
+	if (Lua_GetTopIndex(L) != 1 || !pszPath || pszPath[0] != '\\' ||
+		strlen(pszPath) >= MAX_PATH || strstr(pszPath, "..") || strchr(pszPath, ':'))
+	{
+		Lua_PushNil(L);
+		return 1;
+	}
+	KTabFile Table;
+	if (!Table.Load((char*)pszPath) || Table.GetHeight() <= 0 || Table.GetHeight() > 20000 ||
+		Table.GetWidth() <= 0 || Table.GetWidth() > 256 ||
+		Table.GetHeight() * Table.GetWidth() > 1000000)
+	{
+		Lua_PushNil(L);
+		return 1;
+	}
+	lua_newtable(L);
+	int nResult = Lua_GetTopIndex(L);
+	char szValue[4097];
+	for (int nRow = 1; nRow <= Table.GetHeight(); nRow++)
+	{
+		lua_newtable(L);
+		int nColumns = Lua_GetTopIndex(L);
+		for (int nColumn = 1; nColumn <= Table.GetWidth(); nColumn++)
+		{
+			// 旧引擎GetValue在截断分支额外写一个结束符，预留最后一个字节。
+			Table.GetString(nRow, nColumn, "", szValue, sizeof(szValue) - 1);
+			if (strlen(szValue) == sizeof(szValue) - 1)
+			{
+				Lua_PushNil(L);
+				return 1;
+			}
+			Lua_PushString(L, szValue);
+			lua_rawseti(L, nColumns, nColumn);
+		}
+		lua_rawseti(L, nResult, nRow);
+	}
+	return 1;
+}
+
+int LuaGetGameVersion(Lua_State* L)
+{
+	Lua_PushNumber(L, g_SubWorldSet.GetGameVersion());
+	return 1;
+}
+
+int LuaGetSelectedItems(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	KNpcSelectedItems* pState = nPlayer > 0 && nPlayer < MAX_PLAYER ? g_NpcSelectedItems[nPlayer] : NULL;
+	if (!pState || pState->Result >= 0)
+	{
+		Lua_PushNil(L);
+		return 1;
+	}
+	lua_newtable(L);
+	int nResult = Lua_GetTopIndex(L);
+	for (size_t i = 0; i < pState->Items.size(); i++)
+	{
+		KNpcSelectedItem& Selected = pState->Items[i];
+		if (!Selected.Remaining || Item[Selected.Index].GetID() != Selected.ID)
+		{
+			Lua_PushNil(L);
+			return 1;
+		}
+		KItem& Data = Item[Selected.Index];
+		lua_newtable(L);
+		int nTable = Lua_GetTopIndex(L);
+		SetScriptItemInteger(L, nTable, "Genre", Data.GetGenre());
+		SetScriptItemInteger(L, nTable, "Detail", Data.GetDetailType());
+		SetScriptItemInteger(L, nTable, "Particular", Data.GetParticular());
+		SetScriptItemInteger(L, nTable, "Level", Data.GetLevel());
+		SetScriptItemInteger(L, nTable, "Count", Data.GetStackCount());
+		SetScriptItemInteger(L, nTable, "Bound", Data.IsBound() ? 1 : 0);
+		SetScriptItemInteger(L, nTable, "BindingMode", Data.GetBindingMode());
+		lua_rawseti(L, nResult, (int)i + 1);
+	}
+	return 1;
+}
+
+int LuaDelSelectedItem(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	KNpcSelectedItems* pState = nPlayer > 0 && nPlayer < MAX_PLAYER ? g_NpcSelectedItems[nPlayer] : NULL;
+	double nSlot = Lua_ValueToNumber(L, 1);
+	double nCount = Lua_ValueToNumber(L, 2);
+	if (Lua_GetTopIndex(L) != 2 || !pState || pState->Result >= 0 ||
+		!Lua_IsNumber(L, 1) || !(nSlot >= 1 && nSlot <= pState->Items.size()) || nSlot != (int)nSlot ||
+		!Lua_IsNumber(L, 2) || !(nCount >= 1 && nCount <= 100000) || nCount != (int)nCount ||
+		!g_NpcScriptExchange[nPlayer])
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	KNpcSelectedItem& Selected = pState->Items[(int)nSlot - 1];
+	if (Selected.Remaining < nCount || Item[Selected.Index].GetID() != Selected.ID ||
+		Item[Selected.Index].GetStackCount() != Selected.Remaining ||
+		!Player[nPlayer].m_ItemList.ConsumeItem(Selected.Index, (int)nCount))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	Selected.Remaining -= (int)nCount;
+	Lua_PushNumber(L, 1);
+	return 1;
+}
+
+// 0为已完成的概率失败，1为已完成的成功；不调用表示整次操作未完成并回滚。
+int LuaCompleteItemOperation(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	KNpcSelectedItems* pState = nPlayer > 0 && nPlayer < MAX_PLAYER ? g_NpcSelectedItems[nPlayer] : NULL;
+	double nResult = Lua_ValueToNumber(L, 1);
+	if (Lua_GetTopIndex(L) != 1 || !pState || pState->Result >= 0 ||
+		!Lua_IsNumber(L, 1) || nResult != 0 && nResult != 1 || !g_NpcScriptExchange[nPlayer])
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	pState->Result = (int)nResult;
+	Lua_PushNumber(L, 1);
+	return 1;
 }
 
 int LuaModifyRepute(Lua_State *L)
@@ -1211,7 +1464,17 @@ int LuaSendMessageInfo(Lua_State * L)
 #else
 	UiInfo.m_bParam2 = 1;
 #endif
-	Player[nPlayerIndex].DoScriptAction(&UiInfo);
+#ifdef _SERVER
+	if (nPlayerIndex > 0 && g_NpcScriptExchange[nPlayerIndex])
+	{
+		KNpcScriptNotice Notice;
+		Notice.IsChat = FALSE;
+		Notice.Action = UiInfo;
+		g_NpcScriptExchange[nPlayerIndex]->Notices.push_back(Notice);
+	}
+	else
+#endif
+		Player[nPlayerIndex].DoScriptAction(&UiInfo);
 	return 0;
 }
 
@@ -2081,7 +2344,21 @@ int	LuaMsgToPlayer(Lua_State * L)
 	{
 		const char *  szMsg = Lua_ValueToString(L,1);
 		if (szMsg)
-			KPlayerChat::SendSystemInfo(1, nPlayerIndex, MESSAGE_SYSTEM_ANNOUCE_HEAD, (char *) szMsg, strlen(szMsg) );
+		{
+#ifdef _SERVER
+			KNpcScriptExchange* pState = g_NpcScriptExchange[nPlayerIndex];
+			if (pState)
+			{
+				KNpcScriptNotice Notice;
+				Notice.IsChat = TRUE;
+				Notice.Chat = szMsg;
+				pState->Notices.push_back(Notice);
+			}
+			else
+#endif
+				KPlayerChat::SendSystemInfo(1, nPlayerIndex, MESSAGE_SYSTEM_ANNOUCE_HEAD,
+					(char*)szMsg, strlen(szMsg));
+		}
 	}
 	
 	return 0;
@@ -3526,7 +3803,8 @@ int LuaAddNormalItem(Lua_State *L)
 	int nParamNum = Lua_GetTopIndex(L);
 	int nPlayerIndex = GetPlayerIndex(L);
 	if (nPlayerIndex <= 0 || nParamNum < 6 || nParamNum > 7 ||
-		nParamNum == 7 && (!Lua_IsNumber(L, 7) || Lua_ValueToNumber(L, 7) != 0))
+		nParamNum == 7 && !Lua_IsTable(L, 7) &&
+		(!Lua_IsNumber(L, 7) || Lua_ValueToNumber(L, 7) != 0))
 	{
 		RejectNpcScriptItem(L, nPlayerIndex);
 		Lua_PushNumber(L, 0);
@@ -3545,6 +3823,18 @@ int LuaAddNormalItem(Lua_State *L)
 		}
 		Values[i] = (int)nValue;
 	}
+	// 可选表参数兼容原六参数接口：Count、Bound、BindingMode。
+	int nCount = 1, nBound = 0, nBindingMode = 0;
+	if (nParamNum == 7 && Lua_IsTable(L, 7) &&
+		(!ReadScriptItemOption(L, 7, "Count", 1, 100000, &nCount) ||
+		!ReadScriptItemOption(L, 7, "Bound", 0, 1, &nBound) ||
+		!ReadScriptItemOption(L, 7, "BindingMode", 0, 255, &nBindingMode) ||
+		!nBound && nBindingMode != 0))
+	{
+		RejectNpcScriptItem(L, nPlayerIndex);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
 	int MagicLevels[6] = {0};
 	int nItem = ItemSet.Add(Values[0], Values[4], Values[3], Values[5],
 		Values[1], Values[2], MagicLevels, g_SubWorldSet.GetGameVersion());
@@ -3559,6 +3849,18 @@ int LuaAddNormalItem(Lua_State *L)
 		RejectNpcScriptItem(L, nPlayerIndex);
 		Lua_PushNumber(L, 0);
 		return 1;
+	}
+	if (!Item[nItem].SetStackCount(nCount) ||
+		Item[nItem].GetGenre() == item_equip && nCount != 1)
+	{
+		ItemSet.Remove(nItem);
+		RejectNpcScriptItem(L, nPlayerIndex);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	if (nBound)
+	{
+		Item[nItem].SetBinding(TRUE, (BYTE)nBindingMode);
 	}
 	if (Item[nItem].GetGenre() == item_equip)
 		Item[nItem].SetDurability(Item[nItem].GetMaxDurability());
@@ -5987,17 +6289,21 @@ int LuaPlaySprMovie(Lua_State * L)
 #ifdef _SERVER
 int LuaEnchaseItem(Lua_State* L)
 {
+	int nTop = Lua_GetTopIndex(L);
 	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
 	if (nPlayer > 0 && nPlayer < MAX_PLAYER)
-		Player[nPlayer].OpenItemCompound(FALSE);
+		Player[nPlayer].OpenItemCompound(FALSE, nTop > 0 && lua_type(L, 1) == LUA_TSTRING ? Lua_ValueToString(L, 1) : "OnCompound");
 	return 0;
 }
 
 int LuaOpenNewCompound(Lua_State* L)
 {
+	int nTop = Lua_GetTopIndex(L);
 	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
 	if (nPlayer > 0 && nPlayer < MAX_PLAYER)
-		Player[nPlayer].OpenItemCompound(TRUE);
+		Player[nPlayer].OpenItemCompound(TRUE, nTop > 0 && lua_type(L, 1) == LUA_TSTRING ? Lua_ValueToString(L, 1) : "OnCompound");
 	return 0;
 }
 #endif
@@ -6014,6 +6320,11 @@ TLua_Funcs GameScriptFuns[] =
 #ifdef _SERVER
 	{"EnchaseItem", LuaEnchaseItem},
 	{"OpenNewCompound", LuaOpenNewCompound},
+	{"ReadTabFile", LuaReadTabFile},
+	{"GetGameVersion", LuaGetGameVersion},
+	{"GetSelectedItems", LuaGetSelectedItems},
+	{"DelSelectedItem", LuaDelSelectedItem},
+	{"CompleteItemOperation", LuaCompleteItemOperation},
 	{"HaveItem2", LuaHaveNormalItem},
 	{"DelItem2", LuaDelNormalItem},
 	{"GetItemLevel2", LuaGetItemLevel2},

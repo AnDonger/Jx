@@ -28,7 +28,6 @@
 #include "KPlayerTask.h"
 #include "KSubWorldSet.h"
 #include "KItemGenerator.h"
-#include "KCompoundRule.h"
 #include "KInventory.h"
 #include "KItemList.h"
 #include "KMagicDesc.h"
@@ -180,7 +179,6 @@ CORE_API void g_InitCore()
 	ItemGen.Init();
 #ifdef _SERVER
 	KItemList::InitEquipmentRoomLayout();
-	g_CompoundRule.Init(g_SubWorldSet.GetGameVersion());
 #endif
 #ifndef _SERVER
 	InitAdjustColorTab();//¼ÓÔØÆ«É«±í......

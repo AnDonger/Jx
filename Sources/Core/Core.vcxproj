@@ -379,8 +379,6 @@ copy ClientDebug\CoreClient.lib ..\..\lib\debug\CoreClient.lib
     <ClCompile Include="Src\KObj.cpp" />
     <ClCompile Include="Src\KObjSet.cpp" />
     <ClCompile Include="Src\KViewItem.cpp" />
-    <ClCompile Include="Src\KCompoundRule.cpp" />
-    <ClCompile Include="Src\KItemCompounder.cpp" />
     <ClCompile Include="Src\KCore.cpp" />
     <ClCompile Include="Src\KSubWorld.cpp" />
     <ClCompile Include="Src\KSubWorldSet.cpp" />
@@ -526,7 +524,6 @@ copy ClientDebug\CoreClient.lib ..\..\lib\debug\CoreClient.lib
     <ClInclude Include="Src\KObjSet.h" />
     <ClInclude Include="Src\KViewItem.h" />
     <ClInclude Include="Src\MyAssert.H" />
-    <ClInclude Include="Src\KCompoundRule.h" />
     <ClInclude Include="Src\KCore.h" />
     <ClInclude Include="Src\KSubWorld.h" />
     <ClInclude Include="Src\KSubWorldSet.h" />

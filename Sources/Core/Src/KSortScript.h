@@ -64,6 +64,21 @@ public:
 	KNpcScriptTransaction(int nPlayer);
 	~KNpcScriptTransaction();
 	void Commit() { m_bCommitted = TRUE; }
+	BOOL HasFailed() const;
+};
+
+#define MAX_SCRIPT_SELECTED_ITEMS 9
+
+// 仅在一次窗口请求回调期间有效，Lua使用1起始的槽号，不能传任意服务端物品索引。
+class KNpcScriptSelection
+{
+private:
+	int m_nPlayer;
+public:
+	KNpcScriptSelection(int nPlayer, const int* pItems, int nCount);
+	~KNpcScriptSelection();
+	BOOL IsValid() const { return m_nPlayer > 0; }
+	int GetResult() const;
 };
 #endif
 extern unsigned long  ReLoadAllScript();

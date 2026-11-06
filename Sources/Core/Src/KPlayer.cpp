@@ -104,6 +104,7 @@ void	KPlayer::Release()
 	m_dwCompoundNpcID = 0;
 	m_dwCompoundScriptID = 0;
 	m_nCompoundWorld = -1;
+	m_szCompoundFunction[0] = 0;
 #endif
 #ifndef _SERVER
 	m_RunStatus = 0;
@@ -153,6 +154,7 @@ void	KPlayer::Release()
 	m_dwCompoundNpcID = 0;
 	m_dwCompoundScriptID = 0;
 	m_nCompoundWorld = -1;
+	m_szCompoundFunction[0] = 0;
 	m_nAvailableAnswerNum = 0;
 	m_btTryExecuteScriptTimes = 0;	//
 	
@@ -6786,4 +6788,76 @@ BOOL KPlayer::UseSkillBuffItem(int nItem)
 	KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szText, strlen(szText));
 	return TRUE;
 }
+#endif
+
+#ifdef _SERVER
+void KPlayer::CompoundMessage(const char* pszMessage)
+{
+	PLAYER_SCRIPTACTION_SYNC Info;
+	ZeroMemory(&Info, sizeof(Info));
+	Info.m_bUIId = UI_MSGINFO;
+	Info.m_bParam2 = 1;
+	g_StrCpyLen(Info.m_pContent, pszMessage, sizeof(Info.m_pContent));
+	Info.m_nBufferLen = strlen(Info.m_pContent);
+	DoScriptAction(&Info);
+}
+
+BOOL KPlayer::CanCompoundItems()
+{
+	if (!m_bFinishLoading || m_nIndex <= 0 || m_nIndex >= MAX_NPC ||
+		CheckTrading() || m_bExchangeServer || m_ItemList.Hand() ||
+		Npc[m_nIndex].m_Doing == do_death || Npc[m_nIndex].m_CurrentLife <= 0 ||
+		!m_dwCompoundNpcID || Npc[m_nIndex].m_SubWorldIndex != m_nCompoundWorld)
+		return FALSE;
+	int nNpc = FindAroundNpc(m_dwCompoundNpcID);
+	if (nNpc <= 0 || nNpc >= MAX_NPC || Npc[nNpc].m_Kind != kind_dialoger ||
+		Npc[nNpc].m_SubWorldIndex != m_nCompoundWorld ||
+		Npc[nNpc].m_ActionScriptID != m_dwCompoundScriptID ||
+		NpcSet.GetDistance(nNpc, m_nIndex) > Npc[nNpc].m_DialogRadius * 2)
+		return FALSE;
+	return TRUE;
+}
+
+BOOL KPlayer::OpenItemCompound(BOOL bNewWindow, const char* pszFunction)
+{
+	m_dwCompoundNpcID = 0;
+	m_szCompoundFunction[0] = 0;
+	if (m_nPeapleIdx <= 0 || m_nPeapleIdx >= MAX_NPC ||
+		m_nIndex <= 0 || m_nIndex >= MAX_NPC)
+		return FALSE;
+	if (!pszFunction || !pszFunction[0] || strlen(pszFunction) >= sizeof(m_szCompoundFunction))
+		return FALSE;
+	for (const char* p = pszFunction; *p; p++)
+	{
+		if (!(*p >= 'a' && *p <= 'z') && !(*p >= 'A' && *p <= 'Z') &&
+			!(*p >= '0' && *p <= '9') && *p != '_')
+			return FALSE;
+	}
+	strcpy(m_szCompoundFunction, pszFunction);
+	m_dwCompoundNpcID = Npc[m_nPeapleIdx].m_dwID;
+	m_dwCompoundScriptID = Npc[m_nPeapleIdx].m_ActionScriptID;
+	m_nCompoundWorld = Npc[m_nIndex].m_SubWorldIndex;
+	if (!CanCompoundItems())
+	{
+		m_dwCompoundNpcID = 0;
+		CompoundMessage("当前无法打开操作窗口，请放下鼠标物品并检查角色状态。");
+		return FALSE;
+	}
+	if (bNewWindow)
+	{
+		// 20261106实录，赤松子“合成物品(新)”打开合成强化窗口。
+		BYTE byOpen[] = {0xF8, 4, 0, 0x73, 0x90};
+		g_pServer->PackDataToClient(m_nNetConnectIdx, byOpen, sizeof(byOpen));
+	}
+	else
+	{
+		PLAYER_SCRIPTACTION_SYNC Info;
+		ZeroMemory(&Info, sizeof(Info));
+		Info.m_bUIId = UI_COMPOUND;
+		Info.m_bParam2 = 1;
+		DoScriptAction(&Info);
+	}
+	return TRUE;
+}
+
 #endif

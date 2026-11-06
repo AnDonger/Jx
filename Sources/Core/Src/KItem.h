@@ -173,6 +173,12 @@ public:
 	int		GetObjIdx() { return m_CommonAttrib.nObjIdx;};
 	void*	GetRequirement(IN int);
 	BOOL	IsBound() const { return (m_btStateFlags & 1) != 0; };
+	BYTE	GetBindingMode() const { return m_btBindingMode; };
+	void	SetBinding(BOOL bBound, BYTE btMode)
+	{
+		m_btStateFlags = (m_btStateFlags & ~1) | (bBound ? 1 : 0);
+		m_btBindingMode = bBound ? btMode : 0;
+	};
 	int		GetStackCount() const { return m_nStackCount > 0 ? m_nStackCount : 1; };
 	int		GetMaxStackCount() const;
 	BOOL	CanStackWith(const KItem& Other) const;

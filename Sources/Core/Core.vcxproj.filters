@@ -225,12 +225,6 @@
     <ClCompile Include="Src\KViewItem.cpp">
       <Filter>物品装备</Filter>
     </ClCompile>
-    <ClCompile Include="Src\KCompoundRule.cpp">
-      <Filter>物品装备</Filter>
-    </ClCompile>
-    <ClCompile Include="Src\KItemCompounder.cpp">
-      <Filter>物品装备</Filter>
-    </ClCompile>
     <ClCompile Include="Src\KCore.cpp">
       <Filter>世界</Filter>
     </ClCompile>
@@ -481,9 +475,6 @@
       <Filter>物品装备</Filter>
     </ClInclude>
     <ClInclude Include="Src\MyAssert.H">
-      <Filter>物品装备</Filter>
-    </ClInclude>
-    <ClInclude Include="Src\KCompoundRule.h">
       <Filter>物品装备</Filter>
     </ClInclude>
     <ClInclude Include="Src\KCore.h">

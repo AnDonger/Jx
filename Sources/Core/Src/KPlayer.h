@@ -200,6 +200,7 @@ public:
 	DWORD			m_dwCompoundNpcID;
 	DWORD			m_dwCompoundScriptID;
 	int				m_nCompoundWorld;
+	char			m_szCompoundFunction[64];
 	int				m_nAvailableAnswerNum;//当前选择界面下，最大回答数。
 	bool			m_bWaitingPlayerFeedBack;	//当前是否正等待玩家在客户端的反馈。该状态下，当前脚本不置空.类式对话选择情况
 //	DWORD			m_dwOutOfDateFeedBackTime;	//当前等待玩家与服务器脚本交互的最大限定时刻，到了这个游戏时间如果玩家仍未反馈则视作废。
@@ -255,7 +256,7 @@ public:
 	void			ExecuteObjectScript(int nObjIndex);
 	BOOL			OpenStoreBox(int nBox);
 	BOOL			CanUseStoreBox();
-	BOOL			OpenItemCompound(BOOL bNewWindow);
+	BOOL			OpenItemCompound(BOOL bNewWindow, const char* pszFunction = "OnCompound");
 	BOOL			CanCompoundItems();
 	void			CompoundMessage(const char* pszMessage);
 	BOOL			UseSkillBook(int nItem);

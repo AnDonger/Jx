@@ -3309,3 +3309,57 @@ int KItemList::ReforgeItem(int nIdx, int nParticular, int nLevel, int nCostGenre
 	return bSuccess ? 1 : 0;
 }
 #endif
+
+#ifdef _SERVER
+int KItemList::CompoundItems(const GAME_COMPOUND_ITEM_POS* pPositions, int nCount)
+{
+	if (!pPositions || nCount != MAX_SCRIPT_SELECTED_ITEMS ||
+		!Player[m_PlayerIdx].CanCompoundItems())
+		return -1;
+	int Indices[MAX_SCRIPT_SELECTED_ITEMS] = {0};
+	int nItems = 0;
+	for (int i = 0; i < nCount; i++)
+	{
+		const GAME_COMPOUND_ITEM_POS& Pos = pPositions[i];
+		if (Pos.Place == 0 && Pos.X == 0 && Pos.Y == 0)
+			continue;
+		if (Pos.Place != pos_equiproom || Pos.X < 0 || Pos.X >= EQUIPMENT_ROOM_WIDTH ||
+			Pos.Y < 0 || Pos.Y >= EQUIPMENT_ROOM_HEIGHT)
+			return -1;
+		int nItem = 0;
+		for (int n = m_UseIdx.GetNext(0); n; n = m_UseIdx.GetNext(n))
+		{
+			if (m_Items[n].nPlace == Pos.Place && m_Items[n].nX == Pos.X && m_Items[n].nY == Pos.Y)
+			{
+				nItem = m_Items[n].nIdx;
+				break;
+			}
+		}
+		if (nItem <= 0 || nItem >= MAX_ITEM ||
+			Item[nItem].m_GeneratorParam.nVersion != g_SubWorldSet.GetGameVersion())
+			return -1;
+		for (int j = 0; j < nItems; j++)
+		{
+			if (Indices[j] == nItem)
+				return -1;
+		}
+		Indices[nItems++] = nItem;
+	}
+	// 协议入口只核实本次提交的真实物品；费用、配方、概率和奖励由NPC脚本决定。
+	KPlayer& Role = Player[m_PlayerIdx];
+	KNpcScriptSelection Selection(m_PlayerIdx, Indices, nItems);
+	if (!Selection.IsValid())
+		return -1;
+	int nResult = -1;
+	{
+		KNpcScriptTransaction Transaction(m_PlayerIdx);
+		if (Role.ExecuteScript(Role.m_dwCompoundScriptID, Role.m_szCompoundFunction, 0) &&
+			!Transaction.HasFailed() && Selection.GetResult() >= 0)
+		{
+			nResult = Selection.GetResult();
+			Transaction.Commit();
+		}
+	}
+	return nResult;
+}
+#endif
