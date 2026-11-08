@@ -175,8 +175,34 @@ static void LoadNpcScriptCalls(DWORD dwScriptId, const char *pszFile)
 	}
 }
 
+static BOOL IsItemTransactionFunction(const std::string& Function)
+{
+	// 只开放已纳入快照的变更、只读查询、对白和纯计算；地图、技能、Buff及外部IO另行适配。
+	static const char* Names[] =
+	{
+		"Say", "Talk", "MsgBox", "CloseDialog", "PutMessage", "Msg2Player", "WriteLog",
+		"HaveNormalItem", "HaveItem2", "IsExistItem", "DelNormalItem", "AddNormalItem",
+		"GetCash", "Pay", "Earn", "GetCopperCashCount", "WasteCopperCash",
+		"GetTask", "SetTask", "GetTaskTemp", "SetTaskTemp", "GetTaskByte", "SetTaskByte",
+		"GetName", "GetLevel", "GetSex", "GetSeries", "GetPlayerType",
+		"GetPetType", "GetPetHonor", "GetPetColor", "GetPetName", "IsPetReleased",
+		"GenPet", "DelPet", "SetPetType", "SetPetHonor", "ReleasePet",
+		"GetPetFuncAuthority", "SetPetFuncAuthority",
+		"assert", "error", "type", "tonumber", "tostring", "getn", "tinsert", "tremove",
+		"format", "strlen", "strsub", "strfind", "strlower", "strupper", "gsub",
+		"random", "floor", "ceil", "min", "max", "abs", "mod"
+	};
+	for (int i = 0; i < sizeof(Names) / sizeof(Names[0]); i++)
+	{
+		if (Function == Names[i])
+			return TRUE;
+	}
+	return FALSE;
+}
+
 static BOOL CheckNpcScriptCalls(KLuaScript *pScript, const KNpcScriptCalls& Calls,
-	const std::string& Function, std::set<std::string>& Visited, std::string& Missing)
+	const std::string& Function, std::set<std::string>& Visited, std::string& Missing,
+	BOOL bItemTransaction)
 {
 	if (!Visited.insert(Function).second)
 		return TRUE;
@@ -191,9 +217,14 @@ static BOOL CheckNpcScriptCalls(KLuaScript *pScript, const KNpcScriptCalls& Call
 	{
 		if (Calls.find(*pCall) != Calls.end())
 		{
-			if (!CheckNpcScriptCalls(pScript, Calls, *pCall, Visited, Missing))
+			if (!CheckNpcScriptCalls(pScript, Calls, *pCall, Visited, Missing, bItemTransaction))
 				return FALSE;
 			continue;
+		}
+		if (bItemTransaction && !IsItemTransactionFunction(*pCall))
+		{
+			Missing = *pCall;
+			return FALSE;
 		}
 		int nTop = Lua_GetTopIndex(pScript->m_LuaState);
 		Lua_GetGlobal(pScript->m_LuaState, pCall->c_str());
@@ -208,14 +239,14 @@ static BOOL CheckNpcScriptCalls(KLuaScript *pScript, const KNpcScriptCalls& Call
 	return TRUE;
 }
 
-BOOL g_CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, char *pszMissing, int nSize)
+BOOL g_CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, char *pszMissing, int nSize, BOOL bItemTransaction)
 {
 	KLuaScript *pScript = (KLuaScript*)g_GetScript(dwScriptId);
 	std::map<DWORD, KNpcScriptCalls>::const_iterator pCalls = g_NpcScriptCalls.find(dwScriptId);
 	std::string Missing;
 	std::set<std::string> Visited;
 	BOOL bResult = pScript && pszFunction && pCalls != g_NpcScriptCalls.end() &&
-		CheckNpcScriptCalls(pScript, pCalls->second, pszFunction, Visited, Missing);
+		CheckNpcScriptCalls(pScript, pCalls->second, pszFunction, Visited, Missing, bItemTransaction);
 	if (pszMissing && nSize > 0)
 		g_StrCpyLen(pszMissing, Missing.empty() ? "script source" : Missing.c_str(), nSize);
 	return bResult;

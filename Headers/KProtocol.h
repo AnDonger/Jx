@@ -425,6 +425,70 @@ static_assert(sizeof(GAME_MALL_BUY_COMMAND) == 16, "B8/38 mall purchase");
 static_assert(sizeof(GAME_MALL_GOODS) == 45, "F8/55 mall goods entry");
 
 // 20261106 official new-compound capture: nine positions, followed by a fixed zero.
+// 当前客户端DB宠物协议。init后附GBK名字，normal后附1字节标志。
+struct GAME_PET_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE Subtype;
+	DWORD OwnerID;
+	BYTE TypeAndReleased;
+	BYTE Honor;
+	BYTE Color;
+	WORD FunctionAuthority;
+	WORD FunctionActive;
+	DWORD PickMask;
+	DWORD SellMask;
+};
+
+static_assert(sizeof(GAME_PET_SYNC) == 23, "DB pet prefix");
+
+// 20261108正式服91/45拾取、91/46出售：名称和颜色串分别以零结尾。
+struct GAME_PET_ITEM_NOTICE_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	WORD MessageID;
+	DWORD unknown_1;
+	DWORD unknown_2;
+	char Content[96];
+};
+static_assert(offsetof(GAME_PET_ITEM_NOTICE_SYNC, Content) == 13, "91 pet item notice prefix");
+
+// DB/13 kind4：普通宠物的已学权限和启用状态。A4/7由客户端请求切换。
+struct GAME_PET_FUNCTION_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE Subtype;
+	DWORD OwnerID;
+	BYTE Kind;
+	WORD Authority;
+	WORD Active;
+};
+
+struct GAME_PET_FUNCTION_COMMAND
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE Subtype;
+	BYTE Function;
+	BYTE Enabled;
+};
+
+// A4/4 设置弃物清理，A4/5 设置拾金捡宝；配置值从偏移4开始。
+struct GAME_PET_FILTER_COMMAND
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE Subtype;
+	DWORD Mask;
+};
+
+static_assert(sizeof(GAME_PET_FILTER_COMMAND) == 8, "A4/4,5 pet filter request");
+static_assert(sizeof(GAME_PET_FUNCTION_SYNC) == 13, "DB/13 pet functions");
+static_assert(sizeof(GAME_PET_FUNCTION_COMMAND) == 6, "A4/7 pet function request");
+
 struct GAME_COMPOUND_ITEM_POS
 {
 	int Place;

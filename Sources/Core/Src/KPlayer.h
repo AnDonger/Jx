@@ -70,11 +70,26 @@ typedef struct
 typedef struct
 {
 	int		m_nBuyIdx;
+	int		m_nCurrency;
 	DWORD	m_SubWorldID;
 	int		m_nMpsX;
 	int		m_nMpsY;
-	void	Clear() {m_nBuyIdx = -1; m_SubWorldID = -1; m_nMpsX = 0; m_nMpsY = 0;}
+	void	Clear() {m_nCurrency = 0; m_nBuyIdx = -1; m_SubWorldID = -1; m_nMpsX = 0; m_nMpsY = 0;}
 } BuySellInfo;
+// 宠物属于角色；不占用地图怪物或固定NPC数组。与旧角色基础记录分开存档。
+struct PLAYER_PET_DATA
+{
+	BYTE Type;
+	BYTE Honor;
+	BYTE Color;
+	BYTE Released;
+	char Name[32];
+	WORD Authority;
+	WORD Active;
+	DWORD PickMask;
+	DWORD SellMask;
+};
+
 class KIniFile;
 
 
@@ -111,6 +126,23 @@ private:
 
 public:
 #ifdef _SERVER
+	PLAYER_PET_DATA m_Pet;
+	DWORD m_dwPetPickupTime;
+	DWORD			m_dwUseItemScriptID;
+	BOOL			IsValidPetType(int nType) const;
+	BOOL			CreatePet(const char* pszName, int nType, int nHonor, int nColor);
+	BOOL			SetPetType(int nType);
+	BOOL			SetPetReleased(int nReleased);
+	BOOL			SetPetHonor(int nHonor);
+	BOOL			SetPetAuthority(int nFunction, int nEnabled);
+	void			DeletePet();
+	void			SendPetSyncData(int nClient, BOOL bFull);
+	void			SendPetRemoveData(int nClient);
+	void			SendPetFunctionData();
+	BOOL			SetPetFunctionActive(int nFunction, int nEnabled);
+	BOOL			SetPetFilter(int nSubtype, DWORD dwMask);
+	void			SyncPetState();
+	BOOL			UseScriptItem(int nItem);
 	int				m_nStoreBoxObjectID;		// 当前获准交互的储物箱世界ID，不存盘
 	PLAYER_EXCHANGE_POS		m_sExchangePos;
 	KTimerTaskFun	m_TimerTask;
@@ -413,7 +445,12 @@ public:
 	void			ServerSendChat(BYTE* pProtocol);		// 收到客户端发来的聊天语句
 	void			AddBaseAttribute(BYTE* pProtocol);		// 收到客户端要求增加基本属性点(0=Strength 1=Dexterity 2=Vitality 3=Engergy)
 	void			AddSkillPoint(BYTE* pProtocol);			// 收到客户端要求增加某个技能的点数
-	BOOL			ServerPickUpItem(BYTE* pProtocol);		// 收到客户端消息鼠标点击某个obj拣起装备或金钱
+	BOOL			IsPetFunctionActive(int nFunction) const;
+	BOOL			CanPetPickItem(int nItem) const;
+	BOOL			CanPetSellItem(int nItem) const;
+	void			SendPetItemNotice(const char* pszName, const char* pszColor, BOOL bSold);
+	void			ActivePetPickup();
+	BOOL			ServerPickUpItem(BYTE* pProtocol, BOOL bPet = FALSE);		// 收到客户端消息鼠标点击某个obj拣起装备或金钱
 	void			EatItem(BYTE* pProtocol);				// 收到客户端消息吃药
 	void			ServerMoveItem(BYTE* pProtocol);		// 收到客户端消息移动物品
 	void			ServerThrowAwayItem(BYTE* pProtocol);	// 收到客户端消息丢弃物品
@@ -523,7 +560,7 @@ public:
 	BOOL			Pay(int nMoney);
 	BOOL			Earn(int nMoney);
 	void			DialogNpc(BYTE * pProtocol);
-	BOOL			CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction);
+	BOOL			CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, BOOL bItemTransaction = FALSE);
 
 	int				AddTempTaskValue(void* pData);
 #endif

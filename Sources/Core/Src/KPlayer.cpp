@@ -101,6 +101,9 @@ KPlayer::~KPlayer()
 void	KPlayer::Release()
 {
 #ifdef _SERVER
+	ZeroMemory(&m_Pet, sizeof(m_Pet));
+	m_dwPetPickupTime = 0;
+	m_dwUseItemScriptID = 0;
 	m_dwCompoundNpcID = 0;
 	m_dwCompoundScriptID = 0;
 	m_nCompoundWorld = -1;
@@ -231,6 +234,7 @@ void	KPlayer::Active()
 	if (m_bFinishLoading && m_nIndex > 0)
 		Npc[m_nIndex].m_SkillList.ExpirePlayerSkillBuffs();
 	
+	ActivePetPickup();
 	this->m_cChat.TimerAdd();
 	
 	// 仇杀倒计时
@@ -878,6 +882,7 @@ BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 		bRet = m_cTask.SyncNotes(m_nPlayerIndex);
 		break;
 	case STEP_SYNC_END:
+		SendPetSyncData(m_nNetConnectIdx, TRUE);
 		bRet = TRUE;
 		break;
 	}
@@ -3593,13 +3598,14 @@ void KPlayer::AddSkillPoint(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 //	功能：服务器端拣物品
 //-------------------------------------------------------------------------
-BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol)
+BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol, BOOL bPet)
 {
 	const GAME_PICKUP_COMMAND *pPickUp = (const GAME_PICKUP_COMMAND*)pProtocol;
 	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC ||
 		Npc[m_nIndex].m_RegionIndex < 0 || Npc[m_nIndex].m_bExchangeServer ||
 		Npc[m_nIndex].m_Doing == do_death || Npc[m_nIndex].m_Doing == do_revive ||
-		CheckTrading() || pPickUp->Place != pos_equiproom)
+		CheckTrading() || !m_bFinishLoading || m_bExchangeServer ||
+		(bPet && !IsPetFunctionActive(0)) || pPickUp->Place != pos_equiproom)
 		return FALSE;
 	
 	int		nObjIndex, nNpcX, nNpcY, nObjX, nObjY;
@@ -3664,7 +3670,8 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol)
 		Npc[m_nIndex].m_OffY,
 		&nNpcX,
 		&nNpcY);
-	if ( PLAYER_PICKUP_SERVER_DISTANCE < (nNpcX - nObjX) * (nNpcX - nObjX) + (nNpcY - nObjY) * (nNpcY - nObjY))
+	if ((__int64)(nNpcX - nObjX) * (nNpcX - nObjX) +
+		(__int64)(nNpcY - nObjY) * (nNpcY - nObjY) > PLAYER_PICKUP_SERVER_DISTANCE)
 	{
 		return FALSE;
 	}
@@ -3675,8 +3682,46 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol)
 		{
 			if (Object[nObjIndex].m_nItemDataID <= 0 || Object[nObjIndex].m_nItemDataID >= MAX_ITEM)
 				return FALSE;
-			if (!m_ItemList.AddPickupItem(Object[nObjIndex].m_nItemDataID, pPickUp->X, pPickUp->Y))
+			int nItem = Object[nObjIndex].m_nItemDataID;
+			if (bPet && !CanPetPickItem(nItem))
 				return FALSE;
+			DWORD dwItem = Item[nItem].GetID();
+			char szName[80];
+			g_StrCpyLen(szName, Item[nItem].GetName(), sizeof(szName));
+			const char* pszColor = "";
+			if (Item[nItem].GetGenre() == item_equip)
+			{
+				pszColor = "<c=wh>";
+				for (int i = 0; i < 6; i++)
+				{
+					if (Item[nItem].m_aryMagicAttrib[i].nAttribType > 0)
+						pszColor = "<c=bl>";
+				}
+			}
+			BOOL bSold = CanPetSellItem(nItem);
+			if (bSold)
+			{
+				// 清理只处理本次拾取的白、蓝装备；原装备进入现有商店回购栏。
+				__int64 nPrice = max(1, Item[nItem].GetPrice() / BUY_SELL_SCALE);
+				nPrice *= Item[nItem].GetStackCount();
+				if (nPrice > 0x7FFFFFFF || !m_ItemList.SellPickupItem(nItem, (int)nPrice))
+					return FALSE;
+				g_DebugLog("[Pet] sale: player=%d item=%lu money=%d name=%s",
+					m_nPlayerIndex, dwItem, (int)nPrice, szName);
+			}
+			else if (!m_ItemList.AddPickupItem(nItem, pPickUp->X, pPickUp->Y))
+				return FALSE;
+			if (bPet || bSold)
+				SendPetItemNotice(szName, pszColor, FALSE);
+			if (bSold)
+			{
+				SendPetItemNotice(szName, pszColor, TRUE);
+				m_ItemList.SendMoneySync();
+			}
+			if (bPet && (m_Pet.PickMask & 0x80))
+				g_DebugLog("[Pet] pickup: player=%d item=%lu sold=%d name=%s",
+					m_nPlayerIndex, dwItem, bSold, szName);
+			m_ulLastSaveTime = 0;
 			// 去掉Object[nObjIndex]与道具的关联。避免ItemSet的Remove被Object的Remove调用
 			Object[nObjIndex].m_nItemDataID = 0;
 			Object[nObjIndex].m_nItemWidth = 0;
@@ -3686,13 +3731,17 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol)
 		}
 		break;
 	case Obj_Kind_Money:			// 掉在地上的钱
-		if ( !Earn(Object[nObjIndex].m_nMoneyNum) )
+		if (Object[nObjIndex].m_nMoneyNum <= 0 ||
+			(__int64)m_ItemList.GetEquipmentMoney() + Object[nObjIndex].m_nMoneyNum > 0x7FFFFFFF ||
+			!Earn(Object[nObjIndex].m_nMoneyNum))
 			return FALSE;
 		Object[nObjIndex].SyncRemove(TRUE);
 		if (Object[nObjIndex].m_nRegionIdx >= 0)
 			SubWorld[Object[nObjIndex].m_nSubWorldID].m_Region[Object[nObjIndex].m_nRegionIdx].RemoveObj(nObjIndex);
 		ObjSet.Remove(nObjIndex);
 		break;
+	default:
+		return FALSE;
 	}
 	
 	return TRUE;
@@ -3721,7 +3770,18 @@ void	KPlayer::EatItem(BYTE* pProtocol)
 	}
 	if (Item[nItem].GetGenre() == item_magicorscript)
 	{
-		UseSkillBuffItem(nItem);
+		KItem& Data = Item[nItem];
+		int nParticular = Data.GetParticular();
+		BOOL bSkillItem = Data.GetDetailType() == 1 && Data.GetLevel() == 1 &&
+			((nParticular >= 482 && nParticular <= 487) || (nParticular >= 568 && nParticular <= 570) ||
+			 nParticular == 987 || nParticular == 612 || nParticular == 625 ||
+			 nParticular == 508 || nParticular == 512 || nParticular == 1091 ||
+			 nParticular == 942 || nParticular == 943 || nParticular == 1092 ||
+			 nParticular == 944 || nParticular == 945 || nParticular == 1093 || nParticular == 1139);
+		if (bSkillItem)
+			UseSkillBuffItem(nItem);
+		else
+			UseScriptItem(nItem);
 		return;
 	}
 	if (Item[nItem].GetGenre() != item_medicine)
@@ -4632,10 +4692,10 @@ BOOL	KPlayer::ExecuteScript(char * ScriptFileName, char * szFunName, int nParam)
 }
 #define MAX_TRYEXECUTESCRIPT_COUNT 5
 // 在执行完整回调之前检查它引用的接口，避免先扣材料、随后才因缺失接口中断。
-BOOL KPlayer::CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction)
+BOOL KPlayer::CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, BOOL bItemTransaction)
 {
 	char szMissing[128];
-	if (g_CheckNpcScriptFunction(dwScriptId, pszFunction, szMissing, sizeof(szMissing)))
+	if (g_CheckNpcScriptFunction(dwScriptId, pszFunction, szMissing, sizeof(szMissing), bItemTransaction))
 		return TRUE;
 	g_DebugLog("[NpcScript] Unsupported callback: player=%d script=%lu function=%s missing=%s",
 		m_nPlayerIndex, dwScriptId, pszFunction, szMissing);
@@ -4655,17 +4715,19 @@ BOOL KPlayer::CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction)
 
 BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 {
-	if (m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
+	if ((m_dwUseItemScriptID == dwScriptId ||
+		(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
 		Npc[m_nPeapleIdx].m_Kind == kind_dialoger &&
-		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
-		!CheckNpcScriptFunction(dwScriptId, szFunName))
+		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId)) &&
+		!CheckNpcScriptFunction(dwScriptId, szFunName, m_dwUseItemScriptID == dwScriptId))
 		return FALSE;
 	// 瑶池原脚本包含多材料、多奖励交换，异常时不能保留半次操作。
-	KNpcScriptTransaction Exchange(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
+	KNpcScriptTransaction Exchange((m_dwUseItemScriptID == dwScriptId ||
+		(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
-		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 52 ? m_nPlayerIndex : 0);
+		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 52)) ? m_nPlayerIndex : 0);
 /*	bool	bCanExecuteScript = true;
 
   //当前脚本未置空
@@ -4739,17 +4801,19 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 
 BOOL	KPlayer::ExecuteScript(DWORD dwScriptId, char * szFunName, char *  szParams)
 {
-	if (m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
+	if ((m_dwUseItemScriptID == dwScriptId ||
+		(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
 		Npc[m_nPeapleIdx].m_Kind == kind_dialoger &&
-		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
-		!CheckNpcScriptFunction(dwScriptId, szFunName))
+		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId)) &&
+		!CheckNpcScriptFunction(dwScriptId, szFunName, m_dwUseItemScriptID == dwScriptId))
 		return FALSE;
 	// 瑶池原脚本包含多材料、多奖励交换，异常时不能保留半次操作。
-	KNpcScriptTransaction Exchange(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
+	KNpcScriptTransaction Exchange((m_dwUseItemScriptID == dwScriptId ||
+		(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
-		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 52 ? m_nPlayerIndex : 0);
+		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 52)) ? m_nPlayerIndex : 0);
 /*bool	bCanExecuteScript = true;
 
   //当前脚本未置空
@@ -6860,4 +6924,409 @@ BOOL KPlayer::OpenItemCompound(BOOL bNewWindow, const char* pszFunction)
 	return TRUE;
 }
 
+#endif
+
+#ifdef _SERVER
+BOOL KPlayer::IsPetFunctionActive(int nFunction) const
+{
+	if (nFunction < 0 || nFunction >= 5 || !m_Pet.Type || !m_Pet.Released || !m_Pet.Honor)
+		return FALSE;
+	WORD wMask = (WORD)(1 << nFunction);
+	return (m_Pet.Authority & wMask) && (m_Pet.Active & wMask);
+}
+
+void KPlayer::SendPetItemNotice(const char* pszName, const char* pszColor, BOOL bSold)
+{
+	if (!g_pServer || m_nNetConnectIdx < 0 || !pszName || !pszColor)
+		return;
+	int nName = (int)strlen(pszName);
+	int nColor = (int)strlen(pszColor);
+	GAME_PET_ITEM_NOTICE_SYNC Notice;
+	if (nName + nColor + 2 > sizeof(Notice.Content))
+		return;
+	ZeroMemory(&Notice, sizeof(Notice));
+	Notice.ProtocolType = 0x91;
+	Notice.MessageID = bSold ? 0x46 : 0x45;
+	memcpy(Notice.Content, pszName, nName);
+	memcpy(Notice.Content + nName + 1, pszColor, nColor);
+	Notice.Length = (WORD)(offsetof(GAME_PET_ITEM_NOTICE_SYNC, Content) + nName + nColor + 1);
+	g_pServer->PackDataToClient(m_nNetConnectIdx, &Notice, Notice.Length + 1);
+}
+
+BOOL KPlayer::CanPetPickItem(int nItem) const
+{
+	if (nItem <= 0 || nItem >= MAX_ITEM || !Item[nItem].GetID())
+		return FALSE;
+	const KItem& Goods = Item[nItem];
+	DWORD dwCategory = 0;
+	switch (Goods.GetGenre())
+	{
+	case item_equip:
+		{
+			// 当前资源中的法宝使用 amulet 表（DetailType 4），先于白、蓝装分类。
+			if (Goods.GetDetailType() == equip_amulet)
+			{
+				// 拾取窗口第8项是法宝；第7项是拾取记录，第6项不发送。
+				dwCategory = 1 << 8;
+				break;
+			}
+			const KBASICPROP_EQUIPMENT* pTemplate = ItemGen.GetEquipmentTemplate(
+				Goods.GetDetailType(), Goods.m_CommonAttrib.nParticularType,
+				Goods.m_CommonAttrib.nLevel, Goods.m_GeneratorParam.nVersion);
+			if (!pTemplate)
+				return FALSE;
+			if (pTemplate->m_nSeries || Goods.m_btGenerationFlags)
+				break;
+			BOOL bMagic = FALSE;
+			for (int i = 0; i < 6; i++)
+			{
+				if (Goods.m_aryMagicAttrib[i].nAttribType > 0)
+					bMagic = TRUE;
+			}
+			dwCategory = bMagic ? 2 : 1;
+		}
+		break;
+	case item_mine:
+	case item_materials:
+		dwCategory = 1 << 3;
+		break;
+	case item_medicine:
+		dwCategory = 1 << 4;
+		break;
+	case item_skillbook:
+		dwCategory = 1 << 5;
+		break;
+	}
+	return !(m_Pet.PickMask & dwCategory);
+}
+
+BOOL KPlayer::CanPetSellItem(int nItem) const
+{
+	if (!IsPetFunctionActive(1) || nItem <= 0 || nItem >= MAX_ITEM)
+		return FALSE;
+	const KItem& Goods = Item[nItem];
+	if (!Goods.GetID() || Goods.GetGenre() != item_equip || Goods.GetPrice() <= 0 ||
+		Goods.IsBound() || Goods.m_btGenerationFlags || Goods.m_dwUpgradeData ||
+		Goods.GetDetailType() == equip_amulet || Goods.GetDetailType() == equip_horse)
+		return FALSE;
+	const KBASICPROP_EQUIPMENT* pTemplate = ItemGen.GetEquipmentTemplate(
+		Goods.GetDetailType(), Goods.m_CommonAttrib.nParticularType,
+		Goods.m_CommonAttrib.nLevel, Goods.m_GeneratorParam.nVersion);
+	// 套装、紫装等固定属性装备不属于清理窗口的白装、蓝装。
+	if (!pTemplate || pTemplate->m_nSeries)
+		return FALSE;
+	int nMagicCount = 0;
+	int nRequireLevel = 0;
+	for (int i = 0; i < 6; i++)
+	{
+		if (Goods.m_aryMagicAttrib[i].nAttribType > 0)
+			nMagicCount++;
+		if (Goods.m_aryRequireAttrib[i].nAttribType == magic_requirelevel)
+			nRequireLevel = max(nRequireLevel, Goods.m_aryRequireAttrib[i].nValue[0]);
+	}
+	DWORD dwKeepType = nMagicCount ? 2 : 1;
+	int nLevelLimit = (m_Pet.SellMask >> 8) & 0xFF;
+	int nMagicLimit = (m_Pet.SellMask >> 16) & 0xFF;
+	if ((m_Pet.SellMask & dwKeepType) || nRequireLevel >= nLevelLimit ||
+		(nMagicCount > 0 && nMagicCount >= nMagicLimit))
+		return FALSE;
+	return TRUE;
+}
+
+void KPlayer::ActivePetPickup()
+{
+	if (!m_bFinishLoading || m_bExchangeServer || !IsPetFunctionActive(0) ||
+		m_nIndex <= 0 || m_nIndex >= MAX_NPC || CheckTrading())
+		return;
+	KNpc& Owner = Npc[m_nIndex];
+	if (Owner.m_SubWorldIndex < 0 || Owner.m_SubWorldIndex >= MAX_SUBWORLD ||
+		Owner.m_RegionIndex < 0 || Owner.m_bExchangeServer ||
+		Owner.m_Doing == do_death || Owner.m_Doing == do_revive)
+		return;
+	DWORD dwNow = g_SubWorldSet.GetGameTime();
+	if (dwNow - m_dwPetPickupTime < 20)
+		return;
+	m_dwPetPickupTime = dwNow;
+	KRegion& Region = SubWorld[Owner.m_SubWorldIndex].m_Region[Owner.m_RegionIndex];
+	int Regions[9];
+	Regions[0] = Owner.m_RegionIndex;
+	for (int i = 0; i < 8; i++)
+		Regions[i + 1] = Region.m_nConnectRegion[i];
+	for (int i = 0; i < 9; i++)
+	{
+		if (Regions[i] < 0)
+			continue;
+		KRegion& Nearby = SubWorld[Owner.m_SubWorldIndex].m_Region[Regions[i]];
+		KIndexNode* pNode = (KIndexNode*)Nearby.m_ObjList.GetHead();
+		while (pNode)
+		{
+			int nObject = pNode->m_nIndex;
+			pNode = (KIndexNode*)pNode->GetNext();
+			if (nObject <= 0 || nObject >= MAX_OBJECT ||
+				(Object[nObject].m_nKind != Obj_Kind_Item && Object[nObject].m_nKind != Obj_Kind_Money))
+				continue;
+			GAME_PICKUP_COMMAND Command;
+			ZeroMemory(&Command, sizeof(Command));
+			Command.ObjectId = Object[nObject].m_nID;
+			Command.Place = pos_equiproom;
+			// 使用原拾取范围、归属和完整入包检查；满包但能叠入已有物品时仍可拾取。
+			if (ServerPickUpItem((BYTE*)&Command, TRUE))
+				return;
+		}
+	}
+}
+
+BOOL KPlayer::IsValidPetType(int nType) const
+{
+	if (nType <= 0 || nType > 127)
+		return FALSE;
+	KTabFile Pets;
+	if (!Pets.Load("\\settings\\pets.txt") || nType + 1 > Pets.GetHeight())
+		return FALSE;
+	int nTemplate = 0;
+	Pets.GetInteger(nType + 1, "index", 0, &nTemplate);
+	return nTemplate > 0;
+}
+
+BOOL KPlayer::CreatePet(const char* pszName, int nType, int nHonor, int nColor)
+{
+	if (m_Pet.Type || !pszName || !pszName[0] || strlen(pszName) >= sizeof(m_Pet.Name) ||
+		!IsValidPetType(nType) || nHonor < 1 || nHonor > 100 || nColor < 0 || nColor > 255)
+		return FALSE;
+	ZeroMemory(&m_Pet, sizeof(m_Pet));
+	m_Pet.Type = (BYTE)nType;
+	m_Pet.Honor = (BYTE)nHonor;
+	m_Pet.Color = (BYTE)nColor;
+	m_Pet.Released = 1;
+	strcpy(m_Pet.Name, pszName);
+	KIniFile Defaults;
+	if (Defaults.Load("\\settings\\pet.ini"))
+	{
+		const char* PickKeys[] = {"NewPetAutoPickNotWriteEquip", "NewPetAutoPickNotBlueEquip",
+			"NewPetAutoPickNotAddMagicEquip", "NewPetAutoPickNotMatEquip",
+			"NewPetAutoPickNotMedicineEquip", "NewPetAutoPickNotSkillBook"};
+		for (int i = 0; i < sizeof(PickKeys) / sizeof(PickKeys[0]); i++)
+		{
+			int nValue = 0;
+			Defaults.GetInteger("Normal", (char*)PickKeys[i], 0, &nValue);
+			if (nValue)
+				m_Pet.PickMask |= 1 << i;
+		}
+		int nWhite, nBlue, nLevel, nMagicCount;
+		Defaults.GetInteger("Normal", "NewPetAutoSoldNotWhiteEquip", 0, &nWhite);
+		Defaults.GetInteger("Normal", "NewPetAutoSoldNotBlueEquip", 0, &nBlue);
+		Defaults.GetInteger("Normal", "NewPetAutoSoldNotEquipLevel", 0, &nLevel);
+		Defaults.GetInteger("Normal", "NewPetAutoSoldNotEquipMagicNum", 0, &nMagicCount);
+		m_Pet.SellMask = (nWhite ? 1 : 0) | (nBlue ? 2 : 0) |
+			((max(0, min(nLevel, 255))) << 8) | ((max(0, min(nMagicCount, 255))) << 16);
+	}
+	return TRUE;
+}
+
+BOOL KPlayer::SetPetType(int nType)
+{
+	if (!m_Pet.Type || !IsValidPetType(nType))
+		return FALSE;
+	m_Pet.Type = (BYTE)nType;
+	return TRUE;
+}
+
+BOOL KPlayer::SetPetReleased(int nReleased)
+{
+	if (!m_Pet.Type || (nReleased != 0 && nReleased != 1) || (nReleased && !m_Pet.Honor))
+		return FALSE;
+	m_Pet.Released = (BYTE)nReleased;
+	return TRUE;
+}
+
+BOOL KPlayer::SetPetHonor(int nHonor)
+{
+	if (!m_Pet.Type || nHonor < 0 || nHonor > 100)
+		return FALSE;
+	m_Pet.Honor = (BYTE)nHonor;
+	if (!nHonor)
+		m_Pet.Released = 0;
+	return TRUE;
+}
+
+BOOL KPlayer::SetPetAuthority(int nFunction, int nEnabled)
+{
+	if (!m_Pet.Type || nFunction < 0 || nFunction >= 5 || (nEnabled != 0 && nEnabled != 1))
+		return FALSE;
+	WORD wMask = (WORD)(1 << nFunction);
+	if (nEnabled)
+		m_Pet.Authority |= wMask;
+	else
+	{
+		m_Pet.Authority &= ~wMask;
+		m_Pet.Active &= ~wMask;
+	}
+	return TRUE;
+}
+
+void KPlayer::DeletePet()
+{
+	ZeroMemory(&m_Pet, sizeof(m_Pet));
+}
+
+void KPlayer::SendPetFunctionData()
+{
+	if (!g_pServer || m_nNetConnectIdx < 0 || m_nIndex <= 0 || m_nIndex >= MAX_NPC)
+		return;
+	GAME_PET_FUNCTION_SYNC Sync;
+	ZeroMemory(&Sync, sizeof(Sync));
+	Sync.ProtocolType = 0xDB;
+	Sync.Length = sizeof(Sync) - 1;
+	Sync.Subtype = 13;
+	Sync.OwnerID = Npc[m_nIndex].m_dwID;
+	Sync.Kind = 4;
+	Sync.Authority = m_Pet.Authority;
+	Sync.Active = m_Pet.Active;
+	g_pServer->PackDataToClient(m_nNetConnectIdx, &Sync, sizeof(Sync));
+}
+
+BOOL KPlayer::SetPetFunctionActive(int nFunction, int nEnabled)
+{
+	if (!m_Pet.Type || nFunction < 0 || nFunction >= 5 || (nEnabled != 0 && nEnabled != 1))
+		return FALSE;
+	WORD wMask = (WORD)(1 << nFunction);
+	if (nEnabled && (!(m_Pet.Authority & wMask) || !m_Pet.Released || !m_Pet.Honor))
+		return FALSE;
+	if (nEnabled)
+		m_Pet.Active |= wMask;
+	else
+		m_Pet.Active &= ~wMask;
+	m_ulLastSaveTime = 0;
+	return TRUE;
+}
+
+BOOL KPlayer::SetPetFilter(int nSubtype, DWORD dwMask)
+{
+	if (!m_Pet.Type)
+		return FALSE;
+	if (nSubtype == 4)
+	{
+		// 低两位是不卖白装/蓝装，随后两个字节是等级和蓝色属性条数。
+		if (dwMask & ~0x00FFFF03UL)
+			return FALSE;
+		m_Pet.SellMask = dwMask;
+	}
+	else if (nSubtype == 5)
+	{
+		// 按当前客户端的十位配置保存，包含拾取分类和记录开关。
+		if (dwMask & ~0x000003FFUL)
+			return FALSE;
+		m_Pet.PickMask = dwMask;
+	}
+	else
+		return FALSE;
+	m_ulLastSaveTime = 0;
+	return TRUE;
+}
+
+void KPlayer::SendPetRemoveData(int nClient)
+{
+	if (!g_pServer || nClient < 0 || m_nIndex <= 0 || m_nIndex >= MAX_NPC)
+		return;
+	GAME_PET_SYNC Sync;
+	BYTE Buffer[sizeof(Sync) + 1];
+	ZeroMemory(Buffer, sizeof(Buffer));
+	GAME_PET_SYNC* pSync = (GAME_PET_SYNC*)Buffer;
+	pSync->ProtocolType = 0xDB;
+	pSync->Length = sizeof(Sync);
+	pSync->Subtype = 1;
+	pSync->OwnerID = Npc[m_nIndex].m_dwID;
+	pSync->TypeAndReleased = (BYTE)(m_Pet.Type << 1);
+	pSync->Honor = m_Pet.Honor;
+	pSync->Color = m_Pet.Color;
+	pSync->PickMask = m_Pet.PickMask;
+	pSync->SellMask = m_Pet.SellMask;
+	g_pServer->PackDataToClient(nClient, Buffer, sizeof(Buffer));
+}
+
+void KPlayer::SendPetSyncData(int nClient, BOOL bFull)
+{
+	if ((!m_Pet.Type && !bFull) || !g_pServer || nClient < 0 || m_nIndex <= 0 || m_nIndex >= MAX_NPC)
+		return;
+	BYTE Buffer[sizeof(GAME_PET_SYNC) + sizeof(m_Pet.Name)];
+	ZeroMemory(Buffer, sizeof(Buffer));
+	GAME_PET_SYNC* pSync = (GAME_PET_SYNC*)Buffer;
+	pSync->ProtocolType = 0xDB;
+	pSync->OwnerID = Npc[m_nIndex].m_dwID;
+	pSync->TypeAndReleased = (BYTE)((m_Pet.Type << 1) | m_Pet.Released);
+	pSync->Honor = m_Pet.Honor;
+	pSync->Color = m_Pet.Color;
+	pSync->PickMask = m_Pet.PickMask;
+	pSync->SellMask = m_Pet.SellMask;
+	if (bFull && m_Pet.Type)
+	{
+		pSync->Subtype = 0;
+		pSync->FunctionAuthority = m_Pet.Authority;
+		pSync->FunctionActive = m_Pet.Active;
+		int nNameLength = (int)strlen(m_Pet.Name);
+		memcpy(Buffer + sizeof(*pSync), m_Pet.Name, nNameLength);
+		pSync->Length = (WORD)(sizeof(*pSync) + nNameLength - 1);
+		g_pServer->PackDataToClient(nClient, Buffer, pSync->Length + 1);
+	}
+	// 周期包的两个WORD按正式服保持0；技能按钮由DB/13独立同步。
+	// 召出初始化后不再立即追加周期包，避免覆盖初始化阶段的状态。
+	if (!bFull || !m_Pet.Type || !m_Pet.Released)
+	{
+		pSync->Subtype = 1;
+		pSync->FunctionAuthority = 0;
+		pSync->FunctionActive = 0;
+		pSync->Length = sizeof(*pSync);
+		Buffer[sizeof(*pSync)] = 0;
+		g_pServer->PackDataToClient(nClient, Buffer, pSync->Length + 1);
+	}
+	if (bFull && nClient == m_nNetConnectIdx)
+		SendPetFunctionData();
+}
+
+void KPlayer::SyncPetState()
+{
+	if (!g_pServer || m_nIndex <= 0 || m_nIndex >= MAX_NPC)
+		return;
+	for (int i = 1; i < MAX_PLAYER; i++)
+	{
+		if (Player[i].m_nNetConnectIdx < 0 || !Player[i].m_bFinishLoading ||
+			Player[i].m_nIndex <= 0 || Player[i].m_nIndex >= MAX_NPC)
+			continue;
+		KNpc& Observer = Npc[Player[i].m_nIndex];
+		KNpc& Owner = Npc[m_nIndex];
+		if (Observer.m_SubWorldIndex != Owner.m_SubWorldIndex ||
+			(i != m_nPlayerIndex && NpcSet.GetDistance(Player[i].m_nIndex, m_nIndex) > 1200))
+			continue;
+		SendPetSyncData(Player[i].m_nNetConnectIdx, TRUE);
+	}
+	m_ulLastSaveTime = 0;
+}
+
+BOOL KPlayer::UseScriptItem(int nItem)
+{
+	if (nItem <= 0 || nItem >= MAX_ITEM || Item[nItem].GetGenre() != item_magicorscript)
+		return FALSE;
+	KItem& Data = Item[nItem];
+	const KBASICPROP_NORMALITEM* pTemplate = ItemGen.GetNormalItemTemplate(Data.GetGenre(),
+		Data.GetDetailType(), Data.GetParticular(), Data.GetLevel(), Data.m_GeneratorParam.nVersion);
+	if (!pTemplate || !pTemplate->m_szScript[0])
+		return FALSE;
+	if (!g_GetScript(pTemplate->m_szScript))
+		ReLoadScript(pTemplate->m_szScript);
+	DWORD dwScript = g_FileName2Id((char*)pTemplate->m_szScript);
+	if (!g_GetScript(dwScript) || !CheckNpcScriptFunction(dwScript, "main", TRUE))
+		return FALSE;
+	KNpcScriptTransaction Exchange(m_nPlayerIndex);
+	if (pTemplate->m_bConsumeOnUse && !m_ItemList.ConsumeItem(nItem, 1))
+		return FALSE;
+	m_dwUseItemScriptID = dwScript;
+	int nPreviousNpc = m_nPeapleIdx;
+	m_nPeapleIdx = 0;
+	BOOL bExecuted = ExecuteScript(dwScript, "main", 0);
+	m_nPeapleIdx = nPreviousNpc;
+	if (!bExecuted || Exchange.HasFailed())
+		return FALSE;
+	Exchange.Commit();
+	return TRUE;
+}
 #endif

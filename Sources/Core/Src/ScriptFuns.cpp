@@ -181,6 +181,7 @@ struct KNpcScriptNotice
 struct KNpcScriptExchange
 {
 	KPlayerTask Task;
+	PLAYER_PET_DATA Pet;
 	std::vector<KNpcScriptItem> Items;
 	std::vector<KNpcScriptNotice> Notices;
 	int Money[room_num];
@@ -205,6 +206,7 @@ KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
 	}
 	pState = new KNpcScriptExchange;
 	pState->Task = Player[m_nPlayer].m_cTask;
+	pState->Pet = Player[m_nPlayer].m_Pet;
 	pState->Depth = 1;
 	pState->Experience = 0;
 	pState->Failed = FALSE;
@@ -277,6 +279,7 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 		for (int i = 0; i < room_num; i++)
 			List.SetRoomMoney(i, pState->Money[i]);
 		List.SendMoneySync();
+		Role.m_Pet = pState->Pet;
 		Role.m_cTask = pState->Task;
 		Role.m_cTask.SyncNotes(m_nPlayer);
 		Role.m_bWaitingPlayerFeedBack = false;
@@ -295,6 +298,8 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 	}
 	else
 	{
+		if (memcmp(&pState->Pet, &Role.m_Pet, sizeof(Role.m_Pet)) != 0)
+			Role.SyncPetState();
 		if (pState->Experience > 0)
 			Role.DirectAddExp(pState->Experience);
 		for (size_t i = 0; i < pState->Notices.size(); i++)
@@ -2144,6 +2149,166 @@ int LuaSale(Lua_State * L)
 		BuySell.OpenSale(nPlayerIndex, nShopId - 1);
 	}
 	return 0;
+}
+
+static BOOL ReadScriptInteger(Lua_State* L, int nArgument, int nMinimum, int nMaximum, int* pnValue)
+{
+	double nValue = Lua_ValueToNumber(L, nArgument);
+	if (!Lua_IsNumber(L, nArgument) || !(nValue >= nMinimum && nValue <= nMaximum) ||
+		nValue != (int)nValue)
+		return FALSE;
+	*pnValue = (int)nValue;
+	return TRUE;
+}
+
+int LuaSaleEx(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	int nShop = 0;
+	if (nPlayer > 0 && nPlayer < MAX_PLAYER && nTop == 1 &&
+		ReadScriptInteger(L, 1, 1, 65535, &nShop))
+		BuySell.OpenSale(nPlayer, nShop - 1, 1);
+	return 0;
+}
+
+static KPlayer* GetScriptPetPlayer(Lua_State* L, BOOL bWrite)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER)
+		return NULL;
+	if (bWrite && !g_NpcScriptExchange[nPlayer])
+	{
+		lua_error(L, "Pet changes require an item or NPC transaction");
+		return NULL;
+	}
+	return &Player[nPlayer];
+}
+
+int LuaGetPetType(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	Lua_PushNumber(L, pPlayer ? pPlayer->m_Pet.Type : 0);
+	return 1;
+}
+
+int LuaGetPetHonor(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	Lua_PushNumber(L, pPlayer ? pPlayer->m_Pet.Honor : 0);
+	return 1;
+}
+
+int LuaGetPetColor(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	Lua_PushNumber(L, pPlayer ? pPlayer->m_Pet.Color : 0);
+	return 1;
+}
+
+int LuaGetPetName(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	Lua_PushString(L, pPlayer ? pPlayer->m_Pet.Name : "");
+	return 1;
+}
+
+int LuaIsPetReleased(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	Lua_PushNumber(L, pPlayer ? pPlayer->m_Pet.Released : 0);
+	return 1;
+}
+
+int LuaGenPet(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	int nType = 0, nHonor = 0, nColor = 0;
+	BOOL bDone = pPlayer && Lua_GetTopIndex(L) == 4 && lua_type(L, 1) == LUA_TSTRING &&
+		ReadScriptInteger(L, 2, 1, 127, &nType) && ReadScriptInteger(L, 3, 1, 100, &nHonor) &&
+		ReadScriptInteger(L, 4, 0, 255, &nColor) &&
+		strlen(lua_tostring(L, 1)) == lua_strlen(L, 1) &&
+		pPlayer->CreatePet(lua_tostring(L, 1), nType, nHonor, nColor);
+	if (!bDone)
+		RejectNpcScriptItem(L, GetPlayerIndex(L));
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+int LuaDelPet(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	if (!pPlayer || Lua_GetTopIndex(L) != 0 || !pPlayer->m_Pet.Type)
+	{
+		RejectNpcScriptItem(L, GetPlayerIndex(L));
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	pPlayer->DeletePet();
+	Lua_PushNumber(L, 1);
+	return 1;
+}
+
+int LuaSetPetType(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	int nValue = 0;
+	BOOL bDone = pPlayer && Lua_GetTopIndex(L) == 1 &&
+		ReadScriptInteger(L, 1, 1, 127, &nValue) && pPlayer->SetPetType(nValue);
+	if (!bDone)
+		RejectNpcScriptItem(L, GetPlayerIndex(L));
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+int LuaSetPetHonor(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	int nValue = 0;
+	BOOL bDone = pPlayer && Lua_GetTopIndex(L) == 1 &&
+		ReadScriptInteger(L, 1, 0, 100, &nValue) && pPlayer->SetPetHonor(nValue);
+	if (!bDone)
+		RejectNpcScriptItem(L, GetPlayerIndex(L));
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+int LuaReleasePet(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	int nValue = 0;
+	BOOL bDone = pPlayer && Lua_GetTopIndex(L) == 1 &&
+		ReadScriptInteger(L, 1, 0, 1, &nValue) && pPlayer->SetPetReleased(nValue);
+	if (!bDone)
+		RejectNpcScriptItem(L, GetPlayerIndex(L));
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+int LuaGetPetFuncAuthority(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	int nFunction = 0;
+	Lua_PushNumber(L, pPlayer && Lua_GetTopIndex(L) == 1 &&
+		ReadScriptInteger(L, 1, 0, 4, &nFunction) &&
+		(pPlayer->m_Pet.Authority & (1 << nFunction)) ? 1 : 0);
+	return 1;
+}
+
+int LuaSetPetFuncAuthority(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	int nFunction = 0, nEnabled = 0;
+	BOOL bDone = pPlayer && Lua_GetTopIndex(L) == 2 &&
+		ReadScriptInteger(L, 1, 0, 4, &nFunction) && ReadScriptInteger(L, 2, 0, 1, &nEnabled) &&
+		pPlayer->SetPetAuthority(nFunction, nEnabled);
+	if (!bDone)
+		RejectNpcScriptItem(L, GetPlayerIndex(L));
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
 }
 
 int LuaTrade(Lua_State * L)
@@ -6484,6 +6649,19 @@ TLua_Funcs GameScriptFuns[] =
 	{"AttackNpc",		LuaAttackNpc},				//AttackNpc(NpcDwid,物理伤害值，冰，火，电，毒）
 	{"KillNpc",			LuaKillNpc},				//KillNpc(NpcDWID)
 	{"KillPlayer",		LuaKillPlayer},				//KillPlayer();
+	{"SaleEx", LuaSaleEx},
+	{"GetPetType", LuaGetPetType},
+	{"GetPetHonor", LuaGetPetHonor},
+	{"GetPetColor", LuaGetPetColor},
+	{"GetPetName", LuaGetPetName},
+	{"IsPetReleased", LuaIsPetReleased},
+	{"GenPet", LuaGenPet},
+	{"DelPet", LuaDelPet},
+	{"SetPetType", LuaSetPetType},
+	{"SetPetHonor", LuaSetPetHonor},
+	{"ReleasePet", LuaReleasePet},
+	{"GetPetFuncAuthority", LuaGetPetFuncAuthority},
+	{"SetPetFuncAuthority", LuaSetPetFuncAuthority},
 	{"Sale",			LuaSale},					//Sale(SaleId)买卖，SaleId为便卖的物品信息列表id
 	{"UseTownPortal",	LuaUseTownPortal	},
 	{"ReturnFromPortal",LuaReturnFromTownPortal	},

@@ -221,7 +221,7 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[0x62] = &KProtocolProcess::CurrentPickupCommand;
 	ProcessFunc[0x78] = &KProtocolProcess::ChangeAuraSkill;
 	ProcessFunc[0x7E] = &KProtocolProcess::NpcReviveCommand;
-	ProcessFunc[0xA4] = &KProtocolProcess::CurrentPickupCommand;
+	ProcessFunc[0xA4] = &KProtocolProcess::CurrentPetCommand;
 	ProcessFunc[0x85] = &KProtocolProcess::CurrentMountCommand;
 	ProcessFunc[0x89] = &KProtocolProcess::CurrentCompoundCommand;
 	ProcessFunc[0x94] = &KProtocolProcess::CurrentSplitItemCommand;
@@ -3346,6 +3346,46 @@ void KProtocolProcess::CurrentSkillCommand(int nIndex, BYTE* pProtocol)
 		nIndex, pCommand->SimulationFrame, pCommand->SkillId, nX, nY);
 }
 
+void KProtocolProcess::CurrentPetCommand(int nIndex, BYTE* pProtocol)
+{
+	if (nIndex <= 0 || nIndex >= MAX_PLAYER || !pProtocol)
+		return;
+	WORD wLength = 0;
+	memcpy(&wLength, pProtocol + 1, sizeof(wLength));
+	if (wLength == 8 && pProtocol[3] == 3)
+	{
+		CurrentPickupCommand(nIndex, pProtocol);
+		return;
+	}
+	BOOL bFilter = wLength == sizeof(GAME_PET_FILTER_COMMAND) - 1 &&
+		(pProtocol[3] == 4 || pProtocol[3] == 5);
+	BOOL bFunction = wLength == sizeof(GAME_PET_FUNCTION_COMMAND) - 1 && pProtocol[3] == 7;
+	if (!bFilter && !bFunction)
+		return;
+	KPlayer& Owner = Player[nIndex];
+	int nNpc = Owner.m_nIndex;
+	if (!Owner.m_bFinishLoading || Owner.m_bExchangeServer ||
+		nNpc <= 0 || nNpc >= MAX_NPC || ::Npc[nNpc].m_RegionIndex < 0)
+		return;
+	if (bFilter)
+	{
+		const GAME_PET_FILTER_COMMAND* pFilter = (const GAME_PET_FILTER_COMMAND*)pProtocol;
+		BOOL bAccepted = Owner.SetPetFilter(pFilter->Subtype, pFilter->Mask);
+		// 普通同步更新两个配置窗口，再独立回传技能状态；不重新创建宠物。
+		Owner.SendPetSyncData(Owner.m_nNetConnectIdx, FALSE);
+		Owner.SendPetFunctionData();
+		g_DebugLog("[Pet] player=%d filter=%u requested=%lu accepted=%d pick=%lu sell=%lu",
+			nIndex, pFilter->Subtype, pFilter->Mask, bAccepted, Owner.m_Pet.PickMask, Owner.m_Pet.SellMask);
+		return;
+	}
+	const GAME_PET_FUNCTION_COMMAND* pCommand = (const GAME_PET_FUNCTION_COMMAND*)pProtocol;
+	BOOL bChanged = Owner.SetPetFunctionActive(pCommand->Function, pCommand->Enabled);
+	// 返回服务器实际值；越权、重复和无效请求均不能改变学习权限或扣费。
+	Owner.SendPetFunctionData();
+	g_DebugLog("[Pet] player=%d function=%u enabled=%u accepted=%d authority=%u active=%u",
+		nIndex, pCommand->Function, pCommand->Enabled, bChanged, Owner.m_Pet.Authority, Owner.m_Pet.Active);
+}
+
 void KProtocolProcess::CurrentPickupCommand(int nIndex, BYTE* pProtocol)
 {
 	int nNpc = Player[nIndex].m_nIndex;
@@ -3366,22 +3406,9 @@ void KProtocolProcess::CurrentPickupCommand(int nIndex, BYTE* pProtocol)
 		if (*(const WORD*)(pProtocol + 1) != 8 || pProtocol[3] != 3)
 			return;
 		memcpy(&Command.ObjectId, pProtocol + 4, sizeof(Command.ObjectId));
-		int nObject = ObjSet.FindID(Command.ObjectId);
-		if (nObject <= 0)
-			return;
-		int nX = 0, nY = 0;
-		if (Object[nObject].m_nKind == Obj_Kind_Item &&
-			(Object[nObject].m_nItemDataID <= 0 || Object[nObject].m_nItemDataID >= MAX_ITEM))
-			return;
-		if (Object[nObject].m_nKind == Obj_Kind_Item &&
-			!Player[nIndex].m_ItemList.CheckCanPlaceInEquipment(Item[Object[nObject].m_nItemDataID].GetWidth(),
-				Item[Object[nObject].m_nItemDataID].GetHeight(), &nX, &nY))
-			return;
 		Command.Place = pos_equiproom;
-		Command.X = (BYTE)nX;
-		Command.Y = (BYTE)nY;
 	}
-	Player[nIndex].ServerPickUpItem((BYTE*)&Command);
+	Player[nIndex].ServerPickUpItem((BYTE*)&Command, pProtocol[0] != 0x62);
 }
 
 void KProtocolProcess::CurrentMountCommand(int nIndex, BYTE* pProtocol)

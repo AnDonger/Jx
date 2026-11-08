@@ -202,7 +202,7 @@ end
 function compound_can_start()
 	-- 原玲珑锁脚本使用任务464保存设置，解锁接口尚未接通时保留保护。
 	if GetTask(464) ~= 0 then
-		PutMessage("请先检查玲珑锁保护状态，再进行合成。")
+		Msg2Player("请先检查玲珑锁保护状态，再进行合成。")
 		return 0
 	end
 	return 1
@@ -254,10 +254,6 @@ function OnCompound()
 			return
 		end
 		result = 1
-	end
-	if rule.Money > 0 then
-		Msg2Player("您损失了200000两金钱。")
-		-- PutMessage(format("合成消耗%d两金钱。", rule.Money))
 	end
 	WriteLog(format("赤松子合成：配方%d，费用%d，成功率%d，结果%d。", rule.ID, rule.Money, rule.Rate, result))
 	CompleteItemOperation(result)

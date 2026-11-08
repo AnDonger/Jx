@@ -3542,6 +3542,10 @@ BOOL KNpc::SendSyncData(int nClient)
 			printf("Packing player sync data failed...\n");
 			return FALSE;
 		}
+		// 人物外观初始化会重置附属状态，宠物必须排在4C、4A之后。
+		// 初次登录等44和装备等初始化完成，在STEP_SYNC_END统一创建。
+		if (nClient != Player[m_nPlayerIdx].m_nNetConnectIdx || Player[m_nPlayerIdx].m_bFinishLoading)
+			Player[m_nPlayerIdx].SendPetSyncData(nClient, TRUE);
 	}
 	return bRet;
 }
@@ -3600,6 +3604,7 @@ void KNpc::NormalSync()
 
 	if (IsPlayer())
 	{
+		Player[m_nPlayerIdx].SendPetSyncData(Player[m_nPlayerIdx].m_nNetConnectIdx, FALSE);
 		GAME_PLAYER_NORMAL_SYNC PlayerSync;
 		memset(&PlayerSync, 0, sizeof(PlayerSync));
 
@@ -5807,6 +5812,11 @@ int KNpc::ChangeWorld(DWORD dwSubWorldID, int nX, int nY)
 	if (m_SubWorldIndex >= 0)
 	SubWorld[m_SubWorldIndex].m_MissionArray.RemovePlayer(m_nPlayerIdx);
 	
+	// 客户端DB/0仅在主人没有附属宠物时创建；先释放旧地图的附属对象。
+	// 这里只清理客户端显示，不能修改存档中的召出状态。
+	if (Player[m_nPlayerIdx].m_Pet.Type)
+		Player[m_nPlayerIdx].SendPetRemoveData(Player[m_nPlayerIdx].m_nNetConnectIdx);
+
 	// 真正开始切换工作
 	if (m_SubWorldIndex >= 0 && m_RegionIndex >= 0)
 	{
@@ -5839,6 +5849,7 @@ int KNpc::ChangeWorld(DWORD dwSubWorldID, int nX, int nY)
 		SubWorld[nTargetSubWorld].SendSyncData(m_Index, Player[m_nPlayerIdx].m_nNetConnectIdx);
 		SubWorld[nSourceSubWorld].RemovePlayer(nSourceRegion, m_nPlayerIdx);
 		SubWorld[nTargetSubWorld].AddPlayer(nRegion, m_nPlayerIdx);
+		SendSyncData(Player[m_nPlayerIdx].m_nNetConnectIdx);
 	}
 	return 1;
 }

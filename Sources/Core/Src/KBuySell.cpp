@@ -478,6 +478,30 @@ BOOL KBuySell::Buy(int nPlayerIdx, int nBuy, int nBuyIdx, int nPlace, int nX, in
 	KPlayer &Role = Player[nPlayerIdx];
 	if (nPlace == pos_hand && (nX != 0 || nY != 0 || Role.m_ItemList.Hand() != 0))
 		return FALSE;
+	if (Role.m_BuyInfo.m_nCurrency == 1)
+	{
+		const KBASICPROP_NORMALITEM* pTemplate = ItemGen.GetNormalItemTemplate(pItem->GetGenre(),
+			pItem->GetDetailType(), pItem->GetParticular(), pItem->GetLevel(),
+			pItem->m_GeneratorParam.nVersion);
+		if (!pTemplate || pTemplate->m_nCopperPrice <= 0 || nPlace != pos_equiproom)
+			return FALSE;
+		int nCost = pTemplate->m_nCopperPrice;
+		BOOL bBought = Role.m_ItemList.BuyWithItemCurrency(pItem, 1, item_task, 47, nCost);
+		if (bBought)
+		{
+			GAME_CURRENCY_NOTICE_SYNC Notice;
+			ZeroMemory(&Notice, sizeof(Notice));
+			Notice.ProtocolType = 0xCC;
+			Notice.Currency = 1;
+			Notice.Amount = nCost;
+			g_pServer->PackDataToClient(Role.m_nNetConnectIdx, &Notice, sizeof(Notice));
+			g_DebugLog("[Shop] Copper buy: player=%d shop=%d slot=%d cost=%d",
+				nPlayerIdx, nBuy, nBuyIdx, nCost);
+		}
+		else
+			ShopMessage(nPlayerIdx, "铜钱不足或背包空间不足，购买未完成。");
+		return bBought;
+	}
 	int nPrice = pItem->GetPrice();
 	if (nPrice < 0 || Role.m_ItemList.GetEquipmentMoney() < nPrice)
 	{
@@ -516,7 +540,7 @@ BOOL KBuySell::Buy(int nPlayerIdx, int nBuy, int nBuyIdx, int nPlace, int nX, in
 *******************************************************************************/
 BOOL KBuySell::Sell(int nPlayerIdx, int nBuy, int nIdx)
 {
-	if (!CheckShopPlayer(nPlayerIdx, nBuy))
+	if (!CheckShopPlayer(nPlayerIdx, nBuy) || Player[nPlayerIdx].m_BuyInfo.m_nCurrency != 0)
 		return FALSE;
 	KItemList& List = Player[nPlayerIdx].m_ItemList;
 	PlayerItem* pEntry = List.GetFirstItem();
@@ -560,7 +584,8 @@ BOOL KBuySell::Sell(int nPlayerIdx, int nBuy, int nIdx)
 BOOL KBuySell::BuyBack(int nPlayerIdx, DWORD dwItemID)
 {
 	if (nPlayerIdx <= 0 || nPlayerIdx >= MAX_PLAYER ||
-		!CheckShopPlayer(nPlayerIdx, Player[nPlayerIdx].m_BuyInfo.m_nBuyIdx))
+		!CheckShopPlayer(nPlayerIdx, Player[nPlayerIdx].m_BuyInfo.m_nBuyIdx) ||
+		Player[nPlayerIdx].m_BuyInfo.m_nCurrency != 0)
 		return FALSE;
 	KItemList& List = Player[nPlayerIdx].m_ItemList;
 	int BuyBackItems[MAX_SHOP_BUYBACK_ITEM];
@@ -625,9 +650,10 @@ void KBuySell::OpenSale(int nShop)
 #endif
 
 #ifdef _SERVER
-void KBuySell::OpenSale(int nPlayerIdx, int nShop)
+void KBuySell::OpenSale(int nPlayerIdx, int nShop, int nCurrency)
 {
-	if (nPlayerIdx <= 0 || nPlayerIdx >= MAX_PLAYER || nShop < 0 || nShop >= m_Height)
+	if (nPlayerIdx <= 0 || nPlayerIdx >= MAX_PLAYER || nShop < 0 || nShop >= m_Height ||
+		(nCurrency != 0 && nCurrency != 1))
 	{
 		return;
 	}
@@ -636,6 +662,7 @@ void KBuySell::OpenSale(int nPlayerIdx, int nShop)
 		Player[nPlayerIdx].m_nIndex <= 0 || Player[nPlayerIdx].m_nIndex >= MAX_NPC)
 		return;
 	Player[nPlayerIdx].m_BuyInfo.m_nBuyIdx = nShop;
+	Player[nPlayerIdx].m_BuyInfo.m_nCurrency = nCurrency;
 	Player[nPlayerIdx].m_BuyInfo.m_SubWorldID = Npc[Player[nPlayerIdx].m_nIndex].m_SubWorldIndex;
 	Npc[Player[nPlayerIdx].m_nIndex].GetMpsPos(
 		&Player[nPlayerIdx].m_BuyInfo.m_nMpsX,
@@ -643,7 +670,7 @@ void KBuySell::OpenSale(int nPlayerIdx, int nShop)
 
 	SALE_BOX_SYNC saleSync;
 	saleSync.ProtocolType = 0x8F;
-	saleSync.ShopType = 0;
+	saleSync.ShopType = (BYTE)nCurrency;
 	saleSync.nShopIndex = nShop;
 	g_pServer->PackDataToClient(Player[nPlayerIdx].m_nNetConnectIdx, &saleSync, sizeof(SALE_BOX_SYNC));
 }

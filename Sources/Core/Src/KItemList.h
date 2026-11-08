@@ -49,6 +49,9 @@ public:
 
 private:
 	int			FindFree();
+#ifdef _SERVER
+	void		SyncItemData(int nIdx, int nPlace, int nX, int nY);
+#endif
 	int			FindSame(int nGameIdx);							// nGameIdx指游戏世界中道具数组的编号
 	int			GetEquipPlace(int nType);						// 取得某类型装备应该放的位置
 	BOOL		Fit(int nIdx, int nPlace);						// 检查是否可以装备上
@@ -102,6 +105,7 @@ public:
 	void		StartTrade();
 #ifdef	_SERVER
 	BOOL		AddPickupItem(int nIdx, int nX, int nY);
+	BOOL		SellPickupItem(int nIdx, int nMoney);
 	BOOL		BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, int nDetail, int nCost);
 	int			GetBuyBackItems(int* pItems);
 	BOOL		MoveShopItem(int nIdx, int nPlace, int nX, int nY, BOOL bSync = TRUE);

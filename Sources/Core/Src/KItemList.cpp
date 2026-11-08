@@ -250,6 +250,11 @@ void KItemList::SyncItem(int nIdx, BOOL bRefresh)
 		g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &Remove, sizeof(Remove));
 	}
 
+	SyncItemData(nIdx, m_Items[nList].nPlace, m_Items[nList].nX, m_Items[nList].nY);
+}
+
+void KItemList::SyncItemData(int nIdx, int nPlace, int nX, int nY)
+{
 	GAME_ITEM_SYNC	sItem;
 	memset(&sItem, 0, sizeof(sItem));
 	sItem.Count = (BYTE)Item[nIdx].GetStackCount();
@@ -261,10 +266,9 @@ void KItemList::SyncItem(int nIdx, BOOL bRefresh)
 	sItem.m_Series = Item[nIdx].GetSeries();
 	sItem.m_Level = Item[nIdx].GetLevel();
 	sItem.m_Luck = Item[nIdx].m_GeneratorParam.nLuck;
-	sItem.m_btPlace = m_Items[nList].nPlace;
-	sItem.m_btX = m_Items[nList].nPlace == pos_equip ?
-		EquipmentPartToClientSlot(m_Items[nList].nX) : m_Items[nList].nX;
-	sItem.m_btY = m_Items[nList].nY;
+	sItem.m_btPlace = nPlace;
+	sItem.m_btX = nPlace == pos_equip ? EquipmentPartToClientSlot(nX) : nX;
+	sItem.m_btY = nY;
 	for (int j = 0; j < 6; j++)
 		sItem.m_MagicLevel[j] = (BYTE)Item[nIdx].m_GeneratorParam.nGeneratorLevel[j];
 	sItem.m_RandomSeed = Item[nIdx].m_GeneratorParam.uRandomSeed;
@@ -550,6 +554,63 @@ BOOL KItemList::SplitItem(ItemPos* pSource, DWORD dwCount)
 	// 75 creates the separate mouse stack; AD refreshes the quantity remaining in the source cell.
 	SyncItemCount(nSource);
 	SyncItemCount(nSplit);
+	return TRUE;
+}
+
+BOOL KItemList::SellPickupItem(int nIdx, int nMoney)
+{
+	if (nIdx <= 0 || nIdx >= MAX_ITEM || !Item[nIdx].GetID() ||
+		FindSame(nIdx) || nMoney <= 0 ||
+		(__int64)GetEquipmentMoney() + nMoney > 0x7FFFFFFF)
+		return FALSE;
+	int nFree = FindFree();
+	if (!nFree)
+		return FALSE;
+
+	int BuyBackItems[MAX_SHOP_BUYBACK_ITEM];
+	int nCount = GetBuyBackItems(BuyBackItems);
+	int nStored = 0;
+	for (int nList = m_UseIdx.GetNext(0); nList; nList = m_UseIdx.GetNext(nList))
+	{
+		if (m_Items[nList].nPlace == pos_buyback)
+			nStored++;
+	}
+	if (nStored != nCount)
+		return FALSE;
+	for (int i = 0; i < nCount; i++)
+	{
+		int nList = FindSame(BuyBackItems[i]);
+		if (!nList || !Item[BuyBackItems[i]].GetID() ||
+			m_Items[nList].nX != i % 2 || m_Items[nList].nY != i / 2)
+			return FALSE;
+	}
+
+	// 所有容量、位置和金额校验均在修改前完成。之后只移动已确认的回购格。
+	if (!m_Room[room_equipment].AddMoney(nMoney))
+		return FALSE;
+	// 正式服先用位置19同步新拾取装备，再以EF转入回购栏；不占背包格。
+	SyncItemData(nIdx, 19, 2, 0);
+	if (nCount == MAX_SHOP_BUYBACK_ITEM)
+	{
+		int nOldest = BuyBackItems[0];
+		Remove(nOldest);
+		ItemSet.Remove(nOldest);
+		for (int i = 1; i < nCount; i++)
+		{
+			int nList = FindSame(BuyBackItems[i]);
+			m_Items[nList].nX = (i - 1) % 2;
+			m_Items[nList].nY = (i - 1) / 2;
+			SyncItemPosition(BuyBackItems[i]);
+		}
+		nCount--;
+	}
+	m_Items[nFree].nIdx = nIdx;
+	m_Items[nFree].nPlace = pos_buyback;
+	m_Items[nFree].nX = nCount % 2;
+	m_Items[nFree].nY = nCount / 2;
+	m_FreeIdx.Remove(nFree);
+	m_UseIdx.Insert(nFree);
+	SyncItemPosition(nIdx);
 	return TRUE;
 }
 

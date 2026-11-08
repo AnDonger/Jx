@@ -107,6 +107,7 @@ typedef struct
 	BOOL		m_bValid;
 	char		m_szScript[260];
 	BOOL		m_bConsumeOnUse;
+	int			m_nCopperPrice;		// 原资源铜钱价格，仅供铜钱商店结算。
 } KBASICPROP_NORMALITEM;
 
 // 以下结构用于描述一对最大,最小值

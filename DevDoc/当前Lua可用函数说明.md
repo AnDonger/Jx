@@ -1,10 +1,10 @@
 # 当前 Lua 可用函数说明（Lua函数表）
 
-核对日期：2026-11-07。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
+核对日期：2026-11-08。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
 
 ## 阅读方法与范围
 
-- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **238个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **330个不同名字**，均有独立条目。
+- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **251个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **343个不同名字**，均有独立条目。
 - “实现已核对”表示已对照当前注册和函数正文，**不表示全部接口已通过新版客户端实测**。带“旧接口”“待适配”“有缺陷”“不可用”的条目保留用于查错；不能把存在名字当成功能已完整适配。
 - 以服务端 `_SERVER` 分支为准，排除注释中的注册项、客户端专用 `PlaySound` / `PlaySprMovie`、未注册的C++辅助函数。原脚本内 `main`、`OnCompound`、公共库中自定义函数不属于引擎全局API；只能在加载了对应脚本后使用其实际定义。
 - 普通NPC／玩家脚本由 `GameScriptFuns` 注册；全局世界脚本由 `WorldScriptFuns` 注册。标准库在创建Lua状态时打开。脚本可覆盖同名全局，使用时还要核对原脚本及 `Include` 内容。
@@ -40,11 +40,14 @@ Lua不得直接连接、查询或修改数据库，不得编写、拼接或执�
 
 当前窗口请求事务提供 `GetSelectedItems` → `DelSelectedItem` / `Pay` / `AddNormalItem` → `CompleteItemOperation` 的调用链。`CompleteItemOperation(0)`表示**概率失败但操作已完成，提交合法消耗**；未完成或Lua报错则回滚，`CompleteItemOperation(1)`之后报错也会回滚。
 
-已有快照覆盖随身背包、快捷栏、鼠标物品、各房间现金和玩家任务；`AddOwnExp`在成功后延迟发放；`PutMessage` / `Msg2Player`在事务成功后延迟通知。**不保证任意Lua回调都有事务**：当前普通NPC对话自动事务仍有限定范围，物品窗口入口显式建立事务。穿戴、仓库、技能、Buff、阵营、帮会、婚姻、位置、系统文件副作用等未泛化纳入完整快照。`WriteLog`以及某些旧协议通知也不回滚。新业务涉及这些范围时，先补通用事务与存档支持，不能宣称已支持完整回滚。
+已有快照覆盖随身背包、快捷栏、鼠标物品、各房间现金、玩家任务和本轮普通宠物状态；`AddOwnExp`在成功后延迟发放；`PutMessage` / `Msg2Player`在事务成功后延迟通知。**不保证任意Lua回调都有事务**：当前普通NPC对话自动事务仍有限定范围，物品窗口入口显式建立事务。穿戴、仓库、技能、Buff、阵营、帮会、婚姻、位置、系统文件副作用等未泛化纳入完整快照。`WriteLog`以及某些旧协议通知也不回滚。新业务涉及这些范围时，先补通用事务与存档支持，不能宣称已支持完整回滚。
+
+物品模板中的脚本入口及其对白回调新增自动事务，但仅开放 `KSortScript.cpp::IsItemTransactionFunction` 中已覆盖快照的接口和只读／纯计算接口；地图、技能、Buff、外部IO等接口不在该入口的支持范围。每个回调执行前重新检查调用关系，失败不提交本次道具消耗、现金及宠物变更。NPC自动事务仍维持已有作用域，不能据此认为所有地图NPC均已有完整事务。
 
 ## 分类索引
 
 - **对白、窗口与提示**：[Say](#say)、[SayTask](#saytask)、[Talk](#talk)、[MsgBox](#msgbox)、[CloseDialog](#closedialog)、[PutMessage](#putmessage)、[Msg2Player](#msg2player)、[TopMessage](#topmessage)、[Sale](#sale)、[OpenBox](#openbox)、[OpenNewCompound](#opennewcompound)、[EnchaseItem](#enchaseitem)、[AddNote](#addnote)、[PlayMusic](#playmusic)、[FadeInMusic](#fadeinmusic)、[FadeOutMusic](#fadeoutmusic)。
+- **普通宠物与铜钱商店**：[SaleEx](#saleex)、[GetPetType](#getpettype)、[GetPetHonor](#getpethonor)、[GetPetColor](#getpetcolor)、[GetPetName](#getpetname)、[IsPetReleased](#ispetreleased)、[GenPet](#genpet)、[DelPet](#delpet)、[SetPetType](#setpettype)、[SetPetHonor](#setpethonor)、[ReleasePet](#releasepet)、[GetPetFuncAuthority](#getpetfuncauthority)、[SetPetFuncAuthority](#setpetfuncauthority)。
 - **资源、脚本与服务器日志**：[ReadTabFile](#readtabfile)、[GetGameVersion](#getgameversion)、[Include](#include)、[WriteLog](#writelog)、[Message](#message)、[ExeScript](#exescript)。
 - **物品、现金、铜钱与窗口事务**：[HaveNormalItem](#havenormalitem)、[HaveItem2](#haveitem2)、[IsExistItem](#isexistitem)、[DelNormalItem](#delnormalitem)、[DelItem2](#delitem2)、[AddNormalItem](#addnormalitem)、[AddNormalItem2](#addnormalitem2)、[AddNormalItemPile](#addnormalitempile)、[GetItemLevel2](#getitemlevel2)、[HaveNormalItemInQuick](#havenormaliteminquick)、[DelNormalItemInQuick](#delnormaliteminquick)、[GetSelectedItems](#getselecteditems)、[DelSelectedItem](#delselecteditem)、[CompleteItemOperation](#completeitemoperation)、[GetCash](#getcash)、[Pay](#pay)、[Earn](#earn)、[PrePay](#prepay)、[GetCopperCashCount](#getcoppercashcount)、[WasteCopperCash](#wastecoppercash)、[GetCredit](#getcredit)、[DecCredit](#deccredit)、[GetRepute](#getrepute)、[AddRepute](#addrepute)、[ImproveItemMagicAttr](#improveitemmagicattr)、[AddItem](#additem)、[AddEventItem](#addeventitem)、[GetItemCount](#getitemcount)、[HaveEventItem](#haveeventitem)、[HaveItem](#haveitem)、[DelItem](#delitem)、[DelEventItem](#deleventitem)、[DropItem](#dropitem)。
 - **玩家任务与位、字节操作**：[GetTask](#gettask)、[SetTask](#settask)、[GetTaskTemp](#gettasktemp)、[SetTaskTemp](#settasktemp)、[TaskNote](#tasknote)、[GetTaskByte](#gettaskbyte)、[SetTaskByte](#settaskbyte)、[GetBit](#getbit)、[SetBit](#setbit)、[GetByte](#getbyte)、[SetByte](#setbyte)。
@@ -186,7 +189,7 @@ Msg2Player(text)
 
 - 参数：text：系统公告／聊天提示字符串。
 - 返回：无。
-- 限制／说明：当前玩家；物品事务内延迟发送。不等同于 PutMessage 的界面提示。
+- 限制／说明：当前玩家；物品事务内延迟发送。该接口发送系统公告，当前客户端会同时显示在聊天栏和系统栏，不能作为右侧专用通知。不等同于 PutMessage 的界面提示。
 - 实现：[`LuaMsgToPlayer`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2339)。
 
 用法示例：
@@ -205,7 +208,7 @@ TopMessage(text)
 
 - 参数：text：系统公告／聊天提示字符串。
 - 返回：无。
-- 限制／说明：与 `Msg2Player` 同一实现、同一参数和返回值。当前玩家；物品事务内延迟发送。不等同于 PutMessage 的界面提示。
+- 限制／说明：与 `Msg2Player` 同一实现、同一参数和返回值。当前玩家；物品事务内延迟发送。该接口发送系统公告，当前客户端会同时显示在聊天栏和系统栏，不能作为右侧专用通知。不等同于 PutMessage 的界面提示。
 - 实现：[`LuaMsgToPlayer`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2339)。
 
 用法示例：
@@ -780,7 +783,7 @@ Pay(amount)
 
 - 参数：amount：正整数，单位两，扣随身现金。
 - 返回：成功1、余额不足0；amount<=0时无返回值。
-- 限制／说明：通过原物品列表扣费；不自动生成所需的业务扣费文案，扣费通知由脚本按实际费用调用 `Msg2Player`，避免额外的黄色界面提示。已有事务内现金可回滚；不能仅依赖 if Pay(amount)（数字0在Lua4为真）。
+- 限制／说明：通过原物品列表扣费；发送原金钱同步，由客户端显示原生金钱变化提示；不要再为同一笔扣费调用 `Msg2Player` 或 `PutMessage`，否则会额外出现系统公告或黄色提示。已有事务内现金可回滚；不能仅依赖 if Pay(amount)（数字0在Lua4为真）。
 - 实现：[`LuaPlayerPayMoney`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:4361)。
 
 用法示例：
@@ -6379,6 +6382,247 @@ debug()
 
 开发时依次核对：原NPC挂接脚本及其Include → 本表参数和状态 → 原Resources业务规则 → 已有通用接口及事务边界。已有脚本就修改原脚本；确认Resources中没有时，按AGENTS资源审批规则申请新增。需要补C++接口时，接口面向通用能力，完成真实校验、同步、存档、失败回滚后再接Lua，并维护本文。
 
+## 普通宠物接口（2026-11-08）
+
+状态：已通过原生测试；具体TLS和客户端验收进展见同日宠物开发日记。写接口只允许在已有通用事务内执行，失败应终止当前回调，不能继续发奖或提示成功。
+
+| functionId | 技能 | 权限位 |
+| --- | --- | --- |
+| 0 | 拾金捡宝 | 0x01 |
+| 1 | 弃物清理 | 0x02 |
+| 2 | 灵宠献技 | 0x04 |
+| 3 | 灵力修复 | 0x08 |
+| 4 | 灵眼观真 | 0x10 |
+
+用户正式服记录中的前三项已学（拾金捡宝、弃物清理、灵力修复）对应0x0B；其余两项未学。
+
+### `SaleEx`
+
+```lua
+SaleEx(shopId)
+```
+
+- 参数：shopId：原 settings/buysell.txt 的1起始商店号，整数1～65535，最终还须通过实际商店范围检查。
+- 返回：无。参数不合法不打开商店。
+- 作用域与限制：游戏／玩家脚本。以原物品模板“铜钱价格”结算，铜钱为背包中的任务物品(4,47)，不是现金。检查当前商店会话、距离、货币和背包容量；失败不扣费。当前购买落背包，铜钱会话不接受现金出售或回购。
+- 实现：[LuaSaleEx](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2164)。
+
+用法示例：
+
+```lua
+SaleEx(22)
+```
+
+### `GetPetType`
+
+```lua
+GetPetType()
+```
+
+- 参数：无。
+- 返回：普通宠物类型编号；没有宠物或没有玩家上下文返回0。
+- 作用域与限制：游戏／玩家脚本。类型取原 settings/pets.txt 的Type；不是NPC模板index。
+- 实现：[LuaGetPetType](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2191)。
+
+用法示例：
+
+```lua
+local petType = GetPetType()
+```
+
+### `GetPetHonor`
+
+```lua
+GetPetHonor()
+```
+
+- 参数：无。
+- 返回：当前普通宠物亲密度，0～100；没有宠物返回0。
+- 作用域与限制：游戏／玩家脚本。新宠物初值由对应原认主脚本传给GenPet；绿飞飞为50，不统一改为100。
+- 实现：[LuaGetPetHonor](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2198)。
+
+用法示例：
+
+```lua
+if GetPetHonor() == 0 then
+	Talk(1, "no", "请到寿星处唤醒宠物。")
+end
+```
+
+### `GetPetColor`
+
+```lua
+GetPetColor()
+```
+
+- 参数：无。
+- 返回：宠物原始颜色值0～255；没有宠物返回0。
+- 作用域与限制：游戏／玩家脚本。返回协议中的颜色字节，不是客户端换算后的角度。
+- 实现：[LuaGetPetColor](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2205)。
+
+用法示例：
+
+```lua
+local color = GetPetColor()
+```
+
+### `GetPetName`
+
+```lua
+GetPetName()
+```
+
+- 参数：无。
+- 返回：当前宠物GBK名字；没有宠物或玩家上下文返回空字符串。
+- 作用域与限制：游戏／玩家脚本。这是查询接口，不会修改名字。
+- 实现：[LuaGetPetName](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2212)。
+
+用法示例：
+
+```lua
+local name = GetPetName()
+```
+
+### `IsPetReleased`
+
+```lua
+IsPetReleased()
+```
+
+- 参数：无。
+- 返回：已召出返回1；已收回、没有宠物或玩家上下文返回0。
+- 作用域与限制：游戏／玩家脚本。须显式比较数字；Lua4中的0为真。
+- 实现：[LuaIsPetReleased](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2219)。
+
+用法示例：
+
+```lua
+if IsPetReleased() == 1 then
+	ReleasePet(0)
+end
+```
+
+### `GenPet`
+
+```lua
+GenPet(name, type, honor, color)
+```
+
+- 参数：name：非空GBK字符串，最多31字节，不得含内嵌NUL；type：原pets.txt中存在的1～127整数；honor：初始亲密度整数1～100；color：整数0～255。
+- 返回：成功返回1；失败标记事务失败并触发Lua错误。
+- 作用域与限制：游戏／玩家脚本。需要当前玩家的NPC／道具事务；已有宠物时拒绝覆盖。默认召出。亲密度、类型、名字、颜色和权限随角色扩展存档，不由Lua直接操作数据库。仅创建普通宠物，不包含仙兽培养。
+- 实现：[LuaGenPet](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2226)。
+
+用法示例：
+
+```lua
+GenPet("绿飞飞", 4, 50, 0)
+```
+
+### `DelPet`
+
+```lua
+DelPet()
+```
+
+- 参数：无，不接受额外参数。
+- 返回：成功返回1；无宠物或无有效事务时触发Lua错误。
+- 作用域与限制：游戏／玩家脚本。只清除普通宠物状态；是否消耗召役伏魔铃由原Lua业务决定。删除和同次材料扣除可一起回滚。
+- 实现：[LuaDelPet](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2241)。
+
+用法示例：
+
+```lua
+DelPet()
+```
+
+### `SetPetType`
+
+```lua
+SetPetType(type)
+```
+
+- 参数：type：原pets.txt中存在的1～127整数。
+- 返回：成功返回1；失败触发Lua错误并使事务失败。
+- 作用域与限制：游戏／玩家脚本。须已有宠物；更换外观类型，保留名字、亲密度、颜色及已学权限，不是创建第二只宠物。
+- 实现：[LuaSetPetType](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2255)。
+
+用法示例：
+
+```lua
+SetPetType(4)
+```
+
+### `SetPetHonor`
+
+```lua
+SetPetHonor(honor)
+```
+
+- 参数：honor：整数0～100。
+- 返回：成功返回1；越界、小数、非有限值、无宠物等失败触发Lua错误。
+- 作用域与限制：游戏／玩家脚本。须在事务内，设为0会同时收回宠物；不会自动把0改为100。在线陪伴、离线衰减和喂食计时尚未适配，不能用猜测的时间单位调用。
+- 实现：[LuaSetPetHonor](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2267)。
+
+用法示例：
+
+```lua
+SetPetHonor(20)
+```
+
+### `ReleasePet`
+
+```lua
+ReleasePet(released)
+```
+
+- 参数：released：整数1表示召出，整数0表示收回。
+- 返回：成功返回1；无宠物、亲密度0时召出或参数错误会触发Lua错误。
+- 作用域与限制：游戏／玩家脚本。须在事务内；只改召出状态，不改亲密度、已学技能或物品。事务成功后同步，召出和收回均存档。
+- 实现：[LuaReleasePet](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2279)。
+
+用法示例：
+
+```lua
+ReleasePet(1)
+```
+
+### `GetPetFuncAuthority`
+
+```lua
+GetPetFuncAuthority(functionId)
+```
+
+- 参数：functionId：整数0～4，含义见下表。
+- 返回：已学返回1，未学、非法编号、无宠物／玩家返回0。
+- 作用域与限制：游戏／玩家脚本。查询学习权限，不表示自动技能正在执行。
+- 实现：[LuaGetPetFuncAuthority](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2291)。
+
+用法示例：
+
+```lua
+if GetPetFuncAuthority(0) == 1 then
+	Talk(1, "no", "宠物已学会拾金捡宝。")
+end
+```
+
+### `SetPetFuncAuthority`
+
+```lua
+SetPetFuncAuthority(functionId, enabled)
+```
+
+- 参数：functionId：整数0～4；enabled：整数1为学会，整数0为取消。
+- 返回：成功返回1；非法编号、非整数、无宠物／事务时触发Lua错误。
+- 作用域与限制：游戏／玩家脚本。只设置并存档学习权限。费用、召出条件和弃物清理的前置条件由原寿星Lua检查；编号0的自动拾取和编号1的弃物清理执行链已接通，实际执行还须宠物召出、亲密度大于0且对应技能已启用；拾取分类与清理阈值由客户端A4/4、A4/5设置，C++校验、同步和保存。修复、献技及查看他人血量的执行链仍待接通。
+- 实现：[LuaSetPetFuncAuthority](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2301)。
+
+用法示例：
+
+```lua
+SetPetFuncAuthority(0, 1)
+```
+
 ## 文档核验和维护
 
 依据当前 `Sources/Core/Src/ScriptFuns.cpp` 注册表及正文、`KSortScript.cpp`、`KCore.cpp`、`KPlayer.cpp`、`KItemList.cpp`、`KSkillList.cpp`、`KTaskFuns.h`、`KMission.h`，以及 `Sources/Engine/Src/KLuaScript.cpp` 的 `RegisterStandardFunctions` 和原Lua库源码核对。
@@ -6392,3 +6636,7 @@ F:\mxd\FsbFastApi\.venv\Scripts\python.exe -X utf8 F:\mxd\Jx\Test\LuaFunctionTab
 ```
 
 新增／改名接口必须有独立条目；别名也要可检索并说明同一实现。每项至少维护签名、参数、返回值、示例、作用域、限制和源码位置。涉及新版协议的旧API，只有完成实际验证后才能更新相应状态。
+
+### 普通宠物同步补充（2026-11-08）
+
+`SetPetFuncAuthority(functionId, enabled)`仍只负责学习权限，撤销学习会一并清除该项Active。事务提交后通过DB/0、DB/13 kind4同步；不能把DB/0、DB/1的+11字段视为唯一的技能按钮状态。客户端A4/7请求负责启用、关闭已学技能，C++校验后更新Active并存档；Lua不需要通过再次学习来启用技能，不重复扣费。`ReleasePet`保留已学及启用位，重登、切图由C++恢复显示。自动拾取、弃物清理的实际执行链已在KPlayer中接通：自动拾取受分类筛选约束，手动拾取不受宠物拾取筛选约束；弃物清理只处理本次拾取的可出售普通白蓝装备，遵守不卖标志、需求等级与蓝色属性条数阈值，不扫描现有背包。2026-11-08正式服日志复核后，自动出售的原装备会保留到14格商店回购栏，可通过普通商店回购；满栏只淘汰最旧一件，拾取／出售使用原生91通知。修复、献技等其他技能效果仍待接通。本次没有增加或改变Lua函数签名。

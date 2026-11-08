@@ -42,7 +42,7 @@ struct PLAYER_SKILL_EXT_RECORD
 
 static const DWORD PLAYER_SKILL_EXT_MAGIC = 0x31475053; // SPG1
 
-static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List)
+static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, KPlayer& Player)
 {
 	DWORD dwOffset = pRole->dwFSkillOffset + pRole->nFightSkillCount * sizeof(TDBSkillData);
 	if (dwOffset > pRole->dwLSkillOffset || pRole->dwLSkillOffset > pRole->dwDataLen)
@@ -55,10 +55,11 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List)
 	const BYTE* pData = (const BYTE*)pRole + dwOffset;
 	PLAYER_SKILL_EXT_HEADER Header;
 	memcpy(&Header, pData, sizeof(Header));
-	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || Header.Version != 1 ||
+	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version != 1 && Header.Version != 2) ||
 		Header.SkillCount != pRole->nFightSkillCount || Header.BuffCount > 16 ||
 		dwLength != sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD) +
-		Header.BuffCount * sizeof(PLAYER_SKILL_BUFF))
+		Header.BuffCount * sizeof(PLAYER_SKILL_BUFF) +
+		(Header.Version == 2 ? sizeof(PLAYER_PET_DATA) : 0))
 		return FALSE;
 	BOOL Seen[MAX_NPCSKILL];
 	PLAYER_SKILL_EXT_RECORD Records[MAX_NPCSKILL];
@@ -115,6 +116,27 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List)
 		}
 		Buffs[i] = Buff;
 	}
+	PLAYER_PET_DATA Pet;
+	ZeroMemory(&Pet, sizeof(Pet));
+	if (Header.Version == 2)
+	{
+		memcpy(&Pet, pData, sizeof(Pet));
+		if (Pet.Type)
+		{
+			if (!Player.IsValidPetType(Pet.Type) || Pet.Honor > 100 || Pet.Released > 1 ||
+				(Pet.Released && !Pet.Honor) || !Pet.Name[0] || !memchr(Pet.Name, 0, sizeof(Pet.Name)) ||
+				(Pet.Authority & ~31) || (Pet.Active & ~Pet.Authority))
+				return FALSE;
+		}
+		else
+		{
+			PLAYER_PET_DATA Empty;
+			ZeroMemory(&Empty, sizeof(Empty));
+			if (memcmp(&Pet, &Empty, sizeof(Pet)))
+				return FALSE;
+		}
+	}
+	Player.m_Pet = Pet;
 	// 完整验证后再恢复状态，损坏的扩展不能写入一半技能或BUFF。
 	for (int i = 1; i < MAX_NPCSKILL; i++)
 	{
@@ -133,7 +155,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List)
 	return TRUE;
 }
 
-static int SavePlayerSkillExtension(KSkillList& List, BYTE* pData, DWORD dwCapacity)
+static int SavePlayerSkillExtension(KSkillList& List, const PLAYER_PET_DATA& Pet, BYTE* pData, DWORD dwCapacity)
 {
 	DWORD dwNow = (DWORD)time(NULL);
 	DWORD dwBuffCount = 0;
@@ -142,9 +164,9 @@ static int SavePlayerSkillExtension(KSkillList& List, BYTE* pData, DWORD dwCapac
 		if (List.m_SkillBuffs[i].BuffId && List.m_SkillBuffs[i].EndTime > dwNow)
 			dwBuffCount++;
 	}
-	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 1, List.GetCount(), dwBuffCount};
+	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 2, List.GetCount(), dwBuffCount};
 	DWORD dwSize = sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD) +
-		dwBuffCount * sizeof(PLAYER_SKILL_BUFF);
+		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet);
 	if (dwSize > dwCapacity)
 		return -1;
 	memcpy(pData, &Header, sizeof(Header));
@@ -169,6 +191,7 @@ static int SavePlayerSkillExtension(KSkillList& List, BYTE* pData, DWORD dwCapac
 		memcpy(pData, &Buff, sizeof(Buff));
 		pData += sizeof(Buff);
 	}
+	memcpy(pData, &Pet, sizeof(Pet));
 	return dwSize;
 }
 
@@ -232,7 +255,7 @@ static BOOL LoadPlayerTaskExtension(KPlayerTask& Task, const BYTE *&pData, DWORD
 		return FALSE;
 	PLAYER_TASK_EXT_HEADER Header;
 	memcpy(&Header, pData, sizeof(Header));
-	if (Header.Version != 1 || Header.Count == 0 ||
+	if ((Header.Version != 1 && Header.Version != 2) || Header.Count == 0 ||
 		Header.Count > MAX_TASK - PLAYER_TASK_EXT_BEGIN)
 		return FALSE;
 	DWORD dwSize = sizeof(Header) + Header.Count * sizeof(PLAYER_TASK_EXT_RECORD);
@@ -1006,7 +1029,7 @@ int	KPlayer::LoadPlayerFightSkillList(BYTE * pRoleBuffer, BYTE * &pFightBuffer, 
 	// For existing roles, add missing initial skills without changing learned levels.
 	if (!Npc[m_nIndex].m_SkillList.LoadPlayerInitialSkills(Npc[m_nIndex].m_Series))
 		return -1;
-	if (!LoadPlayerSkillExtension((const TRoleData*)pRoleBuffer, Npc[m_nIndex].m_SkillList))
+	if (!LoadPlayerSkillExtension((const TRoleData*)pRoleBuffer, Npc[m_nIndex].m_SkillList, *this))
 		return -1;
 	Npc[m_nIndex].m_SkillList.RefreshPlayerSkillLevels();
 	return 1;
@@ -1373,7 +1396,7 @@ int KPlayer::SavePlayerFightSkillList(BYTE* pRoleBuffer)
 		return -1;
 	pRoleData->nFightSkillCount = nCount;
 	dwOffset += dwStandardSize;
-	int nSize = SavePlayerSkillExtension(List, pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
+	int nSize = SavePlayerSkillExtension(List, m_Pet, pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
 	if (nSize < 0)
 		return -1;
 	pRoleData->dwLSkillOffset = dwOffset + nSize;

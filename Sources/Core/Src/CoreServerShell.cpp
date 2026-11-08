@@ -158,6 +158,10 @@ bool CoreServerShell::PlayerDbLoading(int nPlayerIndex, int bSyncEnd, int& nStep
 	
 	if (bSyncEnd)
 	{
+		// 结束阶段由此处直接收尾，不再调用LoadDBPlayerInfo。
+		// 显式发送结束阶段的附属状态，确保宠物在人物和物品初始化后创建。
+		if (!Player[nPlayerIndex].SendSyncData(nStep, nParam))
+			return false;
 		Player[nPlayerIndex].m_pStatusLoadPlayerInfo = NULL;
 		nStep = 0;
 		nParam = 0;
@@ -801,7 +805,15 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 	case 0x94: return nSize == sizeof(GAME_SPLIT_ITEM_COMMAND);
 	case 0x98: return nSize == 1;
 	case 0xA4:
-		return nSize == 9 && *(const WORD*)(pChar + 1) == 8 && (BYTE)pChar[3] == 3;
+		if (nSize < 4 || *(const WORD*)(pChar + 1) + PROTOCOL_MSG_SIZE != nSize)
+			return false;
+		if ((BYTE)pChar[3] == 3)
+			return nSize == 9;
+		if ((BYTE)pChar[3] == 4 || (BYTE)pChar[3] == 5)
+			return nSize == sizeof(GAME_PET_FILTER_COMMAND);
+		if ((BYTE)pChar[3] == 7)
+			return nSize == sizeof(GAME_PET_FUNCTION_COMMAND);
+		return false;
 	}
 	if (nProtocol == 0x7A)
 		return nSize == sizeof(GAME_CHALLENGE_REPLY_COMMAND);
