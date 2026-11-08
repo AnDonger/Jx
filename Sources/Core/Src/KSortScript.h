@@ -52,7 +52,10 @@ extern const KScript * g_GetScript(DWORD dwScriptId);
 extern const KScript * g_GetScript(const char * szRelativeScriptFile);
 extern BOOL ReLoadScript(const char * szRelativePathScript);
 #ifdef _SERVER
-extern BOOL g_CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, char *pszMissing, int nSize, BOOL bItemTransaction = FALSE);
+// 0为原NPC，1为道具事务，2为只读玩家回调，3为延迟物品操作回调。
+extern BOOL g_CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, char *pszMissing, int nSize, int nScope = 0);
+extern BOOL g_CallPlayerScript(int nPlayer, DWORD dwScript, const char* pszFunction,
+	DWORD dwParameter, int* pnResult, BOOL bItemAction = FALSE);
 
 // NPC材料交换失败时恢复物品、现金和任务，经验奖励在成功后结算。
 class KNpcScriptTransaction

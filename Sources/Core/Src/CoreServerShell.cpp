@@ -792,6 +792,7 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 	switch (nProtocol)
 	{
 	case 0x51: return nSize == sizeof(GAME_SKILL_COMMAND);
+	case 0x60: return nSize == sizeof(ITEM_REPAIR);
 	case 0x61: return nSize == sizeof(GAME_USE_ITEM_COMMAND);
 	case 0x62: return nSize == sizeof(GAME_PICKUP_COMMAND);
 	case 0x64: return nSize == sizeof(PLAYER_SELL_ITEM_COMMAND);

@@ -87,6 +87,7 @@ public:
 	PlayerItem*	GetFirstItem();
 	PlayerItem*	GetNextItem();
 	int			SearchID(int nID);
+	int			GetItemPlace(int nIdx);
 	void		ExchangeMoney(int nSrcRoom, int DesRoom, int nMoney);
 	void		ExchangeItem(ItemPos* SrcPos,ItemPos* DesPos);
 	int			GetMoneyAmount();					// 得到物品栏和储物箱的总钱数

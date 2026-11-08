@@ -200,9 +200,27 @@ static BOOL IsItemTransactionFunction(const std::string& Function)
 	return FALSE;
 }
 
+// 自动回调不允许任意NPC写接口、外部IO或动态执行；操作在Lua成功结束后提交。
+static BOOL IsPlayerCallbackFunction(const std::string& Function, int nScope)
+{
+	static const char* Names[] =
+	{
+		"GetPetType", "GetPetHonor", "IsPetReleased", "GetPetFuncAuthority",
+		"GetPetFuncActive", "GetPetSettings", "GetItemInfo", "GetCash",
+		"GetBit", "GetByte", "format", "type", "tonumber", "tostring",
+		"floor", "min", "max", "abs", "mod", "assert", "error"
+	};
+	for (int i = 0; i < sizeof(Names) / sizeof(Names[0]); i++)
+	{
+		if (Function == Names[i])
+			return TRUE;
+	}
+	return nScope == 3 && (Function == "RepairItem" || Function == "Msg2Player");
+}
+
 static BOOL CheckNpcScriptCalls(KLuaScript *pScript, const KNpcScriptCalls& Calls,
 	const std::string& Function, std::set<std::string>& Visited, std::string& Missing,
-	BOOL bItemTransaction)
+	int nScope)
 {
 	if (!Visited.insert(Function).second)
 		return TRUE;
@@ -217,11 +235,12 @@ static BOOL CheckNpcScriptCalls(KLuaScript *pScript, const KNpcScriptCalls& Call
 	{
 		if (Calls.find(*pCall) != Calls.end())
 		{
-			if (!CheckNpcScriptCalls(pScript, Calls, *pCall, Visited, Missing, bItemTransaction))
+			if (!CheckNpcScriptCalls(pScript, Calls, *pCall, Visited, Missing, nScope))
 				return FALSE;
 			continue;
 		}
-		if (bItemTransaction && !IsItemTransactionFunction(*pCall))
+		if ((nScope == 1 && !IsItemTransactionFunction(*pCall)) ||
+			(nScope >= 2 && !IsPlayerCallbackFunction(*pCall, nScope)))
 		{
 			Missing = *pCall;
 			return FALSE;
@@ -239,14 +258,14 @@ static BOOL CheckNpcScriptCalls(KLuaScript *pScript, const KNpcScriptCalls& Call
 	return TRUE;
 }
 
-BOOL g_CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, char *pszMissing, int nSize, BOOL bItemTransaction)
+BOOL g_CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, char *pszMissing, int nSize, int nScope)
 {
 	KLuaScript *pScript = (KLuaScript*)g_GetScript(dwScriptId);
 	std::map<DWORD, KNpcScriptCalls>::const_iterator pCalls = g_NpcScriptCalls.find(dwScriptId);
 	std::string Missing;
 	std::set<std::string> Visited;
 	BOOL bResult = pScript && pszFunction && pCalls != g_NpcScriptCalls.end() &&
-		CheckNpcScriptCalls(pScript, pCalls->second, pszFunction, Visited, Missing, bItemTransaction);
+		CheckNpcScriptCalls(pScript, pCalls->second, pszFunction, Visited, Missing, nScope);
 	if (pszMissing && nSize > 0)
 		g_StrCpyLen(pszMissing, Missing.empty() ? "script source" : Missing.c_str(), nSize);
 	return bResult;

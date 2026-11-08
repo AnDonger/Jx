@@ -23,6 +23,7 @@
 #include "KSubWorld.h"
 #include "KObjSet.h"
 #include "KItemSet.h"
+#include "KItemGenerator.h"
 //#include "KNetClient.h"
 #include "KScriptValueSet.h"
 #include "KNpcSet.h"
@@ -177,6 +178,18 @@ struct KNpcScriptNotice
 		IsChat = FALSE;
 	}
 };
+
+// 玩家自动回调只生成操作计划，Lua成功返回后才执行实际修理和通知。
+// 不复用NPC背包快照去声称已经覆盖穿戴装备、属性或地面物品。
+struct KPlayerScriptAction
+{
+	DWORD ItemID;
+	DWORD RepairID;
+	BOOL AllowRepair;
+	std::vector<std::string> Notices;
+};
+
+static KPlayerScriptAction* g_PlayerScriptAction[MAX_PLAYER] = {NULL};
 
 struct KNpcScriptExchange
 {
@@ -2161,6 +2174,82 @@ static BOOL ReadScriptInteger(Lua_State* L, int nArgument, int nMinimum, int nMa
 	return TRUE;
 }
 
+// 自动回调保存并恢复Lua上下文，不改变NPC对话的ActionScriptID或等待状态。
+BOOL g_CallPlayerScript(int nPlayer, DWORD dwScript, const char* pszFunction,
+	DWORD dwParameter, int* pnResult, BOOL bItemAction)
+{
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || !pnResult || !pszFunction ||
+		g_PlayerScriptAction[nPlayer] || (bItemAction && g_NpcScriptExchange[nPlayer]))
+		return FALSE;
+	KLuaScript* pScript = (KLuaScript*)g_GetScript(dwScript);
+	if (!pScript || !pScript->m_LuaState)
+		return FALSE;
+	char szMissing[128];
+	if (!g_CheckNpcScriptFunction(dwScript, pszFunction, szMissing, sizeof(szMissing), bItemAction ? 3 : 2))
+	{
+		static DWORD dwLastError[MAX_PLAYER] = {0};
+		DWORD dwNow = GetTickCount();
+		if (!dwLastError[nPlayer] || dwNow - dwLastError[nPlayer] >= 5000)
+		{
+			dwLastError[nPlayer] = dwNow;
+			g_DebugLog("[PlayerScript] Rejected callback player=%d script=%lu function=%s missing=%s",
+				nPlayer, dwScript, pszFunction, szMissing);
+		}
+		return FALSE;
+	}
+	KPlayerScriptAction Action;
+	Action.ItemID = dwParameter;
+	Action.RepairID = 0;
+	Action.AllowRepair = bItemAction;
+	g_PlayerScriptAction[nPlayer] = &Action;
+	Lua_State* L = pScript->m_LuaState;
+	int nTop = Lua_GetTopIndex(L);
+	const char* Names[] = {SCRIPT_PLAYERINDEX, SCRIPT_PLAYERID, SCRIPT_SUBWORLDINDEX};
+	for (int i = 0; i < 3; i++)
+		Lua_GetGlobal(L, Names[i]);
+	KPlayer& Role = Player[nPlayer];
+	Lua_PushNumber(L, nPlayer);
+	Lua_SetGlobal(L, SCRIPT_PLAYERINDEX);
+	Lua_PushNumber(L, Role.m_dwID);
+	Lua_SetGlobal(L, SCRIPT_PLAYERID);
+	Lua_PushNumber(L, Role.m_nIndex > 0 && Role.m_nIndex < MAX_NPC ? Npc[Role.m_nIndex].m_SubWorldIndex : -1);
+	Lua_SetGlobal(L, SCRIPT_SUBWORLDINDEX);
+	BOOL bSuccess = pScript->CallFunction((char*)pszFunction, 1, "n", (double)dwParameter);
+	if (bSuccess)
+	{
+		double nValue = Lua_ValueToNumber(L, -1);
+		bSuccess = Lua_IsNumber(L, -1) && nValue >= 0 && nValue <= 0x7FFFFFFF && nValue == (int)nValue;
+		if (bSuccess)
+			*pnResult = (int)nValue;
+	}
+	for (int i = 0; i < 3; i++)
+	{
+		Lua_PushValue(L, nTop + i + 1);
+		Lua_SetGlobal(L, Names[i]);
+	}
+	Lua_SetTopIndex(L, nTop);
+	g_PlayerScriptAction[nPlayer] = NULL;
+	if (!bSuccess)
+	{
+		g_DebugLog("[PlayerScript] Aborted callback player=%d script=%lu function=%s; no action committed",
+			nPlayer, dwScript, pszFunction);
+		return FALSE;
+	}
+	if (Action.RepairID)
+	{
+		// 每个回调仅允许一件原物品操作；再次校验价格、归属、现金和角色状态。
+		if (*pnResult != 1 || !Role.RepairItem(Action.RepairID))
+			return FALSE;
+		g_DebugLog("[PlayerScript] Repair committed player=%d item=%lu", nPlayer, Action.RepairID);
+		for (size_t i = 0; i < Action.Notices.size(); i++)
+		{
+			KPlayerChat::SendSystemInfo(1, nPlayer, MESSAGE_SYSTEM_ANNOUCE_HEAD,
+				(char*)Action.Notices[i].c_str(), (int)Action.Notices[i].size());
+		}
+	}
+	return TRUE;
+}
+
 int LuaSaleEx(Lua_State* L)
 {
 	int nTop = Lua_GetTopIndex(L);
@@ -2308,6 +2397,109 @@ int LuaSetPetFuncAuthority(Lua_State* L)
 	if (!bDone)
 		RejectNpcScriptItem(L, GetPlayerIndex(L));
 	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+int LuaGetPetFuncActive(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	int nFunction = 0;
+	BOOL bActive = pPlayer && nTop == 1 && ReadScriptInteger(L, 1, 0, 4, &nFunction) &&
+		(pPlayer->m_Pet.Active & (1 << nFunction));
+	Lua_PushNumber(L, bActive ? 1 : 0);
+	return 1;
+}
+
+int LuaGetPetSettings(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	if (!pPlayer || nTop != 0)
+	{
+		Lua_PushNil(L);
+		return 1;
+	}
+	lua_newtable(L);
+	int nTable = Lua_GetTopIndex(L);
+	SetScriptItemInteger(L, nTable, "PickMask", pPlayer->m_Pet.PickMask);
+	SetScriptItemInteger(L, nTable, "SellMask", pPlayer->m_Pet.SellMask);
+	return 1;
+}
+
+static BOOL ReadScriptItemID(Lua_State* L, DWORD* pdwItem)
+{
+	double nValue = Lua_ValueToNumber(L, 1);
+	if (Lua_GetTopIndex(L) != 1 || !Lua_IsNumber(L, 1) ||
+		!(nValue >= 1 && nValue <= 4294967295.0) || nValue != (DWORD)nValue)
+		return FALSE;
+	*pdwItem = (DWORD)nValue;
+	return TRUE;
+}
+
+int LuaGetItemInfo(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	DWORD dwItem = 0;
+	int nItem = 0;
+	if (pPlayer && ReadScriptItemID(L, &dwItem))
+	{
+		KPlayerScriptAction* pAction = g_PlayerScriptAction[pPlayer->GetPlayerIndex()];
+		if (pAction && pAction->ItemID == dwItem)
+			nItem = ItemSet.SearchID(dwItem);
+		else
+			nItem = pPlayer->m_ItemList.SearchID(dwItem);
+	}
+	if (nItem <= 0 || nItem >= MAX_ITEM)
+	{
+		Lua_PushNil(L);
+		return 1;
+	}
+	KItem& Goods = Item[nItem];
+	lua_newtable(L);
+	int nTable = Lua_GetTopIndex(L);
+	Lua_PushString(L, "Name");
+	Lua_PushString(L, Goods.GetName());
+	Lua_SetTable(L, nTable);
+	SetScriptItemInteger(L, nTable, "Genre", Goods.GetGenre());
+	SetScriptItemInteger(L, nTable, "DetailType", Goods.GetDetailType());
+	SetScriptItemInteger(L, nTable, "Price", Goods.GetPrice());
+	SetScriptItemInteger(L, nTable, "Bound", Goods.IsBound() ? 1 : 0);
+	SetScriptItemInteger(L, nTable, "GenerationFlags", Goods.GetGenerationFlags());
+	SetScriptItemInteger(L, nTable, "Upgraded", Goods.GetUpgradeData() ? 1 : 0);
+	SetScriptItemInteger(L, nTable, "Durability", Item[nItem].GetDurability());
+	SetScriptItemInteger(L, nTable, "MaxDurability", Item[nItem].GetMaxDurability());
+	SetScriptItemInteger(L, nTable, "RepairPrice", Item[nItem].GetRepairPrice());
+	SetScriptItemInteger(L, nTable, "Place", pPlayer->m_ItemList.GetItemPlace(nItem));
+	SetScriptItemInteger(L, nTable, "MagicCount", Goods.GetMagicAttribCount());
+	SetScriptItemInteger(L, nTable, "RequireLevel", Goods.GetRequireLevel());
+	const KBASICPROP_EQUIPMENT* pTemplate = Goods.GetGenre() == item_equip ?
+		ItemGen.GetEquipmentTemplate(Goods.GetDetailType(), Goods.GetParticular(),
+			Goods.GetLevel(), Goods.m_GeneratorParam.nVersion) : NULL;
+	SetScriptItemInteger(L, nTable, "TemplateValid", pTemplate ? 1 : 0);
+	SetScriptItemInteger(L, nTable, "TemplateSeries", pTemplate ? pTemplate->m_nSeries : 0);
+	return 1;
+}
+
+int LuaRepairItem(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	KPlayerScriptAction* pAction = pPlayer ? g_PlayerScriptAction[pPlayer->GetPlayerIndex()] : NULL;
+	DWORD dwItem = 0;
+	if (!pAction || !pAction->AllowRepair || !ReadScriptItemID(L, &dwItem) ||
+		pAction->ItemID != dwItem || pAction->RepairID)
+	{
+		lua_error(L, "RepairItem requires one current item action; changes were not committed");
+		return 0;
+	}
+	int nCost = 0;
+	if (!pPlayer->CheckRepairItem(dwItem, &nCost))
+	{
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	pAction->RepairID = dwItem;
+	Lua_PushNumber(L, 1);
 	return 1;
 }
 
@@ -2511,6 +2703,15 @@ int	LuaMsgToPlayer(Lua_State * L)
 		if (szMsg)
 		{
 #ifdef _SERVER
+			KPlayerScriptAction* pAction = g_PlayerScriptAction[nPlayerIndex];
+			if (pAction)
+			{
+				if (!pAction->AllowRepair || !pAction->RepairID || strlen(szMsg) > 512 ||
+					pAction->Notices.size() >= 8)
+					lua_error(L, "Player callback message requires a pending item action");
+				pAction->Notices.push_back(szMsg);
+				return 0;
+			}
 			KNpcScriptExchange* pState = g_NpcScriptExchange[nPlayerIndex];
 			if (pState)
 			{
@@ -6486,6 +6687,10 @@ TLua_Funcs GameScriptFuns[] =
 	{"EnchaseItem", LuaEnchaseItem},
 	{"OpenNewCompound", LuaOpenNewCompound},
 	{"ReadTabFile", LuaReadTabFile},
+	{"GetItemInfo", LuaGetItemInfo},
+	{"RepairItem", LuaRepairItem},
+	{"GetPetFuncActive", LuaGetPetFuncActive},
+	{"GetPetSettings", LuaGetPetSettings},
 	{"GetGameVersion", LuaGetGameVersion},
 	{"GetSelectedItems", LuaGetSelectedItems},
 	{"DelSelectedItem", LuaDelSelectedItem},

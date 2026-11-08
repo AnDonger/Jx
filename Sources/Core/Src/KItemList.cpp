@@ -139,7 +139,7 @@ int KItemList::GetWeaponType()
 void KItemList::GetWeaponDamage(int* nMin, int* nMax)
 {
 	int nWeaponIdx = m_EquipItem[itempart_weapon];
-	if (nWeaponIdx)
+	if (nWeaponIdx && Item[nWeaponIdx].GetDurability() != 0)
 	{
 		_ASSERT(Item[nWeaponIdx].m_CommonAttrib.nItemGenre == item_equip 
 			&& (Item[nWeaponIdx].m_CommonAttrib.nDetailType == equip_meleeweapon
@@ -1290,8 +1290,11 @@ BOOL KItemList::Equip(int nIdx, int nPlace /* = -1 */)
 
 //#ifdef _SERVER	because client need to show to menu
 	int nActive = GetEquipEnhance(nEquipPlace);
-	Item[nIdx].ApplyMagicAttribToNPC(&Npc[nNpcIdx], nActive);
-	InfectionNextEquip(nEquipPlace, TRUE);
+	if (Item[nIdx].GetDurability() != 0)
+	{
+		Item[nIdx].ApplyMagicAttribToNPC(&Npc[nNpcIdx], nActive);
+		InfectionNextEquip(nEquipPlace, TRUE);
+	}
 
 	if (itempart_weapon == nEquipPlace)
 	{		
@@ -1323,7 +1326,7 @@ void KItemList::InfectionNextEquip(int nEquipPlace, BOOL bEquip/* = FALSE */)
 	for (int i = 0; i < MAX_ITEM_ACTIVE; i++)
 	{
 		int nInfectionEquip = ms_ActiveEquip[nEquipPlace][i];
-		if (!m_EquipItem[nInfectionEquip])
+		if (!m_EquipItem[nInfectionEquip] || Item[m_EquipItem[nInfectionEquip]].GetDurability() == 0)
 			continue;
 		if (g_IsAccrue(Item[m_EquipItem[nEquipPlace]].GetSeries(),
 			Item[m_EquipItem[nInfectionEquip]].GetSeries()))
@@ -1378,10 +1381,11 @@ BOOL KItemList::UnEquip(int nIdx, int nPos/* = -1*/)
 	// 移除该装备对NPC的属性调整
 	int nActive = GetEquipEnhance(i);
 	// 下马时坐骑属性已经移除，卸下物品不能再扣一次。
-	if (i != itempart_horse || Npc[nNpcIdx].m_bRideHorse)
+	if (Item[nIdx].GetDurability() != 0 && (i != itempart_horse || Npc[nNpcIdx].m_bRideHorse))
 		Item[nIdx].RemoveMagicAttribFromNPC(&Npc[nNpcIdx], nActive);
 	// 移除该装备可能对它激活的装备的影响。
-	InfectionNextEquip(i, FALSE);
+	if (Item[nIdx].GetDurability() != 0)
+		InfectionNextEquip(i, FALSE);
 	// 这句话一定要放在上一句后，保证计算该装备激活的装备激活属性个数计算的正确性
 	m_EquipItem[i] = 0;
 	// 换装
@@ -1588,7 +1592,7 @@ int KItemList::GetEquipEnhance(int nPlace)
 	{
 		// 看看激活这个装备的装备中是否相生这个装备
 		int nActivedEquip = m_EquipItem[ms_ActivedEquip[nPlace][i]];
-		if (nActivedEquip)
+		if (nActivedEquip && Item[nActivedEquip].GetDurability() != 0)
 		{
 			if (g_IsAccrue(Item[nActivedEquip].GetSeries(), nSeries))
 				nRet++;
@@ -1715,6 +1719,12 @@ BOOL KItemList::SearchPosition(int nWidth, int nHeight, ItemPos* pPos)
 	return TRUE;
 }
 #endif
+
+int KItemList::GetItemPlace(int nIdx)
+{
+	int nList = FindSame(nIdx);
+	return nList ? m_Items[nList].nPlace : -1;
+}
 
 int	KItemList::SearchID(int nID)
 {
@@ -3132,39 +3142,34 @@ int		KItemList::GetSameDetailItemNum(int nImmediatePos)
 #ifdef _SERVER
 void KItemList::Abrade(int nType)
 {
-	int nItemIdx = 0;
+	BOOL bBroken = FALSE;
 	for (int i = 0; i < itempart_num; i++)
 	{
-		nItemIdx = m_EquipItem[i];
-		if (nItemIdx)
-		{
-			int nOldDur = Item[nItemIdx].GetDurability();
-			int nDur = Item[nItemIdx].Abrade(ItemSet.GetAbradeRange(nType, i));
-			if (nDur == 0)
-			{
-				// 给客户端发消息
-				SHOW_MSG_SYNC	sMsg;
-				sMsg.ProtocolType = s2c_msgshow;
-				sMsg.m_wMsgID = enumMSG_ID_ITEM_DAMAGED;
-				sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1;
-				sMsg.m_lpBuf = (void *)Item[nItemIdx].m_dwID;
-				if (g_pServer)
-					g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-				sMsg.m_lpBuf = 0;
-
-				Remove(nItemIdx);
-				ItemSet.Remove(nItemIdx);
-			}
-			else if (nOldDur != nDur && nDur != -1)
-			{
-				ITEM_DURABILITY_CHANGE sIDC;
-				sIDC.ProtocolType = s2c_itemdurabilitychange;
-				sIDC.dwItemID = Item[nItemIdx].GetID();
-				sIDC.nChange = nDur - nOldDur;
-				if (g_pServer)
-					g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &sIDC, sizeof(ITEM_DURABILITY_CHANGE));
-			}
-		}
+		int nItemIdx = m_EquipItem[i];
+		if (nItemIdx <= 0 || nItemIdx >= MAX_ITEM)
+			continue;
+		int nOldDur = Item[nItemIdx].GetDurability();
+		if (nOldDur <= 0)
+			continue;
+		int nDur = Item[nItemIdx].Abrade(ItemSet.GetAbradeRange(nType, i));
+		if (nDur < 0 || nOldDur == nDur)
+			continue;
+		// 新客户端支持0耐久装备，不能沿用旧版损毁即删除物品的行为。
+		ITEM_DURABILITY_CHANGE sIDC;
+		sIDC.ProtocolType = s2c_itemdurabilitychange;
+		sIDC.dwItemID = Item[nItemIdx].GetID();
+		sIDC.nChange = nDur - nOldDur;
+		if (g_pServer && Player[m_PlayerIdx].m_nNetConnectIdx >= 0)
+			g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &sIDC, sizeof(sIDC));
+		if (nDur == 0)
+			bBroken = TRUE;
+		Player[m_PlayerIdx].m_ulLastSaveTime = 0;
+	}
+	if (bBroken)
+	{
+		Player[m_PlayerIdx].UpdataCurData();
+		Player[m_PlayerIdx].SetNpcDamageAttrib();
+		Player[m_PlayerIdx].ActivePetRepair();
 	}
 }
 #endif

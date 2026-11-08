@@ -36,6 +36,22 @@ struct GAME_WORLD_SYNC
 	DWORD MapY;
 };
 
+// F3 is a forced relocation, not the periodic 4E movement snapshot.
+struct GAME_NPC_POSITION_SYNC
+{
+	BYTE ProtocolType;
+	DWORD ID;
+	DWORD MapX;
+	DWORD MapY;
+	WORD OffX;
+	WORD OffY;
+	BYTE unknown_1[3];
+	DWORD PositionSyncToken;
+};
+
+static_assert(sizeof(GAME_NPC_POSITION_SYNC) == 24, "F3 forced position sync");
+static_assert(offsetof(GAME_NPC_POSITION_SYNC, PositionSyncToken) == 20, "F3 echoed token");
+
 struct GAME_NPC_SYNC
 {
 	BYTE ProtocolType;
@@ -589,6 +605,13 @@ struct GAME_SKILL_CAST_SYNC
 	WORD OffY;
 };
 
+struct GAME_NPC_STATE_SYNC
+{
+	BYTE ProtocolType;
+	BYTE StateGraphics[8];
+	DWORD ID;
+};
+
 struct GAME_AURA_SKILL_SYNC
 {
 	BYTE ProtocolType;
@@ -597,6 +620,8 @@ struct GAME_AURA_SKILL_SYNC
 	BYTE nSkillLevel;
 	LONG nMpsX;
 	LONG nMpsY;
+	// Current client 0x90 advances 25 bytes; its handler reads the first 16.
+	BYTE unknown_1[9];
 };
 
 struct GAME_PLAYER_LEVEL_UP_SYNC
@@ -764,7 +789,9 @@ static_assert(sizeof(GAME_SKILL_LEVEL_SYNC) == 14, "74 skill update");
 static_assert(sizeof(GAME_SKILL_BUFF_DATA) == 9, "E5 timed buff record");
 static_assert(sizeof(GAME_SKILL_SYNC_DATA) == 9, "45 skill record");
 static_assert(sizeof(GAME_ITEM_SYNC) == 58, "CB item sync");
-static_assert(sizeof(GAME_AURA_SKILL_SYNC) == 16, "Aura skill sync");
+static_assert(sizeof(GAME_AURA_SKILL_SYNC) == 25, "90 aura skill sync");
+static_assert(sizeof(GAME_NPC_STATE_SYNC) == 13, "8A state graphics sync");
+static_assert(offsetof(GAME_NPC_STATE_SYNC, ID) == 9, "8A entity offset");
 static_assert(sizeof(GAME_ITEM_COUNT_SYNC) == 11, "AD item count sync");
 static_assert(sizeof(GAME_TONG_SELF_INFO_SYNC) == 104, "FD/4 guild self");
 

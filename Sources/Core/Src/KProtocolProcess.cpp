@@ -217,6 +217,7 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[c2s_repairitem] = &KProtocolProcess::ItemRepair;
 	// 当前客户端编号优先于旧枚举，避免分派到旧版聊天、交易等处理器。
 	ProcessFunc[0x51] = &KProtocolProcess::CurrentSkillCommand;
+	ProcessFunc[0x60] = &KProtocolProcess::ItemRepair;
 	ProcessFunc[0x61] = &KProtocolProcess::PlayerEatItem;
 	ProcessFunc[0x62] = &KProtocolProcess::CurrentPickupCommand;
 	ProcessFunc[0x78] = &KProtocolProcess::ChangeAuraSkill;

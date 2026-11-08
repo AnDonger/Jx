@@ -763,6 +763,9 @@ int KItem::Abrade(IN const int nRandRange)
 	if (m_nCurrentDur == -1 || nRandRange == 0)	// 永不磨损
 		return -1;
 
+	if (m_nCurrentDur <= 0)
+		return 0;
+
 	if (g_Random(nRandRange) == 0)	// nRandRange分之一的概率
 	{
 		m_nCurrentDur--;
@@ -941,6 +944,28 @@ int KItem::GetTotalMagicLevel()
 		nRet += m_GeneratorParam.nGeneratorLevel[i];
 	}
 	return nRet;
+}
+
+int KItem::GetMagicAttribCount() const
+{
+	int nCount = 0;
+	for (int i = 0; i < 6; i++)
+	{
+		if (m_aryMagicAttrib[i].nAttribType > 0)
+			nCount++;
+	}
+	return nCount;
+}
+
+int KItem::GetRequireLevel() const
+{
+	int nLevel = 0;
+	for (int i = 0; i < 6; i++)
+	{
+		if (m_aryRequireAttrib[i].nAttribType == magic_requirelevel)
+			nLevel = max(nLevel, m_aryRequireAttrib[i].nValue[0]);
+	}
+	return nLevel;
 }
 
 int KItem::GetRepairPrice()

@@ -235,6 +235,7 @@ void	KPlayer::Active()
 		Npc[m_nIndex].m_SkillList.ExpirePlayerSkillBuffs();
 	
 	ActivePetPickup();
+	ActivePetRepair();
 	this->m_cChat.TimerAdd();
 	
 	// 仇杀倒计时
@@ -2527,7 +2528,7 @@ void KPlayer::ReCalcEquip()
 	for (int i = 0; i < itempart_num; i++)
 	{
 		int nIdx = m_ItemList.m_EquipItem[i];
-		if (!nIdx)
+		if (!nIdx || Item[nIdx].GetDurability() == 0)
 			continue;
 		if (i == itempart_horse && !Npc[m_nIndex].m_bRideHorse)
 			continue;
@@ -3718,7 +3719,7 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol, BOOL bPet)
 				SendPetItemNotice(szName, pszColor, TRUE);
 				m_ItemList.SendMoneySync();
 			}
-			if (bPet && (m_Pet.PickMask & 0x80))
+			if (bPet && CallPetFunction("PetPickupLogging") == 1)
 				g_DebugLog("[Pet] pickup: player=%d item=%lu sold=%d name=%s",
 					m_nPlayerIndex, dwItem, bSold, szName);
 			m_ulLastSaveTime = 0;
@@ -6555,27 +6556,53 @@ BOOL	KPlayer::CreateTong(int nCamp, char *lpszTongName)
 #endif
 
 #ifdef _SERVER
-void KPlayer::RepairItem(DWORD dwItemID)
+int KPlayer::CheckRepairItem(DWORD dwItemID, int* pnCost)
 {
+	if (!pnCost || !g_pServer || m_nNetConnectIdx < 0 || m_nIndex <= 0 || m_nIndex >= MAX_NPC ||
+		!m_bFinishLoading || m_bExchangeServer || CheckTrading() ||
+		Npc[m_nIndex].m_CurrentLife <= 0 || Npc[m_nIndex].m_Doing == do_death ||
+		Npc[m_nIndex].m_Doing == do_revive)
+		return 0;
 	int nIdx = m_ItemList.SearchID(dwItemID);
+	if (nIdx <= 0 || nIdx >= MAX_ITEM)
+		return 0;
 	int nList = m_ItemList.FindSame(nIdx);
 	if (!nList || m_ItemList.m_Items[nList].nPlace == pos_buyback)
-		return;
-	int nCost = Item[nIdx].GetRepairPrice();
-	if (!nCost)
-		return;
+		return 0;
 	int nMaxDur = Item[nIdx].GetMaxDurability();
 	int nDur = Item[nIdx].GetDurability();
-	if (Pay(nCost) && m_nNetConnectIdx >= 0)
+	if (nDur < 0 || nMaxDur <= 0 || nDur >= nMaxDur)
+		return 0;
+	*pnCost = Item[nIdx].GetRepairPrice();
+	if (*pnCost <= 0 || m_ItemList.GetEquipmentMoney() < *pnCost)
+		return 0;
+	return nIdx;
+}
+
+BOOL KPlayer::RepairItem(DWORD dwItemID)
+{
+	int nCost = 0;
+	int nIdx = CheckRepairItem(dwItemID, &nCost);
+	if (!nIdx || !Pay(nCost))
+		return FALSE;
+	int nList = m_ItemList.FindSame(nIdx);
+	int nMaxDur = Item[nIdx].GetMaxDurability();
+	int nDur = Item[nIdx].GetDurability();
+
+	// 费用与物品归属均已确认，后面只恢复原物品耐久，不重新生成装备。
+	Item[nIdx].SetDurability(nMaxDur);
+	if (nDur == 0 && m_ItemList.m_Items[nList].nPlace == pos_equip)
 	{
-		Item[nIdx].SetDurability(nMaxDur);
-		ITEM_DURABILITY_CHANGE	IDC;
-		IDC.ProtocolType = s2c_itemdurabilitychange;
-		IDC.dwItemID = dwItemID;
-		IDC.nChange = nMaxDur - nDur;
-		if (g_pServer)
-			g_pServer->PackDataToClient(m_nNetConnectIdx, &IDC, sizeof(ITEM_DURABILITY_CHANGE));
+		UpdataCurData();
+		SetNpcDamageAttrib();
 	}
+	ITEM_DURABILITY_CHANGE IDC;
+	IDC.ProtocolType = s2c_itemdurabilitychange;
+	IDC.dwItemID = dwItemID;
+	IDC.nChange = nMaxDur - nDur;
+	g_pServer->PackDataToClient(m_nNetConnectIdx, &IDC, sizeof(IDC));
+	m_ulLastSaveTime = 0;
+	return TRUE;
 }
 #endif
 
@@ -6927,12 +6954,39 @@ BOOL KPlayer::OpenItemCompound(BOOL bNewWindow, const char* pszFunction)
 #endif
 
 #ifdef _SERVER
+int KPlayer::CallPetFunction(const char* pszFunction, DWORD dwParameter, BOOL bItemAction) const
+{
+	// 挂接配置指定的独立宠物技能脚本；资源缺失或Lua失败时不回退到硬编码规则。
+	static DWORD dwScript = 0;
+	static BOOL bLoaded = FALSE;
+	if (!bLoaded)
+	{
+		bLoaded = TRUE;
+		KIniFile Settings;
+		char szScript[MAX_PATH] = {0};
+		if (Settings.Load("\\settings\\pet.ini"))
+			Settings.GetString("Normal", "FunctionScript", "", szScript, sizeof(szScript));
+		if (szScript[0] == '\\' && !strstr(szScript, "..") && !strchr(szScript, ':'))
+		{
+			if (g_GetScript(szScript) || ReLoadScript(szScript))
+				dwScript = g_FileName2Id(szScript);
+			else
+				g_DebugLog("[PetScript] Unable to load FunctionScript %s", szScript);
+		}
+		else
+			g_DebugLog("[PetScript] Missing or invalid FunctionScript in settings/pet.ini");
+	}
+	int nResult = 0;
+	if (!dwScript || !g_CallPlayerScript(m_nPlayerIndex, dwScript, pszFunction,
+		dwParameter, &nResult, bItemAction))
+		return 0;
+	return nResult;
+}
+
 BOOL KPlayer::IsPetFunctionActive(int nFunction) const
 {
-	if (nFunction < 0 || nFunction >= 5 || !m_Pet.Type || !m_Pet.Released || !m_Pet.Honor)
-		return FALSE;
-	WORD wMask = (WORD)(1 << nFunction);
-	return (m_Pet.Authority & wMask) && (m_Pet.Active & wMask);
+	return nFunction >= 0 && nFunction < 5 &&
+		CallPetFunction("PetFunctionEnabled", nFunction) == 1;
 }
 
 void KPlayer::SendPetItemNotice(const char* pszName, const char* pszColor, BOOL bSold)
@@ -6955,82 +7009,14 @@ void KPlayer::SendPetItemNotice(const char* pszName, const char* pszColor, BOOL 
 
 BOOL KPlayer::CanPetPickItem(int nItem) const
 {
-	if (nItem <= 0 || nItem >= MAX_ITEM || !Item[nItem].GetID())
-		return FALSE;
-	const KItem& Goods = Item[nItem];
-	DWORD dwCategory = 0;
-	switch (Goods.GetGenre())
-	{
-	case item_equip:
-		{
-			// 当前资源中的法宝使用 amulet 表（DetailType 4），先于白、蓝装分类。
-			if (Goods.GetDetailType() == equip_amulet)
-			{
-				// 拾取窗口第8项是法宝；第7项是拾取记录，第6项不发送。
-				dwCategory = 1 << 8;
-				break;
-			}
-			const KBASICPROP_EQUIPMENT* pTemplate = ItemGen.GetEquipmentTemplate(
-				Goods.GetDetailType(), Goods.m_CommonAttrib.nParticularType,
-				Goods.m_CommonAttrib.nLevel, Goods.m_GeneratorParam.nVersion);
-			if (!pTemplate)
-				return FALSE;
-			if (pTemplate->m_nSeries || Goods.m_btGenerationFlags)
-				break;
-			BOOL bMagic = FALSE;
-			for (int i = 0; i < 6; i++)
-			{
-				if (Goods.m_aryMagicAttrib[i].nAttribType > 0)
-					bMagic = TRUE;
-			}
-			dwCategory = bMagic ? 2 : 1;
-		}
-		break;
-	case item_mine:
-	case item_materials:
-		dwCategory = 1 << 3;
-		break;
-	case item_medicine:
-		dwCategory = 1 << 4;
-		break;
-	case item_skillbook:
-		dwCategory = 1 << 5;
-		break;
-	}
-	return !(m_Pet.PickMask & dwCategory);
+	return nItem > 0 && nItem < MAX_ITEM && Item[nItem].GetID() &&
+		CallPetFunction("PetCanPickItem", Item[nItem].GetID()) == 1;
 }
 
 BOOL KPlayer::CanPetSellItem(int nItem) const
 {
-	if (!IsPetFunctionActive(1) || nItem <= 0 || nItem >= MAX_ITEM)
-		return FALSE;
-	const KItem& Goods = Item[nItem];
-	if (!Goods.GetID() || Goods.GetGenre() != item_equip || Goods.GetPrice() <= 0 ||
-		Goods.IsBound() || Goods.m_btGenerationFlags || Goods.m_dwUpgradeData ||
-		Goods.GetDetailType() == equip_amulet || Goods.GetDetailType() == equip_horse)
-		return FALSE;
-	const KBASICPROP_EQUIPMENT* pTemplate = ItemGen.GetEquipmentTemplate(
-		Goods.GetDetailType(), Goods.m_CommonAttrib.nParticularType,
-		Goods.m_CommonAttrib.nLevel, Goods.m_GeneratorParam.nVersion);
-	// 套装、紫装等固定属性装备不属于清理窗口的白装、蓝装。
-	if (!pTemplate || pTemplate->m_nSeries)
-		return FALSE;
-	int nMagicCount = 0;
-	int nRequireLevel = 0;
-	for (int i = 0; i < 6; i++)
-	{
-		if (Goods.m_aryMagicAttrib[i].nAttribType > 0)
-			nMagicCount++;
-		if (Goods.m_aryRequireAttrib[i].nAttribType == magic_requirelevel)
-			nRequireLevel = max(nRequireLevel, Goods.m_aryRequireAttrib[i].nValue[0]);
-	}
-	DWORD dwKeepType = nMagicCount ? 2 : 1;
-	int nLevelLimit = (m_Pet.SellMask >> 8) & 0xFF;
-	int nMagicLimit = (m_Pet.SellMask >> 16) & 0xFF;
-	if ((m_Pet.SellMask & dwKeepType) || nRequireLevel >= nLevelLimit ||
-		(nMagicCount > 0 && nMagicCount >= nMagicLimit))
-		return FALSE;
-	return TRUE;
+	return nItem > 0 && nItem < MAX_ITEM && Item[nItem].GetID() &&
+		CallPetFunction("PetCanSellItem", Item[nItem].GetID()) == 1;
 }
 
 void KPlayer::ActivePetPickup()
@@ -7044,7 +7030,8 @@ void KPlayer::ActivePetPickup()
 		Owner.m_Doing == do_death || Owner.m_Doing == do_revive)
 		return;
 	DWORD dwNow = g_SubWorldSet.GetGameTime();
-	if (dwNow - m_dwPetPickupTime < 20)
+	int nInterval = CallPetFunction("PetPickupInterval");
+	if (nInterval <= 0 || dwNow - m_dwPetPickupTime < (DWORD)nInterval)
 		return;
 	m_dwPetPickupTime = dwNow;
 	KRegion& Region = SubWorld[Owner.m_SubWorldIndex].m_Region[Owner.m_RegionIndex];
@@ -7073,6 +7060,30 @@ void KPlayer::ActivePetPickup()
 			if (ServerPickUpItem((BYTE*)&Command, TRUE))
 				return;
 		}
+	}
+}
+
+void KPlayer::ActivePetRepair()
+{
+	// C++只枚举真实穿戴物品并派发事件；触发阈值、费用检查和提示由Lua决定。
+	if (!m_bFinishLoading || m_bExchangeServer || !g_pServer || m_nNetConnectIdx < 0 ||
+		!m_Pet.Type || m_nIndex <= 0 || m_nIndex >= MAX_NPC || CheckTrading())
+		return;
+	KNpc& Owner = Npc[m_nIndex];
+	if (Owner.m_SubWorldIndex < 0 || Owner.m_SubWorldIndex >= MAX_SUBWORLD ||
+		Owner.m_RegionIndex < 0 || Owner.m_bExchangeServer || Owner.m_CurrentLife <= 0 ||
+		Owner.m_Doing == do_death || Owner.m_Doing == do_revive)
+		return;
+	for (int i = 0; i < itempart_num; i++)
+	{
+		int nItem = m_ItemList.m_EquipItem[i];
+		if (nItem <= 0 || nItem >= MAX_ITEM || !Item[nItem].GetID())
+			continue;
+		int nList = m_ItemList.FindSame(nItem);
+		if (!nList || m_ItemList.m_Items[nList].nPlace != pos_equip ||
+			m_ItemList.m_Items[nList].nX != i)
+			continue;
+		CallPetFunction("PetRepairItem", Item[nItem].GetID(), TRUE);
 	}
 }
 
@@ -7190,7 +7201,7 @@ BOOL KPlayer::SetPetFunctionActive(int nFunction, int nEnabled)
 	if (!m_Pet.Type || nFunction < 0 || nFunction >= 5 || (nEnabled != 0 && nEnabled != 1))
 		return FALSE;
 	WORD wMask = (WORD)(1 << nFunction);
-	if (nEnabled && (!(m_Pet.Authority & wMask) || !m_Pet.Released || !m_Pet.Honor))
+	if (nEnabled && CallPetFunction("PetCanEnableFunction", nFunction) != 1)
 		return FALSE;
 	if (nEnabled)
 		m_Pet.Active |= wMask;

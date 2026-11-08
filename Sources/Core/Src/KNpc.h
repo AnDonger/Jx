@@ -620,6 +620,7 @@ public:
 #ifdef	_SERVER
 	void				ExecuteRevive(){DoRevive();};
 	BOOL				SendSyncData(int nClient);						// 向一个客户端发完整同步数据
+	BOOL				SendPositionSync(int nClient);
 	void				NormalSync();									// 广播小同步
 	void				BroadCastState();								// 广播角色的状态信息,光环，头带等等效果
 	void				BroadCastRevive(int nType);

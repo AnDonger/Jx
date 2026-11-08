@@ -386,7 +386,8 @@ public:
 	int				GetExtPoint();
 	BOOL			PayExtPoint(int nPoint);
 	int				GetExtPointChanged();
-	void			RepairItem(DWORD dwItemID);
+	int				CheckRepairItem(DWORD dwItemID, int* pnCost);
+	BOOL			RepairItem(DWORD dwItemID);
 	BOOL			PrePay(int nMoney);
 	void			SetLastNetOperationTime(int nTime);
 	int				FindAroundPlayer(DWORD dwNpcID);		// 寻找玩家周围的某个指定npc id的player index
@@ -445,11 +446,13 @@ public:
 	void			ServerSendChat(BYTE* pProtocol);		// 收到客户端发来的聊天语句
 	void			AddBaseAttribute(BYTE* pProtocol);		// 收到客户端要求增加基本属性点(0=Strength 1=Dexterity 2=Vitality 3=Engergy)
 	void			AddSkillPoint(BYTE* pProtocol);			// 收到客户端要求增加某个技能的点数
+	int				CallPetFunction(const char* pszFunction, DWORD dwParameter = 0, BOOL bItemAction = FALSE) const;
 	BOOL			IsPetFunctionActive(int nFunction) const;
 	BOOL			CanPetPickItem(int nItem) const;
 	BOOL			CanPetSellItem(int nItem) const;
 	void			SendPetItemNotice(const char* pszName, const char* pszColor, BOOL bSold);
 	void			ActivePetPickup();
+	void			ActivePetRepair();
 	BOOL			ServerPickUpItem(BYTE* pProtocol, BOOL bPet = FALSE);		// 收到客户端消息鼠标点击某个obj拣起装备或金钱
 	void			EatItem(BYTE* pProtocol);				// 收到客户端消息吃药
 	void			ServerMoveItem(BYTE* pProtocol);		// 收到客户端消息移动物品

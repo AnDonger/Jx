@@ -186,6 +186,10 @@ public:
 	BOOL	GetMagicDescription(char* pszText, int nSize) const;
 	int		GetMaxDurability();
 	int		GetTotalMagicLevel();
+	int		GetMagicAttribCount() const;
+	int		GetRequireLevel() const;
+	BYTE	GetGenerationFlags() const { return m_btGenerationFlags; };
+	DWORD	GetUpgradeData() const { return m_dwUpgradeData; };
 	int		GetRepairPrice();
 	void	Remove();
 	BOOL	SetBaseAttrib(IN const KItemNormalAttrib*);

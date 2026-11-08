@@ -3451,6 +3451,26 @@ BOOL KNpc::SetPlayerIdx(int nIdx)
 }
 
 #ifdef _SERVER
+BOOL KNpc::SendPositionSync(int nClient)
+{
+	if (m_SubWorldIndex < 0 || m_RegionIndex < 0)
+		return FALSE;
+
+	GAME_NPC_POSITION_SYNC Position;
+	memset(&Position, 0, sizeof(Position));
+	Position.ProtocolType = 0xF3;
+	Position.ID = m_dwID;
+	GetMpsPos((int*)&Position.MapX, (int*)&Position.MapY);
+	Position.OffX = (WORD)m_OffX;
+	Position.OffY = (WORD)m_OffY;
+	// 正式服过图样本的三个保留字节；当前客户端不读取，不能推断用途。
+	Position.unknown_1[0] = 1;
+	Position.unknown_1[1] = 7;
+	Position.unknown_1[2] = 0x80;
+	Position.PositionSyncToken = SubWorld[m_SubWorldIndex].m_dwCurrentTime;
+	return SUCCEEDED(g_pServer->PackDataToClient(nClient, (BYTE*)&Position, sizeof(Position)));
+}
+
 BOOL KNpc::SendSyncData(int nClient)
 {
 	BOOL	bRet = FALSE;
@@ -4981,23 +5001,7 @@ void KNpc::DeathPunish(int nMode, int nBelongPlayer)
 				else
 					Player[m_nPlayerIdx].DirectAddExp( -Player[m_nPlayerIdx].m_nExp );
 			}
-			// 钱减少
-			int nMoney = Player[m_nPlayerIdx].m_ItemList.GetEquipmentMoney() / 2;
-			if (nMoney > 0)
-			{
-				Player[m_nPlayerIdx].m_ItemList.CostMoney(nMoney);
-				// 损失金钱消息
-				SHOW_MSG_SYNC	sMsg;
-				sMsg.ProtocolType = s2c_msgshow;
-				sMsg.m_wMsgID = enumMSG_ID_DEC_MONEY;
-				sMsg.m_lpBuf = (void *)(nMoney);
-				sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1;
-				g_pServer->PackDataToClient(Player[m_nPlayerIdx].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-				sMsg.m_lpBuf = 0;
-
-				if (nMoney / 2 > 0)
-					PlayerDeadCreateMoneyObj(nMoney / 2);
-			}
+			// 普通怪物击杀不扣随身银两，也不生成死亡掉钱对象。
 		}
 		// 切磋，没有惩罚
 		else if (nMode == enumDEATH_MODE_PLAYER_NO_PUNISH)
@@ -5504,13 +5508,13 @@ void	KNpc::BroadCastState()
 	if (m_RegionIndex < 0)
 		return;
 
-	struct { BYTE ProtocolType; BYTE m_btStateInfo[8]; DWORD m_ID; } StateInfo;
+	GAME_NPC_STATE_SYNC StateInfo;
 	memset(&StateInfo, 0, sizeof(StateInfo));
 	StateInfo.ProtocolType	= 0x8A;
-	StateInfo.m_ID			= m_dwID;
+	StateInfo.ID				= m_dwID;
 	int i;
 	for (i = 0; i < 8 && i < MAX_NPC_RECORDER_STATE; i++)
-		StateInfo.m_btStateInfo[i] = m_btStateInfo[i];
+		StateInfo.StateGraphics[i] = m_btStateInfo[i];
 
 	POINT	POff[8] = 
 	{
@@ -5767,6 +5771,8 @@ int KNpc::SetPos(int nX, int nY)
 	m_ProcessAI = 1;
 	m_ProcessState = 1;
 	m_TrapScriptID = SubWorld[m_SubWorldIndex].m_Region[m_RegionIndex].GetTrap(m_MapX, m_MapY);
+	if (IsPlayer())
+		SendPositionSync(Player[m_nPlayerIdx].m_nNetConnectIdx);
 	return 1;
 }
 #endif
@@ -5850,6 +5856,8 @@ int KNpc::ChangeWorld(DWORD dwSubWorldID, int nX, int nY)
 		SubWorld[nSourceSubWorld].RemovePlayer(nSourceRegion, m_nPlayerIdx);
 		SubWorld[nTargetSubWorld].AddPlayer(nRegion, m_nPlayerIdx);
 		SendSyncData(Player[m_nPlayerIdx].m_nNetConnectIdx);
+		// 49加载地图、4C建立主人后，F3重建区域位置和移动快照，清除旧图预测。
+		SendPositionSync(Player[m_nPlayerIdx].m_nNetConnectIdx);
 	}
 	return 1;
 }
