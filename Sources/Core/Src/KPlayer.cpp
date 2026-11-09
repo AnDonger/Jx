@@ -104,6 +104,8 @@ void	KPlayer::Release()
 	ZeroMemory(&m_Pet, sizeof(m_Pet));
 	m_dwPetPickupTime = 0;
 	m_dwUseItemScriptID = 0;
+	m_dwUseItemID = 0;
+	m_nUseItemWorld = -1;
 	m_dwCompoundNpcID = 0;
 	m_dwCompoundScriptID = 0;
 	m_nCompoundWorld = -1;
@@ -150,6 +152,7 @@ void	KPlayer::Release()
 	m_nPeapleIdx = 0;
 	m_nObjectIdx = 0;
 	m_bWaitingPlayerFeedBack = false;
+	m_dwScriptDialogItemID = 0;
 	m_dwScriptDialogToken = 0;
 	m_dwScriptDialogScriptID = 0;
 	m_nScriptDialogWorld = -1;
@@ -3778,6 +3781,11 @@ void	KPlayer::EatItem(BYTE* pProtocol)
 		UseSkillBook(nItem);
 		return;
 	}
+	if (Item[nItem].GetGenre() == item_townportal)
+	{
+		UseScriptItem(nItem);
+		return;
+	}
 	if (Item[nItem].GetGenre() == item_magicorscript)
 	{
 		KItem& Data = Item[nItem];
@@ -4993,6 +5001,7 @@ void	KPlayer::DoScriptAction(PLAYER_SCRIPTACTION_SYNC * pUIInfo) //要求显示某个U
 				++dwNextDialogToken;
 			m_dwScriptDialogToken = dwNextDialogToken;
 			m_dwScriptDialogScriptID = Npc[m_nIndex].m_ActionScriptID;
+			m_dwScriptDialogItemID = m_dwScriptDialogScriptID == m_dwUseItemScriptID ? m_dwUseItemID : 0;
 			m_nScriptDialogWorld = Npc[m_nIndex].m_SubWorldIndex;
 			m_dwScriptDialogNpcID = m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC ?
 				Npc[m_nPeapleIdx].m_dwID : 0;
@@ -5017,6 +5026,7 @@ void	KPlayer::ProcessPlayerSelectFromUI(BYTE* pProtocol)			// 处理当玩家从选择菜
 	PLAYER_SELECTUI_COMMAND *pSelUI = (PLAYER_SELECTUI_COMMAND*)pProtocol;
 	int nSelectIndex = pSelUI->nSelectIndex;
 	int nAnswerNum = m_nAvailableAnswerNum;
+	DWORD dwDialogItemID = m_dwScriptDialogItemID;
 	DWORD dwScriptID = m_dwScriptDialogScriptID;
 	int nDialogWorld = m_nScriptDialogWorld;
 	DWORD dwDialogNpcID = m_dwScriptDialogNpcID;
@@ -5038,6 +5048,12 @@ void	KPlayer::ProcessPlayerSelectFromUI(BYTE* pProtocol)			// 处理当玩家从选择菜
 			NpcSet.GetDistance(nDialogNpc, m_nIndex) > Npc[nDialogNpc].m_DialogRadius * 2)
 			return;
 	}
+	if (dwDialogItemID && (dwScriptID != m_dwUseItemScriptID ||
+		dwDialogItemID != m_dwUseItemID || !FindUseScriptItem()))
+	{
+		ClearUseItemContext();
+		return;
+	}
 	char szFunction[sizeof(m_szTaskAnswerFun[0])];
 	g_StrCpyLen(szFunction, m_szTaskAnswerFun[nSelectIndex], sizeof(szFunction));
 	if (szFunction[0])
@@ -5048,6 +5064,8 @@ void	KPlayer::ProcessPlayerSelectFromUI(BYTE* pProtocol)			// 处理当玩家从选择菜
 		m_nPeapleIdx = nDialogNpc;
 		ExecuteScript(dwScriptID, szFunction, nSelectIndex);
 		m_nPeapleIdx = nPreviousNpc;
+		if (!dwDialogNpcID && !m_bWaitingPlayerFeedBack)
+			ClearUseItemContext();
 	}
 }
 
@@ -7327,31 +7345,85 @@ void KPlayer::SyncPetState()
 	m_ulLastSaveTime = 0;
 }
 
+void KPlayer::ClearUseItemContext()
+{
+	m_dwUseItemScriptID = 0;
+	m_dwUseItemID = 0;
+	m_nUseItemWorld = -1;
+}
+
+int KPlayer::FindUseScriptItem()
+{
+	if (!m_dwUseItemID || !m_dwUseItemScriptID || !m_bFinishLoading || m_bExchangeServer ||
+		m_nIndex <= 0 || m_nIndex >= MAX_NPC || CheckTrading())
+		return 0;
+	KNpc& Owner = Npc[m_nIndex];
+	if (Owner.m_SubWorldIndex != m_nUseItemWorld || Owner.m_SubWorldIndex < 0 ||
+		Owner.m_RegionIndex < 0 || Owner.m_bExchangeServer || Owner.m_CurrentLife <= 0 ||
+		Owner.m_Doing == do_death || Owner.m_Doing == do_revive)
+		return 0;
+	for (PlayerItem* pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
+	{
+		if (pItem->nIdx <= 0 || pItem->nIdx >= MAX_ITEM ||
+			(pItem->nPlace != pos_equiproom && pItem->nPlace != pos_immediacy))
+			continue;
+		KItem& Data = Item[pItem->nIdx];
+		if (Data.GetID() != m_dwUseItemID || Data.GetStackCount() <= 0)
+			continue;
+		BOOL bConsume = FALSE;
+		const char* pszScript = ItemGen.GetUseItemScript(Data, &bConsume);
+		if (pszScript && g_FileName2Id((char*)pszScript) == m_dwUseItemScriptID)
+			return pItem->nIdx;
+	}
+	return 0;
+}
+
 BOOL KPlayer::UseScriptItem(int nItem)
 {
-	if (nItem <= 0 || nItem >= MAX_ITEM || Item[nItem].GetGenre() != item_magicorscript)
+	if (nItem <= 0 || nItem >= MAX_ITEM ||
+		(Item[nItem].GetGenre() != item_magicorscript && Item[nItem].GetGenre() != item_townportal))
 		return FALSE;
-	KItem& Data = Item[nItem];
-	const KBASICPROP_NORMALITEM* pTemplate = ItemGen.GetNormalItemTemplate(Data.GetGenre(),
-		Data.GetDetailType(), Data.GetParticular(), Data.GetLevel(), Data.m_GeneratorParam.nVersion);
-	if (!pTemplate || !pTemplate->m_szScript[0])
+	BOOL bConsumeOnUse = FALSE;
+	const char* pszScript = ItemGen.GetUseItemScript(Item[nItem], &bConsumeOnUse);
+	if (!pszScript || !pszScript[0])
 		return FALSE;
-	if (!g_GetScript(pTemplate->m_szScript))
-		ReLoadScript(pTemplate->m_szScript);
-	DWORD dwScript = g_FileName2Id((char*)pTemplate->m_szScript);
+	if (!g_GetScript(pszScript))
+		ReLoadScript(pszScript);
+	DWORD dwScript = g_FileName2Id((char*)pszScript);
 	if (!g_GetScript(dwScript) || !CheckNpcScriptFunction(dwScript, "main", TRUE))
 		return FALSE;
-	KNpcScriptTransaction Exchange(m_nPlayerIndex);
-	if (pTemplate->m_bConsumeOnUse && !m_ItemList.ConsumeItem(nItem, 1))
-		return FALSE;
+	// 新使用替换旧道具菜单上下文；回调不得根据模板另找一张同名符扣除。
+	ClearUseItemContext();
+	m_bWaitingPlayerFeedBack = false;
+	m_nAvailableAnswerNum = 0;
+	m_dwScriptDialogScriptID = 0;
+	m_dwScriptDialogItemID = 0;
 	m_dwUseItemScriptID = dwScript;
-	int nPreviousNpc = m_nPeapleIdx;
-	m_nPeapleIdx = 0;
-	BOOL bExecuted = ExecuteScript(dwScript, "main", 0);
-	m_nPeapleIdx = nPreviousNpc;
-	if (!bExecuted || Exchange.HasFailed())
+	m_dwUseItemID = Item[nItem].GetID();
+	m_nUseItemWorld = Npc[m_nIndex].m_SubWorldIndex;
+	if (FindUseScriptItem() != nItem)
+	{
+		ClearUseItemContext();
 		return FALSE;
-	Exchange.Commit();
-	return TRUE;
+	}
+	BOOL bResult = FALSE;
+	{
+		KNpcScriptTransaction Exchange(m_nPlayerIndex);
+		if (!bConsumeOnUse || m_ItemList.ConsumeItem(nItem, 1))
+		{
+			int nPreviousNpc = m_nPeapleIdx;
+			m_nPeapleIdx = 0;
+			BOOL bExecuted = ExecuteScript(dwScript, "main", 0);
+			m_nPeapleIdx = nPreviousNpc;
+			if (bExecuted && !Exchange.HasFailed())
+			{
+				Exchange.Commit();
+				bResult = TRUE;
+			}
+		}
+	}
+	if (!bResult || !m_bWaitingPlayerFeedBack)
+		ClearUseItemContext();
+	return bResult;
 }
 #endif

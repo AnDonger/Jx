@@ -177,14 +177,15 @@ static void LoadNpcScriptCalls(DWORD dwScriptId, const char *pszFile)
 
 static BOOL IsItemTransactionFunction(const std::string& Function)
 {
-	// 只开放已纳入快照的变更、只读查询、对白和纯计算；地图、技能、Buff及外部IO另行适配。
+	// 只开放已纳入快照的变更及只读接口；传送只许延迟提交，其他地图、技能、Buff及外部IO禁用。
 	static const char* Names[] =
 	{
 		"Say", "Talk", "MsgBox", "CloseDialog", "PutMessage", "Msg2Player", "WriteLog",
-		"HaveNormalItem", "HaveItem2", "IsExistItem", "DelNormalItem", "AddNormalItem",
+		"HaveNormalItem", "HaveItem2", "IsExistItem", "DelNormalItem", "AddNormalItem", "AddNormalItemPile",
 		"GetCash", "Pay", "Earn", "GetCopperCashCount", "WasteCopperCash",
 		"GetTask", "SetTask", "GetTaskTemp", "SetTaskTemp", "GetTaskByte", "SetTaskByte",
 		"GetName", "GetLevel", "GetSex", "GetSeries", "GetPlayerType",
+		"GetWorldPos", "GetFightState", "GetCamp", "GetPK", "GetUseItemInfo", "ConsumeUseItem", "TeleportWithItem",
 		"GetPetType", "GetPetHonor", "GetPetColor", "GetPetName", "IsPetReleased",
 		"GenPet", "DelPet", "SetPetType", "SetPetHonor", "ReleasePet",
 		"GetPetFuncAuthority", "SetPetFuncAuthority",

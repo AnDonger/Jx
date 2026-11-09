@@ -904,6 +904,24 @@ BOOL KItemGenerator::Gen_Material(IN int nDetailType,
 	return TRUE;
 }
 
+// 返回原模板脚本与入口消耗规则，不在这里判断具体道具业务。
+const char* KItemGenerator::GetUseItemScript(KItem& Data, BOOL* pbConsumeOnUse)
+{
+	*pbConsumeOnUse = FALSE;
+	if (Data.GetGenre() == item_townportal)
+	{
+		KLibOfBPT* pLibrary = GetVersionLibrary(0);
+		const KBASICPROP_TOWNPORTAL* pPortal = pLibrary ? pLibrary->GetTownPortalRecord(0) : NULL;
+		return pPortal ? pPortal->m_szScript : NULL;
+	}
+	const KBASICPROP_NORMALITEM* pTemplate = GetNormalItemTemplate(Data.GetGenre(),
+		Data.GetDetailType(), Data.GetParticular(), Data.GetLevel(), Data.m_GeneratorParam.nVersion);
+	if (!pTemplate)
+		return NULL;
+	*pbConsumeOnUse = pTemplate->m_bConsumeOnUse;
+	return pTemplate->m_szScript;
+}
+
 const KBASICPROP_NORMALITEM* KItemGenerator::GetNormalItemTemplate(int nGenre, int nDetail,
 	int nParticular, int nLevel, int nVersion)
 {

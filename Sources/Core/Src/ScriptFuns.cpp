@@ -201,6 +201,14 @@ struct KNpcScriptExchange
 	int Depth;
 	int Experience;
 	BOOL Failed;
+	BOOL HasTeleport;
+	BOOL ConsumedUseItem;
+	DWORD TeleportItemID;
+	int TeleportMap;
+	int TeleportX;
+	int TeleportY;
+	int TeleportFight;
+	int TeleportRevival;
 };
 
 static KNpcScriptExchange *g_NpcScriptExchange[MAX_PLAYER] = {NULL};
@@ -223,6 +231,9 @@ KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
 	pState->Depth = 1;
 	pState->Experience = 0;
 	pState->Failed = FALSE;
+	pState->HasTeleport = FALSE;
+	pState->ConsumedUseItem = FALSE;
+	pState->TeleportRevival = 0;
 	KItemList& List = Player[m_nPlayer].m_ItemList;
 	for (int i = 0; i < room_num; i++)
 		pState->Money[i] = List.GetMoney(i);
@@ -246,6 +257,40 @@ BOOL KNpcScriptTransaction::HasFailed() const
 		g_NpcScriptExchange[m_nPlayer]->Failed;
 }
 
+static BOOL IsScriptTeleportTarget(int nMap, int nX, int nY)
+{
+	int nWorld = g_SubWorldSet.SearchWorld(nMap);
+	if (nWorld < 0 || nWorld >= MAX_SUBWORLD || nX <= 0 || nY <= 0)
+		return FALSE;
+	int nRegion = -1, nMapX = 0, nMapY = 0, nOffX = 0, nOffY = 0;
+	SubWorld[nWorld].Mps2Map(nX, nY, &nRegion, &nMapX, &nMapY, &nOffX, &nOffY);
+	return nRegion >= 0;
+}
+
+static BOOL IsScriptTeleportValid(int nPlayer, const KNpcScriptExchange& State)
+{
+	KPlayer& Role = Player[nPlayer];
+	int nItem = Role.FindUseScriptItem();
+	if (!nItem || Item[nItem].GetID() != State.TeleportItemID ||
+		!IsScriptTeleportTarget(State.TeleportMap, State.TeleportX, State.TeleportY))
+		return FALSE;
+	if (State.TeleportRevival)
+	{
+		KIniFile Revivals;
+		char szMap[32], szRevival[32], szValue[128];
+		sprintf(szMap, "%d", State.TeleportMap);
+		sprintf(szRevival, "%d", State.TeleportRevival);
+		if (!Revivals.Load("\\settings\\RevivePos.ini") ||
+			!Revivals.GetString(szMap, szRevival, "", szValue, sizeof(szValue)))
+			return FALSE;
+		int nRevivalX = 0, nRevivalY = 0;
+		Revivals.GetInteger2(szMap, szRevival, &nRevivalX, &nRevivalY);
+		if (!IsScriptTeleportTarget(State.TeleportMap, nRevivalX, nRevivalY))
+			return FALSE;
+	}
+	return TRUE;
+}
+
 KNpcScriptTransaction::~KNpcScriptTransaction()
 {
 	if (!m_nPlayer)
@@ -257,6 +302,34 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 		return;
 	g_NpcScriptExchange[m_nPlayer] = NULL;
 	KPlayer& Role = Player[m_nPlayer];
+	if (!pState->Failed && pState->HasTeleport)
+	{
+		// 同步游戏线程中重检全部条件，再扣确切实例；未加载地图不能跨服半提交。
+		if (!IsScriptTeleportValid(m_nPlayer, *pState))
+			pState->Failed = TRUE;
+		else
+		{
+			int nItem = Role.FindUseScriptItem();
+			if (!Role.m_ItemList.ConsumeItem(nItem, 1) ||
+				Npc[Role.m_nIndex].ChangeWorld(pState->TeleportMap,
+					pState->TeleportX, pState->TeleportY) != 1)
+				pState->Failed = TRUE;
+			else
+			{
+				Npc[Role.m_nIndex].SetFightMode(pState->TeleportFight);
+				if (pState->TeleportRevival)
+					Role.SetRevivalPos(pState->TeleportMap, pState->TeleportRevival);
+				Role.m_ulLastSaveTime = 0;
+				Role.m_bWaitingPlayerFeedBack = false;
+				Role.m_nAvailableAnswerNum = 0;
+				Role.m_dwScriptDialogScriptID = 0;
+				Role.ClearUseItemContext();
+				g_DebugLog("[ItemTeleport] player=%d item=%lu map=%d position=(%d,%d)",
+					m_nPlayer, pState->TeleportItemID, pState->TeleportMap,
+					pState->TeleportX, pState->TeleportY);
+			}
+		}
+	}
 	if (pState->Failed)
 	{
 		KItemList& List = Role.m_ItemList;
@@ -401,6 +474,114 @@ static void SetScriptItemInteger(Lua_State* L, int nTable, const char* pszName, 
 	Lua_PushString(L, pszName);
 	Lua_PushNumber(L, nValue);
 	Lua_SetTable(L, nTable);
+}
+
+// 当前使用的真实道具；既不接受客户端下标，也不允许借另一叠同名物品续用旧菜单。
+int LuaGetUseItemInfo(Lua_State* L)
+{
+	int nPlayer = GetPlayerIndex(L);
+	int nItem = nPlayer > 0 ? Player[nPlayer].FindUseScriptItem() : 0;
+	if (!nItem)
+	{
+		Lua_PushNil(L);
+		return 1;
+	}
+	lua_newtable(L);
+	int nTable = Lua_GetTopIndex(L);
+	SetScriptItemInteger(L, nTable, "Genre", Item[nItem].GetGenre());
+	SetScriptItemInteger(L, nTable, "Detail", Item[nItem].GetDetailType());
+	SetScriptItemInteger(L, nTable, "Particular", Item[nItem].GetParticular());
+	SetScriptItemInteger(L, nTable, "Level", Item[nItem].GetLevel());
+	SetScriptItemInteger(L, nTable, "Count", Item[nItem].GetStackCount());
+	return 1;
+}
+
+// 只消耗当前使用实例；须在道具自动事务内，与模板自动扣除及延迟传送互斥。
+// 发奖失败由外层快照完整恢复，不按模板另找同名礼包扣取。
+int LuaConsumeUseItem(Lua_State* L)
+{
+	int nPlayer = GetPlayerIndex(L);
+	KNpcScriptExchange* pState = nPlayer > 0 ? g_NpcScriptExchange[nPlayer] : NULL;
+	int nArguments = Lua_GetTopIndex(L);
+	double Count = nArguments == 0 ? 1 : Lua_ValueToNumber(L, 1);
+	int nItem = nPlayer > 0 ? Player[nPlayer].FindUseScriptItem() : 0;
+	BOOL bConsumeOnUse = FALSE;
+	if (nItem)
+		ItemGen.GetUseItemScript(Item[nItem], &bConsumeOnUse);
+	if (!pState || pState->Failed || pState->HasTeleport || pState->ConsumedUseItem ||
+		!nItem || bConsumeOnUse || nArguments > 1 ||
+		(nArguments == 1 && !Lua_IsNumber(L, 1)) ||
+		!(Count >= 1 && Count <= 100000) || Count != (int)Count ||
+		Item[nItem].GetStackCount() < (int)Count)
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	if (!Player[nPlayer].m_ItemList.ConsumeItem(nItem, (int)Count))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	pState->ConsumedUseItem = TRUE;
+	Player[nPlayer].m_ulLastSaveTime = 0;
+	Lua_PushNumber(L, 1);
+	return 1;
+}
+
+// TeleportWithItem()回当前重生点；显式参数使用脚本格坐标。
+// 只登记一次延迟计划，不在Lua执行期间扣符、切图或更改战斗状态。
+int LuaTeleportWithItem(Lua_State* L)
+{
+	int nCount = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	KNpcScriptExchange* pState = nPlayer > 0 ? g_NpcScriptExchange[nPlayer] : NULL;
+	if (!pState || pState->Failed || pState->HasTeleport || pState->ConsumedUseItem ||
+		!Player[nPlayer].FindUseScriptItem())
+	{
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	int nMap = 0, nX = 0, nY = 0, nFight = 0, nRevival = 0;
+	if (nCount == 0)
+		Player[nPlayer].GetDeathRevivalPos(&nMap, &nX, &nY);
+	else
+	{
+		if (nCount != 4 && nCount != 5)
+		{
+			Lua_PushNumber(L, 0);
+			return 1;
+		}
+		for (int i = 1; i <= nCount; i++)
+		{
+			double Value = Lua_ValueToNumber(L, i);
+			if (!Lua_IsNumber(L, i) || !(Value >= 0 && Value <= 0x03ffffff) || Value != (int)Value)
+			{
+				Lua_PushNumber(L, 0);
+				return 1;
+			}
+		}
+		nMap = (int)Lua_ValueToNumber(L, 1);
+		nX = (int)Lua_ValueToNumber(L, 2) * 32;
+		nY = (int)Lua_ValueToNumber(L, 3) * 32;
+		nFight = (int)Lua_ValueToNumber(L, 4);
+		nRevival = nCount == 5 ? (int)Lua_ValueToNumber(L, 5) : 0;
+	}
+	pState->TeleportItemID = Player[nPlayer].m_dwUseItemID;
+	pState->TeleportMap = nMap;
+	pState->TeleportX = nX;
+	pState->TeleportY = nY;
+	pState->TeleportFight = nFight;
+	pState->TeleportRevival = nRevival;
+	if (nFight > 1 || !IsScriptTeleportValid(nPlayer, *pState))
+	{
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	pState->HasTeleport = TRUE;
+	Lua_PushNumber(L, 1);
+	return 1;
 }
 
 static BOOL ReadScriptItemOption(Lua_State* L, int nTable, const char* pszName,
@@ -6776,6 +6957,9 @@ TLua_Funcs GameScriptFuns[] =
 	{"GetPos",			LuaGetPos},			//GetPos() return x,y,subworldindex
 	{"GetWorldPos",		LuaGetNewWorldPos},	//W,X,Y = GetWorldPos()返回于NewWorld配陪的坐标
 	{"NewWorld",		LuaEnterNewWorld},
+	{"GetUseItemInfo", LuaGetUseItemInfo},
+	{"ConsumeUseItem", LuaConsumeUseItem},
+	{"TeleportWithItem", LuaTeleportWithItem},
 	{"CloseDialog",		LuaCloseDialog},
 	{"DropItem",		LuaDropItem},		//DropItem(NpcId, 物品id或物品名)
 	{"AddItem",			LuaAddItem},		//AddItem(nItemClass, nDetailType, nParticualrType, nLevel, nSeries, nLuck, nItemLevel..6)

@@ -255,6 +255,7 @@ typedef struct
 	int			m_nPrice;					// 价格
 	char		m_szIntro[SZBUFLEN_1];		// 说明文字
 	int			m_bStack;					// 原表“是否叠放”的数量上限
+	char		m_szScript[128];			// 可选的原道具脚本，旧表缺列时不执行。
 } KBASICPROP_TOWNPORTAL;
 //=============================================================================
 

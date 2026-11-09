@@ -129,6 +129,10 @@ public:
 	PLAYER_PET_DATA m_Pet;
 	DWORD m_dwPetPickupTime;
 	DWORD			m_dwUseItemScriptID;
+	DWORD			m_dwUseItemID;
+	int				m_nUseItemWorld;
+	int				FindUseScriptItem();
+	void			ClearUseItemContext();
 	BOOL			IsValidPetType(int nType) const;
 	BOOL			CreatePet(const char* pszName, int nType, int nHonor, int nColor);
 	BOOL			SetPetType(int nType);
@@ -225,6 +229,7 @@ public:
 	DWORD			m_dwDeathScriptId;			// 
 
 	char			m_szTaskAnswerFun[MAX_ANSWERNUM][32];
+	DWORD			m_dwScriptDialogItemID;
 	DWORD			m_dwScriptDialogToken;
 	DWORD			m_dwScriptDialogScriptID;
 	DWORD			m_dwScriptDialogNpcID;

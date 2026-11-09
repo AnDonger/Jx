@@ -895,6 +895,7 @@ BOOL KBPT_TownPortal::LoadRecord(int i, KTabFile* pTF)
 		return FALSE;
 	// 新表保留前八列，在其后增加叠放上限；旧表缺列时保持不可叠放。
 	pTF->GetInteger(i + 2, "是否叠放", 0, &pBuf->m_bStack);
+	pTF->GetString(i + 2, "脚本名(参数1)", "", pBuf->m_szScript, sizeof(pBuf->m_szScript));
 	return TRUE;
 }
 

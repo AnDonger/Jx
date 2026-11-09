@@ -1,10 +1,10 @@
 # 当前 Lua 可用函数说明（Lua函数表）
 
-核对日期：2026-11-08。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
+核对日期：2026-11-10。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
 
 ## 阅读方法与范围
 
-- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **255个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **347个不同名字**，均有独立条目。
+- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **258个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **350个不同名字**，均有独立条目。
 - “实现已核对”表示已对照当前注册和函数正文，**不表示全部接口已通过新版客户端实测**。带“旧接口”“待适配”“有缺陷”“不可用”的条目保留用于查错；不能把存在名字当成功能已完整适配。
 - 以服务端 `_SERVER` 分支为准，排除注释中的注册项、客户端专用 `PlaySound` / `PlaySprMovie`、未注册的C++辅助函数。原脚本内 `main`、`OnCompound`、公共库中自定义函数不属于引擎全局API；只能在加载了对应脚本后使用其实际定义。
 - 普通NPC／玩家脚本由 `GameScriptFuns` 注册；全局世界脚本由 `WorldScriptFuns` 注册。标准库在创建Lua状态时打开。脚本可覆盖同名全局，使用时还要核对原脚本及 `Include` 内容。
@@ -42,18 +42,18 @@ Lua不得直接连接、查询或修改数据库，不得编写、拼接或执�
 
 已有快照覆盖随身背包、快捷栏、鼠标物品、各房间现金、玩家任务和本轮普通宠物状态；`AddOwnExp`在成功后延迟发放；`PutMessage` / `Msg2Player`在事务成功后延迟通知。**不保证任意Lua回调都有事务**：当前普通NPC对话自动事务仍有限定范围，物品窗口入口显式建立事务。穿戴、仓库、技能、Buff、阵营、帮会、婚姻、位置、系统文件副作用等未泛化纳入完整快照。`WriteLog`以及某些旧协议通知也不回滚。新业务涉及这些范围时，先补通用事务与存档支持，不能宣称已支持完整回滚。
 
-物品模板中的脚本入口及其对白回调新增自动事务，但仅开放 `KSortScript.cpp::IsItemTransactionFunction` 中已覆盖快照的接口和只读／纯计算接口；地图、技能、Buff、外部IO等接口不在该入口的支持范围。每个回调执行前重新检查调用关系，失败不提交本次道具消耗、现金及宠物变更。NPC自动事务仍维持已有作用域，不能据此认为所有地图NPC均已有完整事务。
+物品模板中的脚本入口及其对白回调新增自动事务，但仅开放 `KSortScript.cpp::IsItemTransactionFunction` 中已覆盖快照的接口和只读／纯计算接口；地图类仅开放下述受限延迟接口 `TeleportWithItem`；`NewWorld`、`SetPos`、`SetRevPos`、`UseTownPortal` 等即时接口，以及技能、Buff、外部IO等仍不在该入口的支持范围。每个回调执行前重新检查调用关系，失败不提交本次道具消耗、现金及宠物变更。NPC自动事务仍维持已有作用域，不能据此认为所有地图NPC均已有完整事务。
 
 ## 分类索引
 
 - **对白、窗口与提示**：[Say](#say)、[SayTask](#saytask)、[Talk](#talk)、[MsgBox](#msgbox)、[CloseDialog](#closedialog)、[PutMessage](#putmessage)、[Msg2Player](#msg2player)、[TopMessage](#topmessage)、[Sale](#sale)、[OpenBox](#openbox)、[OpenNewCompound](#opennewcompound)、[EnchaseItem](#enchaseitem)、[AddNote](#addnote)、[PlayMusic](#playmusic)、[FadeInMusic](#fadeinmusic)、[FadeOutMusic](#fadeoutmusic)。
 - **普通宠物与铜钱商店**：[SaleEx](#saleex)、[GetPetType](#getpettype)、[GetPetHonor](#getpethonor)、[GetPetColor](#getpetcolor)、[GetPetName](#getpetname)、[IsPetReleased](#ispetreleased)、[GenPet](#genpet)、[DelPet](#delpet)、[SetPetType](#setpettype)、[SetPetHonor](#setpethonor)、[ReleasePet](#releasepet)、[GetPetFuncAuthority](#getpetfuncauthority)、[SetPetFuncAuthority](#setpetfuncauthority)、[GetPetFuncActive](#getpetfuncactive)、[GetPetSettings](#getpetsettings)、[GetItemInfo](#getiteminfo)、[RepairItem](#repairitem)。
 - **资源、脚本与服务器日志**：[ReadTabFile](#readtabfile)、[GetGameVersion](#getgameversion)、[Include](#include)、[WriteLog](#writelog)、[Message](#message)、[ExeScript](#exescript)。
-- **物品、现金、铜钱与窗口事务**：[HaveNormalItem](#havenormalitem)、[HaveItem2](#haveitem2)、[IsExistItem](#isexistitem)、[DelNormalItem](#delnormalitem)、[DelItem2](#delitem2)、[AddNormalItem](#addnormalitem)、[AddNormalItem2](#addnormalitem2)、[AddNormalItemPile](#addnormalitempile)、[GetItemLevel2](#getitemlevel2)、[HaveNormalItemInQuick](#havenormaliteminquick)、[DelNormalItemInQuick](#delnormaliteminquick)、[GetSelectedItems](#getselecteditems)、[DelSelectedItem](#delselecteditem)、[CompleteItemOperation](#completeitemoperation)、[GetCash](#getcash)、[Pay](#pay)、[Earn](#earn)、[PrePay](#prepay)、[GetCopperCashCount](#getcoppercashcount)、[WasteCopperCash](#wastecoppercash)、[GetCredit](#getcredit)、[DecCredit](#deccredit)、[GetRepute](#getrepute)、[AddRepute](#addrepute)、[ImproveItemMagicAttr](#improveitemmagicattr)、[AddItem](#additem)、[AddEventItem](#addeventitem)、[GetItemCount](#getitemcount)、[HaveEventItem](#haveeventitem)、[HaveItem](#haveitem)、[DelItem](#delitem)、[DelEventItem](#deleventitem)、[DropItem](#dropitem)。
+- **物品、现金、铜钱与窗口事务**：[HaveNormalItem](#havenormalitem)、[HaveItem2](#haveitem2)、[IsExistItem](#isexistitem)、[ConsumeUseItem](#consumeuseitem)、[DelNormalItem](#delnormalitem)、[DelItem2](#delitem2)、[AddNormalItem](#addnormalitem)、[AddNormalItem2](#addnormalitem2)、[AddNormalItemPile](#addnormalitempile)、[GetItemLevel2](#getitemlevel2)、[HaveNormalItemInQuick](#havenormaliteminquick)、[DelNormalItemInQuick](#delnormaliteminquick)、[GetSelectedItems](#getselecteditems)、[DelSelectedItem](#delselecteditem)、[CompleteItemOperation](#completeitemoperation)、[GetCash](#getcash)、[Pay](#pay)、[Earn](#earn)、[PrePay](#prepay)、[GetCopperCashCount](#getcoppercashcount)、[WasteCopperCash](#wastecoppercash)、[GetCredit](#getcredit)、[DecCredit](#deccredit)、[GetRepute](#getrepute)、[AddRepute](#addrepute)、[ImproveItemMagicAttr](#improveitemmagicattr)、[AddItem](#additem)、[AddEventItem](#addeventitem)、[GetItemCount](#getitemcount)、[HaveEventItem](#haveeventitem)、[HaveItem](#haveitem)、[DelItem](#delitem)、[DelEventItem](#deleventitem)、[DropItem](#dropitem)。
 - **玩家任务与位、字节操作**：[GetTask](#gettask)、[SetTask](#settask)、[GetTaskTemp](#gettasktemp)、[SetTaskTemp](#settasktemp)、[TaskNote](#tasknote)、[GetTaskByte](#gettaskbyte)、[SetTaskByte](#settaskbyte)、[GetBit](#getbit)、[SetBit](#setbit)、[GetByte](#getbyte)、[SetByte](#setbyte)。
 - **角色查询、属性与身份**：[GetName](#getname)、[GetUUID](#getuuid)、[GetLevel](#getlevel)、[GetSex](#getsex)、[GetSeries](#getseries)、[GetPlayerType](#getplayertype)、[GetDefend](#getdefend)、[GetExp](#getexp)、[GetLeadExp](#getleadexp)、[GetLeadLevel](#getleadlevel)、[GetRestAP](#getrestap)、[GetRestSP](#getrestsp)、[GetProp](#getprop)、[GetMagicPoint](#getmagicpoint)、[GetCurCamp](#getcurcamp)、[GetCamp](#getcamp)、[GetRank](#getrank)、[GetPK](#getpk)、[GetLucky](#getlucky)、[GetEng](#geteng)、[GetDex](#getdex)、[GetStrg](#getstrg)、[GetVit](#getvit)、[GetLife](#getlife)、[GetMana](#getmana)、[GetStamina](#getstamina)、[RestoreLife](#restorelife)、[RestoreMana](#restoremana)、[RestoreStamina](#restorestamina)、[GetColdR](#getcoldr)、[GetFireR](#getfirer)、[GetLightR](#getlightr)、[GetPoisonR](#getpoisonr)、[GetPhyR](#getphyr)、[SetFireR](#setfirer)、[SetLightR](#setlightr)、[SetPoisonR](#setpoisonr)、[SetPhyR](#setphyr)、[SetColdR](#setcoldr)、[SetCurCamp](#setcurcamp)、[SetCamp](#setcamp)、[RestoreCamp](#restorecamp)、[GetFaction](#getfaction)、[SetFaction](#setfaction)、[SetSeries](#setseries)、[SetRank](#setrank)、[AddOwnExp](#addownexp)、[AddExp](#addexp)、[AddLeadExp](#addleadexp)、[AddMagicPoint](#addmagicpoint)、[AddProp](#addprop)、[GetExtPoint](#getextpoint)、[PayExtPoint](#payextpoint)。
 - **技能与限时效果**：[IsSkillActived](#isskillactived)、[IsExistBuff](#isexistbuff)、[HaveIBBuff](#haveibbuff)、[GetIBBuffLeftTimes](#getibbufflefttimes)、[AddBuff](#addbuff)、[AddIBBuff](#addibbuff)、[RemoveBuff](#removebuff)、[AddMagic](#addmagic)、[DelMagic](#delmagic)、[HaveMagic](#havemagic)、[GetMagicLevel](#getmagiclevel)、[GetSkillId](#getskillid)、[SetSkillLevel](#setskilllevel)、[RollbackSkill](#rollbackskill)、[UpdateSkill](#updateskill)。
-- **地图、坐标、NPC与复活**：[GetWorldPos](#getworldpos)、[GetPos](#getpos)、[SetPos](#setpos)、[NewWorld](#newworld)、[SubWorldID2Idx](#subworldid2idx)、[GetNpcIdx](#getnpcidx)、[AddNpc](#addnpc)、[DelNpc](#delnpc)、[SetNpcScript](#setnpcscript)、[SetNpcCurCamp](#setnpccurcamp)、[SetRevPos](#setrevpos)、[SetTempRevPos](#settemprevpos)、[SetDeathScript](#setdeathscript)、[SetLogoutRV](#setlogoutrv)、[UseTownPortal](#usetownportal)、[ReturnFromPortal](#returnfromportal)、[SetFightState](#setfightstate)、[GetFightState](#getfightstate)、[AttackNpc](#attacknpc)、[KillNpc](#killnpc)、[Death](#death)、[KillPlayer](#killplayer)、[HideNpc](#hidenpc)、[RevivalAllNpc](#revivalallnpc)、[SetPropState](#setpropstate)。
+- **地图、坐标、NPC与复活**：[GetWorldPos](#getworldpos)、[GetUseItemInfo](#getuseiteminfo)、[TeleportWithItem](#teleportwithitem)、[GetPos](#getpos)、[SetPos](#setpos)、[NewWorld](#newworld)、[SubWorldID2Idx](#subworldid2idx)、[GetNpcIdx](#getnpcidx)、[AddNpc](#addnpc)、[DelNpc](#delnpc)、[SetNpcScript](#setnpcscript)、[SetNpcCurCamp](#setnpccurcamp)、[SetRevPos](#setrevpos)、[SetTempRevPos](#settemprevpos)、[SetDeathScript](#setdeathscript)、[SetLogoutRV](#setlogoutrv)、[UseTownPortal](#usetownportal)、[ReturnFromPortal](#returnfromportal)、[SetFightState](#setfightstate)、[GetFightState](#getfightstate)、[AttackNpc](#attacknpc)、[KillNpc](#killnpc)、[Death](#death)、[KillPlayer](#killplayer)、[HideNpc](#hidenpc)、[RevivalAllNpc](#revivalallnpc)、[SetPropState](#setpropstate)。
 - **队伍、聊天、公告及管理**：[IsCaptain](#iscaptain)、[GetTeam](#getteam)、[GetTeamSize](#getteamsize)、[LeaveTeam](#leaveteam)、[SetCreateTeam](#setcreateteam)、[Msg2Team](#msg2team)、[Msg2SubWorld](#msg2subworld)、[Msg2Region](#msg2region)、[Msg2GM](#msg2gm)、[Msg2IP](#msg2ip)、[AddGlobalNews](#addglobalnews)、[AddGlobalCountNews](#addglobalcountnews)、[AddGlobalTimeNews](#addglobaltimenews)、[AddLocalNews](#addlocalnews)、[AddLocalCountNews](#addlocalcountnews)、[AddLocalTimeNews](#addlocaltimenews)、[GetInfo](#getinfo)、[GetIP](#getip)、[GetServerName](#getservername)、[GetPlayerCount](#getplayercount)、[KickOutPlayer](#kickoutplayer)、[KickOutSelf](#kickoutself)、[KickOutAccount](#kickoutaccount)、[SetChatFlag](#setchatflag)、[SetPK](#setpk)、[SetPunish](#setpunish)、[ShowLadder](#showladder)、[OpenTong](#opentong)、[SwearBrother](#swearbrother)、[MakeEnemy](#makeenemy)、[AddLoaclTimeNews](#addloacltimenews)。
 - **旧车站、码头与路标资源**：[AddStation](#addstation)、[AddTermini](#addtermini)、[GetStation](#getstation)、[GetStationCount](#getstationcount)、[GetCityCount](#getcitycount)、[GetWayPoint](#getwaypoint)、[GetStationName](#getstationname)、[GetWayPointName](#getwaypointname)、[GetPrice2Station](#getprice2station)、[GetPrice2WayPoint](#getprice2waypoint)、[GetStationPos](#getstationpos)、[GetWayPointPos](#getwaypointpos)、[GetWharfName](#getwharfname)、[GetWharfCount](#getwharfcount)、[GetWharfPrice](#getwharfprice)、[GetWharf](#getwharf)、[GetWharfPos](#getwharfpos)、[GetTerminiFState](#getterminifstate)、[GetCity](#getcity)。
 - **计时与系统时间**：[SystemTime](#systemtime)、[GetHMS](#gethms)、[GetYMD](#getymd)、[Time2LocalYMD](#time2localymd)、[SetTimer](#settimer)、[StopTimer](#stoptimer)、[GetTimerId](#gettimerid)、[GetRestTime](#getresttime)。
@@ -2643,6 +2643,59 @@ GetWorldPos()
 local mapId, x, y = GetWorldPos()
 ```
 
+### `GetUseItemInfo`
+
+状态：已实现，2026-11-10原生及协议回归接口。作用域：有效道具脚本入口及其对白回调；普通NPC／世界脚本无有效使用实例时返回nil。
+
+```lua
+local item = GetUseItemInfo()
+if item ~= nil then
+    Msg2Player(format("本叠剩余%d张。", item.Count))
+end
+```
+
+- 参数：无。
+- 返回：本次实际使用道具的表，字段 `Genre`、`Detail`、`Particular`、`Level` 为原模板身份，`Count` 为当前堆叠数；没有有效实例时返回nil。
+- 限制：只读取本次使用的确切实例，不按同名模板改扣另一叠。每次调用检查玩家已进图、存活、不交易、不跨服，仍在打开菜单时的源世界，原实例仍在背包／快捷栏，且模板脚本仍与本次脚本一致。原实例移到背包／快捷栏之外、卖出、用完，或当前不在源世界时，上下文无效。
+- 实现：`ScriptFuns.cpp::LuaGetUseItemInfo`、`KPlayer.cpp::FindUseScriptItem`。
+
+### `ConsumeUseItem`
+
+状态：已实现。作用域：C++建立的道具自动事务；只接受当前使用上下文的真实物品。
+
+```lua
+local item = GetUseItemInfo() -- 消耗前读取，最后一个消失后该查询返回nil
+assert(ConsumeUseItem() == 1) -- 默认消耗本次右键实例1个
+assert(AddNormalItemPile(6, 1, 506, 1, 0, 0, {Count=50}) == 1)
+-- 也可 ConsumeUseItem(count)，从该实例消耗指定数量，不从同名其他物品补扣。
+```
+
+- 参数：可省略的 `count`，1～100000的正整数，不能超过当前实例数量。
+- 返回：成功1；无事务返回0；已有事务中任何失败抛错、标记失败并回滚。
+- 限制：本次使用来源必须仍在背包／快捷栏、模板脚本匹配、角色存活且不在交易或跨服中。模板“使用后消失”为1的道具已由C++自动扣除，禁止再显式扣。一次事务仅允许一次，不能与 `TeleportWithItem` 混用。普通NPC／世界脚本无有效道具上下文不能扣物品。
+- 同步与回滚：精确消耗本次实例并立即同步，释放的原格可以用于发奖；Lua失败或入包失败由外层事务完整恢复本次支持范围并同步，成功走原存档链，Lua不操作数据库。先消耗再奖励时须检查两步结果，成功提示使用事务延迟的 `Msg2Player`。
+- 实现：`ScriptFuns.cpp::LuaConsumeUseItem`、`KItemList::ConsumeItem`、`KNpcScriptTransaction`。
+
+### `TeleportWithItem`
+
+状态：已实现，受限延迟传送。作用域：C++建立的道具自动事务；只接受本次有效使用实例。其他NPC、世界或无事务调用返回0。
+
+```lua
+-- 立即返回设置重生点；没有本次有效道具时不会传送。
+if TeleportWithItem() ~= 1 then
+    Msg2Player("当前无法回城。")
+end
+-- 或在目的地菜单回调中指定地图和脚本格坐标：
+-- TeleportWithItem(3, 1692, 3138, 0)
+```
+
+- 形式1：`TeleportWithItem()`，读取角色当前死亡重生点的地图及精确MPS坐标，成功后设为非战斗状态，不生成回程门。
+- 形式2：`TeleportWithItem(mapId, x, y, fightMode[, revivalId])`。`mapId` 为本服已加载地图；`x/y` 为脚本格（底层乘32），`fightMode` 只能0或1。`revivalId`省略或0表示保留原重生点；正值要求原 `settings/RevivePos.ini` 中该地图下存在这一编号，传送成功后才更新重生点。
+- 数字参数必须是0～67108863的整数，目的地图和区域必须有效；不支持转交其他GameServer。调用失败返回0且不扣符；成功返回1只表示**已接受计划**，此时尚未切图或扣符。同一次事务只允许一个传送计划，不能与 `ConsumeUseItem` 混用。
+- 最外层Lua成功完成并提交后，C++再次校验实例和目的地，扣除本次实例1张，复用当前 `KNpc::ChangeWorld` 及49／F3同步链，再应用战斗状态及可选重生点。取消菜单、无效参数、重复回调、Lua报错或事务未提交均不执行计划；失败恢复本次原有物品、现金、任务和宠物快照。
+- 不要再调用 `DelNormalItem` 预扣该张符，不要同时用 `NewWorld/SetPos/SetFightState/SetRevPos` 处理传送。模板“使用后是否消失”需为0，由成功提交统一扣本次实例。它不提供任意位置／Buff／技能／外部IO的通用回滚。
+- 实现：`ScriptFuns.cpp::LuaTeleportWithItem`、`KNpcScriptTransaction`。
+
 ### `GetPos`
 
 状态：实现已核对。作用域：游戏／NPC脚本。
@@ -2900,7 +2953,7 @@ UseTownPortal()
 
 - 参数：无。
 - 返回：无。
-- 限制／说明：调用当前玩家原 UseTownPortal；不是支付／消耗品封装，不在Lua任意重复扣回城符。
+- 限制／说明：调用当前玩家原 UseTownPortal；不是支付／消耗品封装，不在Lua任意重复扣回城符。不在道具事务白名单内；当前回城类道具改用 `TeleportWithItem()`。
 - 实现：[`LuaUseTownPortal`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:4607)。
 
 用法示例：

@@ -75,6 +75,7 @@ public:
 	BOOL Gen_Medicine(IN int, IN int, IN int, IN OUT KItem*);
 	BOOL Gen_Material(IN int, IN int, IN int, IN int, IN OUT KItem*);
 	BOOL Gen_NormalItem(IN int, IN int, IN int, IN int, IN int, IN OUT KItem*);
+	const char* GetUseItemScript(KItem& Data, BOOL* pbConsumeOnUse);
 	const KBASICPROP_NORMALITEM* GetNormalItemTemplate(int nGenre, int nDetail,
 		int nParticular, int nLevel, int nVersion);
 	BOOL Gen_Equipment(IN int, IN int, IN int, IN int, IN const int*, IN int,
