@@ -2485,6 +2485,7 @@ void	KPlayer::UpdataCurData()
 	Npc[m_nIndex].m_CurrentFireEnhance	= 0;
 	Npc[m_nIndex].m_CurrentFireResist	= Npc[m_nIndex].m_FireResist;
 	Npc[m_nIndex].m_CurrentFireResistMax	= Npc[m_nIndex].m_FireResistMax;
+	Npc[m_nIndex].m_CurrentPhysicsEnhance = 0;
 	Npc[m_nIndex].m_CurrentHandEnhance	= 0;
 	Npc[m_nIndex].m_CurrentHitRecover	= Npc[m_nIndex].m_HitRecover;
 	Npc[m_nIndex].m_CurrentJumpSpeed	= Npc[m_nIndex].m_JumpSpeed;
@@ -6420,26 +6421,21 @@ void KPlayer::GetEchoDamage(int* nMin, int* nMax, int nType)
 		*nMin += nMinNpcDamage * (100 + pMagicData->nValue[0]) / 100;
 		*nMax += nMaxNpcDamage * (100 + pMagicData->nValue[0]) / 100;
 		
-		int nEnhance;
-		if (equip_meleeweapon == m_ItemList.GetWeaponType())
-		{
-			nEnhance = Npc[m_nIndex].m_CurrentMeleeEnhance[m_ItemList.GetWeaponParticular()];
-		}
-		else if (equip_rangeweapon == m_ItemList.GetWeaponType())
-		{
-			nEnhance = Npc[m_nIndex].m_CurrentRangeEnhance;
-		}
-		else 
-		{
-			nEnhance = Npc[m_nIndex].m_CurrentHandEnhance;
-		}
-		*nMin += nMinNpcDamage * nEnhance / 100;
-		*nMax += nMaxNpcDamage * nEnhance / 100;
 	}
 	else if (magic_physicsdamage_v == pMagicData->nAttribType)
 	{
 		*nMin += pMagicData->nValue[0];
 		*nMax += pMagicData->nValue[2];
+	}
+	else if (bIsPhysical)
+	{
+		*nMin += nMinNpcDamage;
+		*nMax += nMaxNpcDamage;
+	}
+	if (bIsPhysical)
+	{
+		*nMin += nMinNpcDamage * Npc[m_nIndex].m_CurrentPhysicsEnhance / 100;
+		*nMax += nMaxNpcDamage * Npc[m_nIndex].m_CurrentPhysicsEnhance / 100;
 	}
 	pMagicData++;
 	// Calc cold damage

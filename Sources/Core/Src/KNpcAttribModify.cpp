@@ -163,6 +163,12 @@ void KNpcAttribModify::AddPhysicsDamageP(KNpc* pNpc, void* pData)
 
 	KMagicAttrib* pMagic = (KMagicAttrib *)pData;
 
+	// 新版玩家属性126只使用第一参数；第三参数不再选择旧武器槽。
+	if (pNpc->IsPlayer())
+	{
+		pNpc->m_CurrentPhysicsEnhance += pMagic->nValue[0];
+		return;
+	}
 	int nType = abs(pMagic->nValue[2]);
 
 	if (nType == WEAPON_ALL)

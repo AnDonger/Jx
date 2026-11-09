@@ -115,6 +115,7 @@ KNpc::KNpc()
 
 void KNpc::Init()
 {
+	m_CurrentPhysicsEnhance = 0;
 	m_dwID = 0;
 	m_Index = 0;
 	m_nPlayerIdx = 0;
@@ -2677,24 +2678,6 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 		pDes->nAttribType = magic_physicsdamage_v;
 		pDes->nValue[0] = nMinDamage * (100 + pTemp->nValue[0]) / 100;
 		pDes->nValue[2] = nMaxDamage * (100 + pTemp->nValue[0]) / 100;
-		if (IsPlayer())
-		{
-			if (Player[m_nPlayerIdx].m_ItemList.GetWeaponType() == equip_meleeweapon)
-			{
-				pDes->nValue[0] += nMinDamage * m_CurrentMeleeEnhance[Player[m_nPlayerIdx].m_ItemList.GetWeaponParticular()] / 100;
-				pDes->nValue[2] += nMaxDamage * m_CurrentMeleeEnhance[Player[m_nPlayerIdx].m_ItemList.GetWeaponParticular()] / 100;
-			}
-			else if (Player[m_nPlayerIdx].m_ItemList.GetWeaponType() == equip_rangeweapon)
-			{
-				pDes->nValue[0] += nMinDamage * m_CurrentRangeEnhance / 100;
-				pDes->nValue[2] += nMaxDamage * m_CurrentRangeEnhance / 100;
-			}
-			else	// 空手
-			{
-				pDes->nValue[0] += nMinDamage * m_CurrentHandEnhance / 100;
-				pDes->nValue[2] += nMaxDamage * m_CurrentHandEnhance / 100;
-			}
-		}
 	}
 	else if (pTemp->nAttribType == magic_physicsdamage_v)
 	{
@@ -2708,6 +2691,11 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 		pDes->nAttribType = magic_physicsdamage_v;
 		pDes->nValue[0] = nMinDamage;
 		pDes->nValue[2] = nMaxDamage;
+	}
+	if (IsPlayer() && bIsPhysical)
+	{
+		pDes->nValue[0] += nMinDamage * m_CurrentPhysicsEnhance / 100;
+		pDes->nValue[2] += nMaxDamage * m_CurrentPhysicsEnhance / 100;
 	}
 	pTemp++;
 	pDes++;
@@ -5712,6 +5700,7 @@ void	KNpc::RestoreNpcBaseInfo()
 	m_CurrentColdEnhance	= 0;
 	m_CurrentPoisonEnhance	= 0;
 	m_CurrentLightEnhance	= 0;
+	m_CurrentPhysicsEnhance = 0;
 	m_CurrentRangeEnhance	= 0;
 	m_CurrentHandEnhance	= 0;
 	ZeroMemory(m_CurrentMeleeEnhance, sizeof(m_CurrentMeleeEnhance));
@@ -5960,6 +5949,45 @@ BOOL KNpc::IsPlayer()
 #else
 	return m_Index == Player[CLIENT_PLAYER_INDEX].m_nIndex;
 #endif
+}
+
+// 撤销单项状态，供装备限制变化等通用场景使用。
+void KNpc::RemoveStateSkillEffect(int nSkillID)
+{
+	KStateNode* pNode = (KStateNode*)m_StateSkillList.GetHead();
+	while (pNode)
+	{
+		if (pNode->m_SkillID != nSkillID)
+		{
+			pNode = (KStateNode*)pNode->GetNext();
+			continue;
+		}
+#ifdef _SERVER
+		if (IsPlayer() && g_pServer)
+		{
+			GAME_STATE_EFFECT_SYNC Sync;
+			memset(&Sync, 0, sizeof(Sync));
+			Sync.ProtocolType = s2c_syncstateeffect;
+			Sync.Length = 14;
+			Sync.SkillId = nSkillID;
+			Sync.Level = pNode->m_Level;
+			Sync.Time = 0;
+			g_pServer->PackDataToClient(Player[m_nPlayerIdx].m_nNetConnectIdx, &Sync, Sync.Length + 1);
+		}
+#endif
+		for (int i = 0; i < MAX_SKILL_STATE; i++)
+		{
+			if (pNode->m_State[i].nAttribType)
+				ModifyAttrib(m_Index, &pNode->m_State[i]);
+		}
+		pNode->Remove();
+		delete pNode;
+#ifdef _SERVER
+		UpdateNpcStateInfo();
+		BroadCastState();
+#endif
+		return;
+	}
 }
 
 // 清除NPC身上的非被动类的技能状态

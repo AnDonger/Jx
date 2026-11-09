@@ -175,24 +175,9 @@ relationisvalid:
 	if (Npc[nLauncher].IsPlayer())
 	{
 
-		//-2表示技能不受当前装备的限制,
-		//-1表示空手限制
-		//0-99受某种近身攻击类的装备限制 取值为该装备的具体类别号
-		//100-199受某种远程攻击类的装备限制 取值为该装备的具体类别号 加100
+		if (!MatchesWeapon(nLauncher))
+			return FALSE;
 
-		if (-2 != m_nEquiptLimited)
-		{
-
-#ifdef _SERVER
-			int nPlayerIdx		= Npc[nLauncher].GetPlayerIdx();
-#else
-			int nPlayerIdx		= CLIENT_PLAYER_INDEX;
-#endif
-			int nWeaponType = Player[nPlayerIdx].m_ItemList.GetWeaponSkillType();
-			if (nWeaponType != m_nEquiptLimited)
-				return FALSE;
-		}
-		
 		//0表示不限制
 		//1表示不可以骑马发该技能
 		//2表示必须骑马发该技能
@@ -2299,9 +2284,13 @@ int KSkill::GetSkillIdFromName(char * szSkillName)
 *****************************************************************************/
 BOOL KSkill::ApplyStateSkill(int nLauncher) const
 {
-	if (nLauncher > 0 && nLauncher < MAX_NPC &&
-		m_eSkillStyle == SKILL_SS_PassivityNpcState && m_nStateAttribsNum > 0)
+	if (m_eSkillStyle == SKILL_SS_PassivityNpcState)
+	{
+		if (nLauncher <= 0 || nLauncher >= MAX_NPC || m_nStateAttribsNum <= 0 ||
+			(Npc[nLauncher].IsPlayer() && !MatchesWeapon(nLauncher)))
+			return FALSE;
 		return CastPassivitySkill(nLauncher, -1, nLauncher, 0);
+	}
 	if (nLauncher <= 0 || nLauncher >= MAX_NPC || m_nStateAttribsNum <= 0 ||
 		(!m_bTargetSelf && !m_bTargetAlly) || m_bTargetEnemy)
 		return FALSE;
@@ -2358,6 +2347,35 @@ BOOL KSkill::ApplyAuraSkill(int nLauncher) const
 #endif
 }
 
+// 装备限制与主动技能共用当前资源的武器类别，不使用物品编号。
+BOOL KSkill::MatchesWeapon(int nLauncher) const
+{
+	if (m_nEquiptLimited == -2)
+		return TRUE;
+	if (nLauncher <= 0 || nLauncher >= MAX_NPC || !Npc[nLauncher].IsPlayer())
+		return FALSE;
+#ifdef _SERVER
+	int nPlayer = Npc[nLauncher].GetPlayerIdx();
+#else
+	int nPlayer = CLIENT_PLAYER_INDEX;
+#endif
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER)
+		return FALSE;
+	return Player[nPlayer].m_ItemList.GetWeaponSkillType() == m_nEquiptLimited;
+}
+
+BOOL KSkill::IsWeaponMastery() const
+{
+	if (m_eSkillStyle != SKILL_SS_PassivityNpcState || m_nEquiptLimited == -2)
+		return FALSE;
+	for (int i = 0; i < m_nStateAttribsNum; i++)
+	{
+		if (m_StateAttribs[i].nAttribType == magic_addphysicsdamage_p)
+			return TRUE;
+	}
+	return FALSE;
+}
+
 BOOL KSkill::IsElementalMastery() const
 {
 	if (m_eSkillStyle != SKILL_SS_PassivityNpcState)
@@ -2372,9 +2390,13 @@ BOOL KSkill::IsElementalMastery() const
 	return FALSE;
 }
 
-BOOL KSkill::EnhancesSkillDamage(const KSkill* pAttack) const
+BOOL KSkill::EnhancesSkillDamage(const KSkill* pAttack, int nLauncher) const
 {
-	if (!pAttack || !IsElementalMastery())
+	if (!pAttack || !MatchesWeapon(nLauncher) || !pAttack->MatchesWeapon(nLauncher))
+		return FALSE;
+	if (IsWeaponMastery())
+		return pAttack->IsPhysical();
+	if (!IsElementalMastery())
 		return FALSE;
 	for (int i = 0; i < m_nStateAttribsNum; i++)
 	{
@@ -2497,10 +2519,19 @@ BOOL	KSkill::ParseString2MagicAttrib(unsigned long ulLevel, char * szMagicAttrib
 		{
             pcszTemp = szValue;
             nValue1 = KSG_StringGetInt(&pcszTemp, 0);
-            KSG_StringSkipSymbol(&pcszTemp, ',');
-            nValue2 = KSG_StringGetInt(&pcszTemp, 0);
-            KSG_StringSkipSymbol(&pcszTemp, ',');
-            nValue3 = KSG_StringGetInt(&pcszTemp, 0);
+            // Lua 可返回3.5等小数；取整后直接找逗号，不能把小数点当成第二参数。
+            pcszTemp = strchr(szValue, ',');
+            if (pcszTemp)
+            {
+                const char* pcszSecond = ++pcszTemp;
+                nValue2 = KSG_StringGetInt(&pcszTemp, 0);
+                pcszTemp = strchr(pcszSecond, ',');
+                if (pcszTemp)
+                {
+                    ++pcszTemp;
+                    nValue3 = KSG_StringGetInt(&pcszTemp, 0);
+                }
+            }
 			//sscanf(szValue, "%d,%d,%d", &nValue1, &nValue2, &nValue3);
 
 

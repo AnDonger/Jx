@@ -1297,7 +1297,10 @@ BOOL KItemList::Equip(int nIdx, int nPlace /* = -1 */)
 	}
 
 	if (itempart_weapon == nEquipPlace)
-	{		
+	{
+#ifdef _SERVER
+		Npc[nNpcIdx].m_SkillList.ApplyPlayerPassiveSkills();
+#endif
 #ifndef _SERVER
 		Player[CLIENT_PLAYER_INDEX].UpdateWeaponSkill();
 #endif
@@ -1410,6 +1413,9 @@ BOOL KItemList::UnEquip(int nIdx, int nPos/* = -1*/)
 
 	if (itempart_weapon == i)
 	{
+#ifdef _SERVER
+		Npc[nNpcIdx].m_SkillList.ApplyPlayerPassiveSkills();
+#endif
 #ifndef _SERVER
 		Player[CLIENT_PLAYER_INDEX].UpdateWeaponSkill();
 #endif

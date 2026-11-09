@@ -317,6 +317,7 @@ public:
 	int					m_CurrentColdEnhance;			// 冰加强
 	int					m_CurrentPoisonEnhance;			// 毒加强
 	int					m_CurrentLightEnhance;			// 电加强
+	int					m_CurrentPhysicsEnhance;			// 当前客户端的全局物理伤害百分比
 	int					m_CurrentAddPhysicsDamage;		// 直接的物理伤害加强点数
 	int					m_CurrentMeleeEnhance[MAX_MELEE_WEAPON];	// 近程物理加强
 	int					m_CurrentRangeEnhance;			// 远程物理加强
@@ -584,6 +585,7 @@ public:
 	void				SetCurrentCamp(int nCamp);
 	void				RestoreCurrentCamp();
 	void				SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pData, int nDataNum, int nTime = -1);	// 主动辅助技能与被动技能
+	void				RemoveStateSkillEffect(int nSkillID);
 	void				ClearStateSkillEffect();
 	void				ReCalcStateEffect();
 	void				ClearNormalState();

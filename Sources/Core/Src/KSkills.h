@@ -149,8 +149,10 @@ public:
 	const char * GetSkillName(){return m_szName;};
 	BOOL				ApplyStateSkill(int nLauncher) const;
 	BOOL				ApplyAuraSkill(int nLauncher) const;
+	BOOL				MatchesWeapon(int nLauncher) const;
+	BOOL				IsWeaponMastery() const;
 	BOOL				IsElementalMastery() const;
-	BOOL				EnhancesSkillDamage(const KSkill* pAttack) const;
+	BOOL				EnhancesSkillDamage(const KSkill* pAttack, int nLauncher) const;
 	int					GetSkillStyle(){ return m_eSkillStyle;};
 	BOOL				GetInfoFromTabFile(int nCol);
 	BOOL				GetInfoFromTabFile(KITabFile *pSkillsSettingFile, int nRow);

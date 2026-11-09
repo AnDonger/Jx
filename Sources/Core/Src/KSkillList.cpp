@@ -701,16 +701,22 @@ int KSkillList::LoadPlayerSkill(int nSkillID, int nLevel)
 
 void KSkillList::ApplyPlayerPassiveSkills()
 {
+	if (m_nNpcIndex <= 0 || m_nNpcIndex >= MAX_NPC || !Npc[m_nNpcIndex].IsPlayer())
+		return;
 	for (int i = 1; i < MAX_NPCSKILL; i++)
 	{
-		// 与客户端一致：状态3表示已启用，1和2仅显示在技能列表中。
-		if (m_Skills[i].SkillId <= 0 || m_Skills[i].CurrentSkillLevel <= 0 ||
-			m_Skills[i].SkillStatus != 3)
+		if (m_Skills[i].SkillId <= 0)
 			continue;
 		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId,
-			m_Skills[i].CurrentSkillLevel);
-		if (pSkill && pSkill->GetSkillStyle() == SKILL_SS_PassivityNpcState)
+			max(1, m_Skills[i].CurrentSkillLevel));
+		if (!pSkill || pSkill->GetSkillStyle() != SKILL_SS_PassivityNpcState)
+			continue;
+		// 状态3表示已启用；装备门槛变化后同步撤销旧的永久状态。
+		if (m_Skills[i].SkillStatus == 3 && m_Skills[i].CurrentSkillLevel > 0 &&
+			pSkill->MatchesWeapon(m_nNpcIndex))
 			pSkill->ApplyStateSkill(m_nNpcIndex);
+		else
+			Npc[m_nNpcIndex].RemoveStateSkillEffect(m_Skills[i].SkillId);
 	}
 }
 
@@ -965,7 +971,7 @@ BOOL KSkillList::IncreasePlayerSkillExp(int nSkillID, DWORD dwExp)
 	return TRUE;
 }
 
-// 命中敌人的技能由子弹伤害结算增加；辅助及被动技能随实际打怪所得经验修炼。
+// 命中技能与战斗精通由实际命中修炼；其余辅助技能随实际打怪所得经验修炼。
 void KSkillList::AddMonsterSkillExp(int nExp)
 {
 	if (nExp <= 0)
@@ -980,7 +986,8 @@ void KSkillList::AddMonsterSkillExp(int nExp)
 		if (!IsPlayerSkillLearned(m_Skills[i].SkillId))
 			continue;
 		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId, m_Skills[i].CurrentSkillLevel);
-		if (pSkill && !pSkill->IsTargetEnemy() && !pSkill->IsAura() && !pSkill->IsElementalMastery())
+		if (pSkill && !pSkill->IsTargetEnemy() && !pSkill->IsAura() &&
+			!pSkill->IsElementalMastery() && !pSkill->IsWeaponMastery())
 			IncreasePlayerSkillExp(m_Skills[i].SkillId, dwExp);
 	}
 }
@@ -998,7 +1005,7 @@ void KSkillList::AddHitSkillExp(int nSkillID)
 		if (!IsPlayerSkillLearned(m_Skills[i].SkillId))
 			continue;
 		KSkill* pPassive = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId, m_Skills[i].CurrentSkillLevel);
-		if (pPassive && pPassive->EnhancesSkillDamage(pAttack))
+		if (pPassive && pPassive->EnhancesSkillDamage(pAttack, m_nNpcIndex))
 			IncreasePlayerSkillExp(m_Skills[i].SkillId, dwExp);
 	}
 }
