@@ -4471,7 +4471,7 @@ void	KPlayer::SendEquipItemInfo(int nTargetPlayer)
 	
 	sView.ProtocolType = s2c_viewequip;
 	sView.m_dwNpcID = Npc[m_nIndex].m_dwID;
-	for (i = 0; i < itempart_num; i++)
+	for (i = 0; i < sizeof(sView.m_sInfo) / sizeof(sView.m_sInfo[0]); i++)
 	{
 		nIdx = m_ItemList.m_EquipItem[i];
 		pInfo = &sView.m_sInfo[i];

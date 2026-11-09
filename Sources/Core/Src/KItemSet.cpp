@@ -64,6 +64,15 @@ void KItemSet::Init()
 #endif
 	KIniFile	IniFile;
 	IniFile.Load(ITEM_ABRADE_FILE);
+	ZeroMemory(m_nItemAbradeRate, sizeof(m_nItemAbradeRate));
+	const char* ExtraKeys[] = { "Talisman2", "JadePendant", "Signet", "Instrument" };
+	const int ExtraParts[] = { itempart_amulet2, itempart_jadependant, itempart_signet, itempart_instrument };
+	const char* Actions[] = { "Attack", "Defend", "Move" };
+	for (int n = 0; n < sizeof(ExtraParts) / sizeof(ExtraParts[0]); n++)
+	{
+		for (int a = 0; a < sizeof(Actions) / sizeof(Actions[0]); a++)
+			IniFile.GetInteger((char*)Actions[a], (char*)ExtraKeys[n], 0, &m_nItemAbradeRate[a][ExtraParts[n]]);
+	}
 //	Î¬ÐÞ¼Û¸ñ
 	IniFile.GetInteger("Repair", "ItemPriceScale", 100, &m_sRepairParam.nPriceScale);
 	IniFile.GetInteger("Repair", "MagicPriceScale", 10, &m_sRepairParam.nMagicScale);

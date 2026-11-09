@@ -92,6 +92,10 @@ int KItemList::ms_ActiveEquip[itempart_num][MAX_ITEM_ACTIVE] =
 	{ itempart_amulet, itempart_body },	//	itempart_ring2,
 	{ itempart_belt, itempart_ring2 },	//	itempart_pendant,
 	{ itempart_horse, itempart_horse },	//	itempart_horse,
+	{ -1, -1 },	// itempart_amulet2
+	{ -1, -1 },	// itempart_jadependant
+	{ -1, -1 },	// itempart_signet
+	{ -1, -1 },	// itempart_instrument
 };
 
 int KItemList::ms_ActivedEquip[itempart_num][MAX_ITEM_ACTIVE] =
@@ -107,6 +111,10 @@ int KItemList::ms_ActivedEquip[itempart_num][MAX_ITEM_ACTIVE] =
 	{ itempart_cuff, itempart_pendant },//	itempart_ring2,
 	{ itempart_foot, itempart_ring1 },	//	itempart_pendant,
 	{ itempart_horse, itempart_horse },	//	itempart_horse,
+	{ -1, -1 },	// itempart_amulet2
+	{ -1, -1 },	// itempart_jadependant
+	{ -1, -1 },	// itempart_signet
+	{ -1, -1 },	// itempart_instrument
 };
 
 KItemList::KItemList()
@@ -206,10 +214,22 @@ int KItemList::ClientEquipmentSlotToPart(int nSlot)
 		return itempart_belt;
 	case 3:
 		return itempart_foot;
+	case 4:
+		return itempart_pendant;
 	case 5:
 		return itempart_weapon;
 	case 6:
 		return itempart_horse;
+	case 7:
+		return itempart_amulet;
+	case 8:
+		return itempart_amulet2;
+	case 9:
+		return itempart_jadependant;
+	case 10:
+		return itempart_signet;
+	case 11:
+		return itempart_instrument;
 	default:
 		return -1;
 	}
@@ -227,10 +247,22 @@ int KItemList::EquipmentPartToClientSlot(int nPart)
 		return 2;
 	case itempart_foot:
 		return 3;
+	case itempart_pendant:
+		return 4;
 	case itempart_weapon:
 		return 5;
 	case itempart_horse:
 		return 6;
+	case itempart_amulet:
+		return 7;
+	case itempart_amulet2:
+		return 8;
+	case itempart_jadependant:
+		return 9;
+	case itempart_signet:
+		return 10;
+	case itempart_instrument:
+		return 11;
 	default:
 		return -1;
 	}
@@ -1202,7 +1234,8 @@ BOOL KItemList::EnoughAttrib(void* pAttrib)
 		}
 		break;
 	case magic_requiremenpai:
-		if (Player[m_PlayerIdx].m_cFaction.m_nCurFaction != pData->nValue[0])
+		// 当前封神资源的37表示职业（甲士0、道士1、异人2），不是旧剑侠门派。
+		if (Npc[Player[m_PlayerIdx].m_nIndex].m_Series != pData->nValue[0])
 		{
 			return FALSE;
 		}
@@ -1252,7 +1285,8 @@ BOOL KItemList::Equip(int nIdx, int nPlace /* = -1 */)
 	{
 		nEquipPlace = GetEquipPlace(Item[nIdx].GetDetailType());
 	}
-	else if (!Fit(nIdx, nEquipPlace))
+	if (nEquipPlace < 0 || nEquipPlace >= itempart_num ||
+		!Fit(nIdx, nEquipPlace) || m_EquipItem[nEquipPlace])
 	{
 		return FALSE;
 	}
@@ -1321,7 +1355,7 @@ BOOL KItemList::Equip(int nIdx, int nPlace /* = -1 */)
 *****************************************************************************/
 void KItemList::InfectionNextEquip(int nEquipPlace, BOOL bEquip/* = FALSE */)
 {
-	if (m_PlayerIdx <= 0)
+	if (m_PlayerIdx <= 0 || nEquipPlace < 0 || nEquipPlace >= itempart_num)
 		return;
 
 	int nNpcIdx = Player[m_PlayerIdx].m_nIndex;
@@ -1329,7 +1363,8 @@ void KItemList::InfectionNextEquip(int nEquipPlace, BOOL bEquip/* = FALSE */)
 	for (int i = 0; i < MAX_ITEM_ACTIVE; i++)
 	{
 		int nInfectionEquip = ms_ActiveEquip[nEquipPlace][i];
-		if (!m_EquipItem[nInfectionEquip] || Item[m_EquipItem[nInfectionEquip]].GetDurability() == 0)
+		if (nInfectionEquip < 0 || nInfectionEquip >= itempart_num ||
+			!m_EquipItem[nInfectionEquip] || Item[m_EquipItem[nInfectionEquip]].GetDurability() == 0)
 			continue;
 		if (g_IsAccrue(Item[m_EquipItem[nEquipPlace]].GetSeries(),
 			Item[m_EquipItem[nInfectionEquip]].GetSeries()))
@@ -1377,7 +1412,7 @@ BOOL KItemList::UnEquip(int nIdx, int nPos/* = -1*/)
 	}
 	else
 	{
-		if (m_EquipItem[nPos] != nIdx)	// 东西不对
+		if (nPos >= itempart_num || m_EquipItem[nPos] != nIdx)	// 东西不对
 			return FALSE;
 		i = nPos;
 	}
@@ -1446,7 +1481,8 @@ int KItemList::GetEquipPlace(int nType)
 		nRet = itempart_ring1;
 		break;
 	case equip_amulet:
-		nRet = itempart_amulet;
+		nRet = !m_EquipItem[itempart_amulet] ? itempart_amulet :
+			(!m_EquipItem[itempart_amulet2] ? itempart_amulet2 : itempart_amulet);
 		break;
 	case equip_belt:
 		nRet = itempart_belt;
@@ -1459,6 +1495,15 @@ int KItemList::GetEquipPlace(int nType)
 		break;
 	case equip_horse:
 		nRet = itempart_horse;
+		break;
+	case equip_jadependant:
+		nRet = itempart_jadependant;
+		break;
+	case equip_signet:
+		nRet = itempart_signet;
+		break;
+	case equip_instrument:
+		nRet = itempart_instrument;
 		break;
 	default:
 		break;
@@ -1507,7 +1552,7 @@ BOOL KItemList::Fit(int nIdx, int nPlace)
 			bRet = TRUE;
 		break;
 	case equip_amulet:
-		if (nPlace == itempart_amulet)
+		if (nPlace == itempart_amulet || nPlace == itempart_amulet2)
 			bRet = TRUE;
 		break;
 	case equip_pendant:
@@ -1520,6 +1565,18 @@ BOOL KItemList::Fit(int nIdx, int nPlace)
 		break;
 	case equip_horse:
 		if (nPlace == itempart_horse)
+			bRet = TRUE;
+		break;
+	case equip_jadependant:
+		if (nPlace == itempart_jadependant)
+			bRet = TRUE;
+		break;
+	case equip_signet:
+		if (nPlace == itempart_signet)
+			bRet = TRUE;
+		break;
+	case equip_instrument:
+		if (nPlace == itempart_instrument)
 			bRet = TRUE;
 		break;
 	}
@@ -1558,7 +1615,7 @@ BOOL KItemList::Fit(KItem* pItem, int nPlace)
 			bRet = TRUE;
 		break;
 	case equip_amulet:
-		if (nPlace == itempart_amulet)
+		if (nPlace == itempart_amulet || nPlace == itempart_amulet2)
 			bRet = TRUE;
 		break;
 	case equip_pendant:
@@ -1571,6 +1628,18 @@ BOOL KItemList::Fit(KItem* pItem, int nPlace)
 		break;
 	case equip_horse:
 		if (nPlace == itempart_horse)
+			bRet = TRUE;
+		break;
+	case equip_jadependant:
+		if (nPlace == itempart_jadependant)
+			bRet = TRUE;
+		break;
+	case equip_signet:
+		if (nPlace == itempart_signet)
+			bRet = TRUE;
+		break;
+	case equip_instrument:
+		if (nPlace == itempart_instrument)
 			bRet = TRUE;
 		break;
 	}
@@ -1597,7 +1666,10 @@ int KItemList::GetEquipEnhance(int nPlace)
 	for (int i = 0; i < MAX_ITEM_ACTIVE; i++)
 	{
 		// 看看激活这个装备的装备中是否相生这个装备
-		int nActivedEquip = m_EquipItem[ms_ActivedEquip[nPlace][i]];
+		int nActivePart = ms_ActivedEquip[nPlace][i];
+		if (nActivePart < 0 || nActivePart >= itempart_num)
+			continue;
+		int nActivedEquip = m_EquipItem[nActivePart];
 		if (nActivedEquip && Item[nActivedEquip].GetDurability() != 0)
 		{
 			if (g_IsAccrue(Item[nActivedEquip].GetSeries(), nSeries))

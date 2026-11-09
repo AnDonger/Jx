@@ -51,6 +51,11 @@ enum ITEM_PART
 	itempart_ring2,
 	itempart_pendant,
 	itempart_horse,
+	// 保留旧内部编号；新增部位不复用戒指、手镯，存档仍使用客户端栏位。
+	itempart_amulet2,
+	itempart_jadependant,
+	itempart_signet,
+	itempart_instrument,
 	itempart_num,
 };
 

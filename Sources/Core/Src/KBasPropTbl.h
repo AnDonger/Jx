@@ -545,6 +545,9 @@ protected:
 	KBPT_Equipment			m_BPTRing;
 	KBPT_Equipment			m_BPTCuff;
 	KBPT_Equipment			m_BPTPendant;
+	KBPT_Equipment			m_BPTJadePendant;
+	KBPT_Equipment			m_BPTSignet;
+	KBPT_Equipment			m_BPTInstrument;
 	
     KBPT_MagicAttrib_TF		m_BPTMagicAttrib;
 	// Add by flying
@@ -592,6 +595,7 @@ public:
 	const int					GetPendantRecordNumber() const;
 	const KBASICPROP_EQUIPMENT* GetHorseRecord(IN int) const;
 	const int					GetHorseRecordNumber() const;
+	int GetExtraEquipmentRecordNumber(int nDetailType) const;
 	const KBASICPROP_EQUIPMENT_UNIQUE* FindEquipmentUnique(IN int, IN int, IN int) const;
 	const KBASICPROP_MEDMATERIAL* GetMedMaterial(IN int) const;
 	const KBASICPROP_MEDMATERIAL* FindMedMaterial(IN int, IN int, IN int) const;

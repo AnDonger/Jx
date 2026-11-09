@@ -65,6 +65,9 @@ char*	TABFILE_EQUIPMENT[] =
 	TABFILE_CUFF,			//"Cuff.txt",
 	TABFILE_PENDANT,		//"Pendant.txt",
 	TABFILE_HORSE,			//"Horse.txt",
+	"JadePendant.txt",
+	"Signet.txt",
+	"Instrument.txt",
 };
 
 //int GetRandomNumber(int nMin, int nMax);
@@ -168,6 +171,18 @@ BOOL KLibOfBPT::Init(int nVersion)
 				return FALSE;
 			}
 			g_DebugLog("[Item] Optional item table is unavailable, table index=%d", i);
+		}
+	}
+
+	// 已恢复的新版原始装备表；保留旧表索引及原有可选物品表顺序。
+	KBPT_Equipment* pExtra[] = { &m_BPTJadePendant, &m_BPTSignet, &m_BPTInstrument };
+	for (int n = 0; n < sizeof(pExtra) / sizeof(pExtra[0]); n++)
+	{
+		pExtra[n]->Init(11 + n);
+		if (!pExtra[n]->Load(nVersion))
+		{
+			g_DebugLog("[Item] Required equipment table failed: %s", TABFILE_EQUIPMENT[11 + n]);
+			return FALSE;
 		}
 	}
 
@@ -451,10 +466,34 @@ const KBASICPROP_EQUIPMENT* KLibOfBPT::FindEquipment(int nDetailType,
 	case equip_horse:
 		pTable = &m_BPTHorse;
 		break;
+	case equip_jadependant:
+		pTable = &m_BPTJadePendant;
+		break;
+	case equip_signet:
+		pTable = &m_BPTSignet;
+		break;
+	case equip_instrument:
+		pTable = &m_BPTInstrument;
+		break;
 	default:
 		return NULL;
 	}
 	return pTable->FindRecord(nDetailType, nParticularType, nLevel);
+}
+
+int KLibOfBPT::GetExtraEquipmentRecordNumber(int nDetailType) const
+{
+	switch (nDetailType)
+	{
+	case equip_jadependant:
+		return m_BPTJadePendant.NumOfEntries();
+	case equip_signet:
+		return m_BPTSignet.NumOfEntries();
+	case equip_instrument:
+		return m_BPTInstrument.NumOfEntries();
+	default:
+		return 0;
+	}
 }
 
 const KBASICPROP_EQUIPMENT* KLibOfBPT::GetMeleeWeaponRecord(IN int i) const

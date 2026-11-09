@@ -2396,7 +2396,7 @@ typedef struct
 {
 	BYTE			ProtocolType;
 	DWORD			m_dwNpcID;
-	SViewItemInfo	m_sInfo[itempart_num];
+	SViewItemInfo	m_sInfo[11];	// 旧查看装备协议固定11项，不随服务端内部部位扩容。
 } VIEW_EQUIP_SYNC;				// s2c_viewequip
 
 typedef struct//该结构是所统计的玩家的基本数据

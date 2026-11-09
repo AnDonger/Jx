@@ -79,3 +79,11 @@ Resources/settings/ibshop.txt
 !Resources/ui/ui3/
 /Resources/ui/ui3/*
 !Resources/ui/ui3/随身物品.ini
+
+# Restored original equipment tables required by current client equipment slots.
+!Resources/settings/item/000/jadependant.txt
+!Resources/settings/item/000/signet.txt
+!Resources/settings/item/000/instrument.txt
+!Resources/settings/item/001/jadependant.txt
+!Resources/settings/item/001/signet.txt
+!Resources/settings/item/001/instrument.txt

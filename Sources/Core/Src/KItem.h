@@ -79,6 +79,10 @@ enum EQUIPDETAILTYPE
 	equip_cuff,
 	equip_pendant,
 	equip_horse,
+	equip_jadependant = 11,
+	// 当前资源的12类尚未确认，不映射到任何装备栏。
+	equip_signet = 13,
+	equip_instrument = 14,
 	equip_detailnum,
 };
 

@@ -83,7 +83,7 @@ void	KViewItem::GetData(BYTE* pMsg)
 		sPlayer.nData = 0;
 	}
 
-	for (i = 0; i < itempart_num; i ++)
+	for (i = 0; i < sizeof(pView->m_sInfo) / sizeof(pView->m_sInfo[0]); i ++)
 	{
 		if (pView->m_sInfo[i].m_nID == 0)
 			continue;

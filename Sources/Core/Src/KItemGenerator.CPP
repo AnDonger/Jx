@@ -125,6 +125,9 @@ BOOL KItemGenerator::Init()
 		case equip_horse:
 			m_EquipNumOfEntries[i] = m_BPTLib.GetHorseRecordNumber();
 			break;
+		default:
+			m_EquipNumOfEntries[i] = m_BPTLib.GetExtraEquipmentRecordNumber(i);
+			break;
 		}
 	}
 	m_MedNumOfEntries = m_BPTLib.GetMedicineRecordNumber();
@@ -204,7 +207,8 @@ BOOL KItemGenerator::Gen_Item(IN int nItemGenre,
 	case item_equip:
 		{
 			int nDetailType, nParticularType, i;
-			nDetailType = g_Random(equip_detailnum);
+			// 专用装备不加入旧随机掉落池，避免改变原掉落分布及抽到未确认的12类。
+			nDetailType = g_Random(equip_jadependant);
 			nParticularType = g_Random(m_EquipNumOfEntries[nDetailType] + 1);
 			int naryMALevel[6];
 			ZeroMemory(naryMALevel, 6 * sizeof(int));
@@ -333,6 +337,8 @@ BOOL KItemGenerator::Gen_MagicAttrib(
 
     _ASSERT(pnaryMALevel);
     _ASSERT(pnaryMA);
+	if (!pnaryMALevel || !pnaryMA || nType < 0 || nType >= MATF_CBDR)
+		return FALSE;
 
     for (i = 0; i < 6; i++) 
     {
