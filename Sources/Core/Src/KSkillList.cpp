@@ -22,6 +22,8 @@ KSkillList::KSkillList()
 	ZeroMemory(m_Skills, sizeof(NPCSKILL) * MAX_NPCSKILL);
 	m_nNpcIndex = 0;
 	memset(m_SkillBuffs, 0, sizeof(m_SkillBuffs));
+	m_nExpAuraId = 0;
+	m_nAuraExpFrames = 0;
 }
 
 KSkillList::~KSkillList()
@@ -285,7 +287,7 @@ BOOL KSkillList::CanCast(int nSkillID, DWORD dwTime)
 	return TRUE;
 }
 
-void KSkillList::SetNextCastTime(int nSkillID, DWORD dwTime)
+void KSkillList::SetNextCastTime(int nSkillID, DWORD dwTime, BOOL bSync)
 {
 //	m_Skills[nSkillID].NextCastTime = dwTime;
 //	return;
@@ -297,7 +299,122 @@ void KSkillList::SetNextCastTime(int nSkillID, DWORD dwTime)
 		return;
 	
 	m_Skills[i].NextCastTime = dwTime;
+#ifdef _SERVER
+	if (bSync)
+		SyncPlayerSkillCooldown(nSkillID);
+#endif
 }	
+#ifdef _SERVER
+DWORD KSkillList::GetPlayerSkillCooldownFrames(int nSkillID)
+{
+	int nIndex = FindSame(nSkillID);
+	if (!nIndex || m_nNpcIndex <= 0 || m_nNpcIndex >= MAX_NPC)
+		return 0;
+	int nWorld = Npc[m_nNpcIndex].m_SubWorldIndex;
+	if (nWorld < 0 || nWorld >= MAX_SUBWORLD)
+		return 0;
+	DWORD dwNow = SubWorld[nWorld].m_dwCurrentTime;
+	return m_Skills[nIndex].NextCastTime > dwNow ? m_Skills[nIndex].NextCastTime - dwNow : 0;
+}
+
+// 存档使用自1601年起的毫秒到期时间，避免把本次服务端世界帧写入下次会话。
+ULONGLONG KSkillList::GetPlayerSkillCooldownClock()
+{
+	FILETIME Time;
+	GetSystemTimeAsFileTime(&Time);
+	return (((ULONGLONG)Time.dwHighDateTime << 32) | Time.dwLowDateTime) / 10000;
+}
+
+ULONGLONG KSkillList::GetPlayerSkillCooldownEndTime(int nSkillID)
+{
+	DWORD dwFrames = GetPlayerSkillCooldownFrames(nSkillID);
+	if (!dwFrames)
+		return 0;
+	return GetPlayerSkillCooldownClock() + ((ULONGLONG)dwFrames * 1000 + 17) / 18;
+}
+
+BOOL KSkillList::RestorePlayerSkillCooldown(int nSkillID, ULONGLONG ullEndTime)
+{
+	int nIndex = FindSame(nSkillID);
+	if (!nIndex || m_nNpcIndex <= 0 || m_nNpcIndex >= MAX_NPC)
+		return FALSE;
+	int nWorld = Npc[m_nNpcIndex].m_SubWorldIndex;
+	if (nWorld < 0 || nWorld >= MAX_SUBWORLD)
+		return FALSE;
+	ULONGLONG ullNow = GetPlayerSkillCooldownClock();
+	DWORD dwFrames = 0;
+	if (ullEndTime > ullNow)
+	{
+		// 限制损坏存档的时间跨度，保证毫秒和世界帧转换不会溢出。
+		if (ullEndTime - ullNow > MAXDWORD)
+			return FALSE;
+		dwFrames = (DWORD)(((ullEndTime - ullNow) * 18 + 999) / 1000);
+	}
+	if (dwFrames > MAXDWORD - SubWorld[nWorld].m_dwCurrentTime)
+		return FALSE;
+	m_Skills[nIndex].NextCastTime = dwFrames ? SubWorld[nWorld].m_dwCurrentTime + dwFrames : 0;
+	return TRUE;
+}
+
+void KSkillList::SyncPlayerSkillCooldown(int nSkillID)
+{
+	if (m_nNpcIndex <= 0 || m_nNpcIndex >= MAX_NPC || !Npc[m_nNpcIndex].IsPlayer() || !g_pServer)
+		return;
+	DWORD dwFrames = GetPlayerSkillCooldownFrames(nSkillID);
+	if (!dwFrames)
+		return;
+	if (dwFrames > 0xffff)
+	{
+		SyncPlayerSkillCooldowns(nSkillID);
+		return;
+	}
+	int nPlayer = Npc[m_nNpcIndex].GetPlayerIdx();
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || Player[nPlayer].m_nNetConnectIdx < 0)
+		return;
+	GAME_SKILL_COOLDOWN_SYNC Sync;
+	memset(&Sync, 0, sizeof(Sync));
+	Sync.ProtocolType = 0xf8;
+	Sync.Length = sizeof(Sync) - 1;
+	Sync.SubType = 0x2d;
+	Sync.SkillId = nSkillID;
+	Sync.unknown_1 = 1;
+	Sync.RemainingFrames = (WORD)dwFrames;
+	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Sync, sizeof(Sync));
+	// 新客户端F8/2D采用本地预计算值，效果帧先后不同会读到旧值。
+	// F8/4B直接写入服务器到期帧，紧接着校正本次技能，避免依赖客户端动作时序。
+	SyncPlayerSkillCooldowns(nSkillID);
+}
+
+BOOL KSkillList::SyncPlayerSkillCooldowns(int nSkillID)
+{
+	if (m_nNpcIndex <= 0 || m_nNpcIndex >= MAX_NPC || !Npc[m_nNpcIndex].IsPlayer() || !g_pServer)
+		return FALSE;
+	int nPlayer = Npc[m_nNpcIndex].GetPlayerIdx();
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || Player[nPlayer].m_nNetConnectIdx < 0)
+		return FALSE;
+	BYTE Data[sizeof(GAME_SKILL_COOLDOWN_LIST_HEADER) + MAX_NPCSKILL * sizeof(GAME_SKILL_COOLDOWN_RECORD) + 1];
+	memset(Data, 0, sizeof(Data));
+	GAME_SKILL_COOLDOWN_LIST_HEADER* pHeader = (GAME_SKILL_COOLDOWN_LIST_HEADER*)Data;
+	GAME_SKILL_COOLDOWN_RECORD* pRecords = (GAME_SKILL_COOLDOWN_RECORD*)(Data + sizeof(*pHeader));
+	pHeader->ProtocolType = 0xf8;
+	pHeader->SubType = 0x4b;
+	for (int i = 1; i < MAX_NPCSKILL; i++)
+	{
+		if (m_Skills[i].SkillId <= 0 || (nSkillID && m_Skills[i].SkillId != nSkillID))
+			continue;
+		GAME_SKILL_COOLDOWN_RECORD& Record = pRecords[pHeader->Count++];
+		Record.SkillId = (WORD)m_Skills[i].SkillId;
+		Record.NextCastFrame = GetPlayerSkillCooldownFrames(m_Skills[i].SkillId) ? m_Skills[i].NextCastTime : 0;
+	}
+	if (nSkillID && !pHeader->Count)
+		return FALSE;
+	// 正式服列表在Count条记录后还有1字节unknown_1；客户端未读取，保留样本中的0。
+	int nSize = sizeof(*pHeader) + pHeader->Count * sizeof(*pRecords) + 1;
+	pHeader->Length = (WORD)(nSize - 1);
+	return SUCCEEDED(g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, Data, nSize));
+}
+#endif
+
 #ifndef _SERVER
 int	KSkillList::GetSkillSortList(KUiSkillData * pSkillList)
 {
@@ -829,8 +946,22 @@ BOOL KSkillList::IncreasePlayerSkillExp(int nSkillID, DWORD dwExp)
 	while (Skill.SkillLevel < nMaxLevel && Skill.TotalExp >= pRule->LevelExp[Skill.SkillLevel])
 		Skill.SkillLevel++;
 	if (nOldLevel != Skill.SkillLevel)
+	{
 		RefreshPlayerSkillLevels();
-	SyncPlayerSkill(nIndex);
+		SyncPlayerSkill(nIndex);
+	}
+	else if (m_nNpcIndex > 0 && Npc[m_nNpcIndex].IsPlayer() && g_pServer)
+	{
+		int nPlayer = Npc[m_nNpcIndex].GetPlayerIdx();
+		if (nPlayer > 0 && nPlayer < MAX_PLAYER && Player[nPlayer].m_nNetConnectIdx >= 0)
+		{
+			GAME_SKILL_EXP_SYNC Sync;
+			Sync.ProtocolType = 0xB9;
+			Sync.SkillId = Skill.SkillId;
+			Sync.TotalExp = Skill.TotalExp;
+			g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Sync, sizeof(Sync));
+		}
+	}
 	return TRUE;
 }
 
@@ -849,8 +980,59 @@ void KSkillList::AddMonsterSkillExp(int nExp)
 		if (!IsPlayerSkillLearned(m_Skills[i].SkillId))
 			continue;
 		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId, m_Skills[i].CurrentSkillLevel);
-		if (pSkill && !pSkill->IsTargetEnemy())
+		if (pSkill && !pSkill->IsTargetEnemy() && !pSkill->IsAura() && !pSkill->IsElementalMastery())
 			IncreasePlayerSkillExp(m_Skills[i].SkillId, dwExp);
+	}
+}
+
+// 命中修炼依据原技能伤害类型，不能让装备附带伤害训练无关的精通。
+void KSkillList::AddHitSkillExp(int nSkillID)
+{
+	KSkill* pAttack = (KSkill*)g_SkillManager.GetSkill(nSkillID, GetCurrentLevel(nSkillID));
+	if (!pAttack || !pAttack->IsTargetEnemy())
+		return;
+	DWORD dwExp = g_SkillManager.GetHitSkillExpRate() * GetSkillExpMultiplier();
+	IncreasePlayerSkillExp(nSkillID, dwExp);
+	for (int i = 1; i < MAX_NPCSKILL; i++)
+	{
+		if (!IsPlayerSkillLearned(m_Skills[i].SkillId))
+			continue;
+		KSkill* pPassive = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId, m_Skills[i].CurrentSkillLevel);
+		if (pPassive && pPassive->EnhancesSkillDamage(pAttack))
+			IncreasePlayerSkillExp(m_Skills[i].SkillId, dwExp);
+	}
+}
+
+void KSkillList::ResetAuraSkillExp()
+{
+	m_nExpAuraId = 0;
+	m_nAuraExpFrames = 0;
+}
+
+void KSkillList::UpdateAuraSkillExp()
+{
+	if (m_nNpcIndex <= 0 || !Npc[m_nNpcIndex].IsPlayer())
+		return;
+	KNpc& Owner = Npc[m_nNpcIndex];
+	int nSkillID = Owner.m_ActiveAuraID;
+	KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(nSkillID, GetCurrentLevel(nSkillID));
+	if (!pSkill || !pSkill->IsAura() || !IsPlayerSkillLearned(nSkillID) ||
+		Owner.m_RegionIndex < 0 || Owner.m_bExchangeServer || Owner.m_CurrentLife <= 0 ||
+		Owner.m_Doing == do_death || Owner.m_Doing == do_revive)
+	{
+		ResetAuraSkillExp();
+		return;
+	}
+	if (m_nExpAuraId != nSkillID)
+	{
+		ResetAuraSkillExp();
+		m_nExpAuraId = nSkillID;
+	}
+	// GameServer 为18帧/秒；只累计实际激活帧，不补算离线和切图等待时间。
+	if (++m_nAuraExpFrames >= 18 * 10)
+	{
+		m_nAuraExpFrames = 0;
+		IncreasePlayerSkillExp(nSkillID, GetSkillExpMultiplier());
 	}
 }
 

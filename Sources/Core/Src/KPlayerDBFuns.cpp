@@ -40,6 +40,16 @@ struct PLAYER_SKILL_EXT_RECORD
 	DWORD TotalExp;
 };
 
+// SPG1版本3只扩展技能记录；旧版1/2的12字节记录和宠物数据仍可读取。
+struct PLAYER_SKILL_EXT_RECORD_V3
+{
+	PLAYER_SKILL_EXT_RECORD Skill;
+	DWORD CooldownEndLow;
+	DWORD CooldownEndHigh;
+};
+
+static_assert(sizeof(PLAYER_SKILL_EXT_RECORD_V3) == 20, "SPG1 v3 skill record");
+
 static const DWORD PLAYER_SKILL_EXT_MAGIC = 0x31475053; // SPG1
 
 static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, KPlayer& Player)
@@ -55,14 +65,16 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	const BYTE* pData = (const BYTE*)pRole + dwOffset;
 	PLAYER_SKILL_EXT_HEADER Header;
 	memcpy(&Header, pData, sizeof(Header));
-	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version != 1 && Header.Version != 2) ||
-		Header.SkillCount != pRole->nFightSkillCount || Header.BuffCount > 16 ||
-		dwLength != sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD) +
+	DWORD dwRecordSize = Header.Version == 3 ? sizeof(PLAYER_SKILL_EXT_RECORD_V3) : sizeof(PLAYER_SKILL_EXT_RECORD);
+	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 3) ||
+		Header.SkillCount != pRole->nFightSkillCount || Header.SkillCount >= MAX_NPCSKILL || Header.BuffCount > 16 ||
+		dwLength != sizeof(Header) + Header.SkillCount * dwRecordSize +
 		Header.BuffCount * sizeof(PLAYER_SKILL_BUFF) +
-		(Header.Version == 2 ? sizeof(PLAYER_PET_DATA) : 0))
+		(Header.Version >= 2 ? sizeof(PLAYER_PET_DATA) : 0))
 		return FALSE;
 	BOOL Seen[MAX_NPCSKILL];
 	PLAYER_SKILL_EXT_RECORD Records[MAX_NPCSKILL];
+	ULONGLONG Cooldowns[MAX_NPCSKILL] = {};
 	PLAYER_SKILL_BUFF Buffs[16];
 	memset(Seen, 0, sizeof(Seen));
 	memset(Records, 0, sizeof(Records));
@@ -72,10 +84,19 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	{
 		PLAYER_SKILL_EXT_RECORD Record;
 		memcpy(&Record, pData, sizeof(Record));
-		pData += sizeof(Record);
 		int nIndex = List.FindSame(Record.SkillId);
 		if (!nIndex || Seen[nIndex] || Record.SkillStatus < 1 || Record.SkillStatus > 4)
 			return FALSE;
+		if (Header.Version == 3)
+		{
+			PLAYER_SKILL_EXT_RECORD_V3 RecordV3;
+			memcpy(&RecordV3, pData, sizeof(RecordV3));
+			Cooldowns[nIndex] = ((ULONGLONG)RecordV3.CooldownEndHigh << 32) | RecordV3.CooldownEndLow;
+			ULONGLONG ullNow = KSkillList::GetPlayerSkillCooldownClock();
+			if (Cooldowns[nIndex] > ullNow && Cooldowns[nIndex] - ullNow > MAXDWORD)
+				return FALSE;
+		}
+		pData += dwRecordSize;
 		Seen[nIndex] = TRUE;
 		Records[nIndex] = Record;
 	}
@@ -118,7 +139,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	}
 	PLAYER_PET_DATA Pet;
 	ZeroMemory(&Pet, sizeof(Pet));
-	if (Header.Version == 2)
+	if (Header.Version >= 2)
 	{
 		memcpy(&Pet, pData, sizeof(Pet));
 		if (Pet.Type)
@@ -134,6 +155,18 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 			ZeroMemory(&Empty, sizeof(Empty));
 			if (memcmp(&Pet, &Empty, sizeof(Pet)))
 				return FALSE;
+		}
+	}
+	DWORD PreviousCastTimes[MAX_NPCSKILL];
+	for (int i = 0; i < MAX_NPCSKILL; i++)
+		PreviousCastTimes[i] = List.m_Skills[i].NextCastTime;
+	for (int i = 1; i < MAX_NPCSKILL; i++)
+	{
+		if (Seen[i] && !List.RestorePlayerSkillCooldown(Records[i].SkillId, Cooldowns[i]))
+		{
+			for (int j = 0; j < MAX_NPCSKILL; j++)
+				List.m_Skills[j].NextCastTime = PreviousCastTimes[j];
+			return FALSE;
 		}
 	}
 	Player.m_Pet = Pet;
@@ -164,8 +197,8 @@ static int SavePlayerSkillExtension(KSkillList& List, const PLAYER_PET_DATA& Pet
 		if (List.m_SkillBuffs[i].BuffId && List.m_SkillBuffs[i].EndTime > dwNow)
 			dwBuffCount++;
 	}
-	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 2, List.GetCount(), dwBuffCount};
-	DWORD dwSize = sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD) +
+	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 3, List.GetCount(), dwBuffCount};
+	DWORD dwSize = sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD_V3) +
 		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet);
 	if (dwSize > dwCapacity)
 		return -1;
@@ -176,7 +209,9 @@ static int SavePlayerSkillExtension(KSkillList& List, const PLAYER_PET_DATA& Pet
 		const NPCSKILL& Skill = List.m_Skills[i];
 		if (!Skill.SkillId)
 			continue;
-		PLAYER_SKILL_EXT_RECORD Record = {(DWORD)Skill.SkillId, Skill.SkillStatus, Skill.TotalExp};
+		ULONGLONG ullEndTime = List.GetPlayerSkillCooldownEndTime(Skill.SkillId);
+		PLAYER_SKILL_EXT_RECORD_V3 Record = {{(DWORD)Skill.SkillId, Skill.SkillStatus, Skill.TotalExp},
+			(DWORD)ullEndTime, (DWORD)(ullEndTime >> 32)};
 		memcpy(pData, &Record, sizeof(Record));
 		pData += sizeof(Record);
 	}

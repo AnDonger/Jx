@@ -98,6 +98,7 @@ enum DAMAGE_TYPE
 	damage_light,			// 闪电伤害
 	damage_poison,			// 毒素伤害
 	damage_magic,			// 无属性伤害
+	damage_earth,
 	damage_num,				// 伤害类型数目
 };
 
@@ -263,6 +264,9 @@ public:
 	int					m_CurrentExDefend;
 	int					m_CurrentDefend;		// Npc的当前防御
 
+	int m_CurrentEarthResist;
+	int m_CurrentEarthResistMax;
+	int m_CurrentEarthEnhance;
 	int					m_CurrentFireResist;	// Npc的当前火抗性
 	int					m_CurrentColdResist;	// Npc的当前冰抗性
 	int					m_CurrentPoisonResist;	// Npc的当前毒抗性
@@ -361,6 +365,8 @@ public:
 	int					m_StaminaLoss;			// Npc的体力下降速度
 	int					m_AttackRating;			// Npc的命中率
 	int					m_Defend;				// Npc的防御
+	int m_EarthResist;
+	int m_EarthResistMax;
 	int					m_FireResist;			// Npc的火抗性
 	int					m_ColdResist;			// Npc的冷抗性
 	int					m_PoisonResist;			// Npc的毒抗性

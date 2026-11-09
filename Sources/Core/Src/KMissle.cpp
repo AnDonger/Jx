@@ -1071,8 +1071,7 @@ BOOL KMissle::ProcessDamage(int nNpcId)
 				Npc[nNpcId].m_CurrentLife < nOldLife)
 			{
 				KSkillList& Skills = Npc[m_nLauncher].m_SkillList;
-				Skills.IncreasePlayerSkillExp(m_nExpSkillId,
-				g_SkillManager.GetHitSkillExpRate() * Skills.GetSkillExpMultiplier());
+				Skills.AddHitSkillExp(m_nExpSkillId);
 			}
 			if (m_pMagicAttribsData->m_nStateMagicAttribsNum > 0)
 				Npc[nNpcId].SetStateSkillEffect(m_nLauncher, m_nSkillId, m_nLevel, m_pMagicAttribsData->m_pStateMagicAttribs, m_pMagicAttribsData->m_nStateMagicAttribsNum, m_pMagicAttribsData->m_pStateMagicAttribs[0].nValue[1]);

@@ -57,6 +57,7 @@ public:
 	int		m_Treasure;
 	int		m_AiMode;
 	int		m_AiParam[MAX_AI_PARAM - 1];
+	int m_EarthResistMax;
 	int		m_FireResistMax;
 	int		m_ColdResistMax;
 	int		m_LightResistMax;
@@ -77,6 +78,7 @@ public:
 	int		m_RedLum;
 	int		m_GreenLum;
 	int		m_BlueLum;
+	int m_EarthResist;
 	int		m_FireResist;
 	int		m_ColdResist;
 	int		m_LightResist;

@@ -179,6 +179,10 @@ enum MAGIC_ATTRIB
 	magic_attackratingenhance_v,
 	magic_attackratingenhance_p,
 	magic_addexdefense_v,
+	magic_earthdamage_v,
+	magic_earthenhance_p,
+	magic_earthres_p,
+	magic_earthresmax_p,
 	magic_normal_end,
 };
 

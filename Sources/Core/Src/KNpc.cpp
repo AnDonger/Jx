@@ -564,6 +564,15 @@ void KNpc::ProcCommand(int nAI)
 		case do_skill:
 			if (int nSkillIdx = m_SkillList.FindSame(m_Command.Param_X))
 			{
+				if (!m_SkillList.CanCast(m_Command.Param_X, SubWorld[m_SubWorldIndex].m_dwCurrentTime))
+				{
+#ifdef _SERVER
+					// 冷却内请求只补同步真实到期帧，不再次施法、扣蓝或延长冷却。
+					if (m_SkillList.GetPlayerSkillCooldownFrames(m_Command.Param_X))
+						m_SkillList.SyncPlayerSkillCooldowns(m_Command.Param_X);
+#endif
+					break;
+				}
 				SetActiveSkill(nSkillIdx);
 				DoSkill(m_Command.Param_Y, m_Command.Param_Z);
 			}
@@ -621,6 +630,9 @@ void KNpc::ProcCommand(int nAI)
 BOOL KNpc::ProcessState()
 {
 	int nRet = FALSE;
+#ifdef _SERVER
+	m_SkillList.UpdateAuraSkillExp();
+#endif
 	if (m_RegionIndex < 0)
 		return FALSE;
 
@@ -670,7 +682,7 @@ BOOL KNpc::ProcessState()
 #endif
 		// 光环技能
 	
-		if (m_ActiveAuraID)
+		if (m_ActiveAuraID && m_CurrentLife > 0 && m_Doing != do_death && m_Doing != do_revive)
 		{
 			int nLevel = m_SkillList.GetCurrentLevel(m_ActiveAuraID);
 			if (nLevel > 0)
@@ -729,7 +741,7 @@ BOOL KNpc::ProcessState()
 					KSkill * pOrdinSkill2 = (KSkill *) g_SkillManager.GetSkill(nChildSkillId, nLevel);
 					if (pOrdinSkill2)
                     {
-						pOrdinSkill2->ApplyStateSkill(m_Index);
+						pOrdinSkill2->ApplyAuraSkill(m_Index);
                     }
 				}
 			}
@@ -980,6 +992,9 @@ void KNpc::DoDeath(int nMode/* = 0*/)
 	m_Doing = do_death;
 	m_ProcessAI	= 0;
 	m_ProcessState = 0;
+#ifdef _SERVER
+	m_SkillList.ResetAuraSkillExp();
+#endif
 
 	m_Frames.nTotalFrame = m_DeathFrame;
 	m_Frames.nCurrentFrame = 0;
@@ -1667,8 +1682,15 @@ void KNpc::DoSkill(int nX, int nY)
 	{
 		eSkillStyle eStyle = (eSkillStyle)pSkill->GetSkillStyle();
 
-		if (m_SkillList.CanCast(m_ActiveSkillID, SubWorld[m_SubWorldIndex].m_dwCurrentTime)
-			&& pSkill->CanCastSkill(m_Index, nX, nY) 
+		if (!m_SkillList.CanCast(m_ActiveSkillID, SubWorld[m_SubWorldIndex].m_dwCurrentTime))
+		{
+#ifdef _SERVER
+			if (m_SkillList.GetPlayerSkillCooldownFrames(m_ActiveSkillID))
+				m_SkillList.SyncPlayerSkillCooldowns(m_ActiveSkillID);
+#endif
+			return;
+		}
+		if (pSkill->CanCastSkill(m_Index, nX, nY)
 			&& 
 			( m_Kind != kind_player 
 			|| Cost(pSkill->GetSkillCostType(), pSkill->GetSkillCost(this))
@@ -1676,6 +1698,14 @@ void KNpc::DoSkill(int nX, int nY)
 			)
 		{
 #ifdef _SERVER
+			// 效果帧到达前也必须拒绝同一冷却技能，避免重复扣内力和重置动作。
+			if (((KSkill*)pSkill)->GetDelayPerCast() > 0)
+			{
+				m_SkillList.SetNextCastTime(m_ActiveSkillID,
+					SubWorld[m_SubWorldIndex].m_dwCurrentTime + ((KSkill*)pSkill)->GetDelayPerCast(), FALSE);
+				// 即使施法动作随后中断，已预留的冷却也必须让客户端可见。
+				m_SkillList.SyncPlayerSkillCooldowns(m_ActiveSkillID);
+			}
 			if (IsPlayer() && m_nPlayerIdx > 0)
 				Player[m_nPlayerIdx].m_ItemList.Abrade(enumAbradeAttack);
 #endif
@@ -2424,6 +2454,10 @@ void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL
 		nMax = m_CurrentRangeDmgRetPercent;
 		m_nLastPoisonDamageIdx = nAttacker;
 		break;
+	case damage_earth:
+		nRes = min(m_CurrentEarthResist, min(m_CurrentEarthResistMax, MAX_RESIST));
+		nMax = m_CurrentRangeDmgRetPercent;
+		break;
 	case damage_magic:
 		g_DebugLog("[数值]%s受到%d点原始魔法伤害", Name, nDamage);
 		nRes = 0;
@@ -2581,6 +2615,8 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 	m_PoisonState.nTime = m_PoisonState.nTime * (100 - m_CurrentPoisonTimeReducePercent) / 100;
 	pTemp++;
 	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_magic, bIsMelee, bDoHurt);
+	pTemp++;
+	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_earth, bIsMelee, bDoHurt);
 	m_nPeopleIdx = nLauncher;
 
 	if (IsPlayer() && (m_CurrentLife - nLife < 0))
@@ -2679,7 +2715,7 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 	{
 		pDes->nAttribType = magic_colddamage_v;
 		pDes->nValue[0] = pTemp->nValue[0];
-		pDes->nValue[1] = pTemp->nValue[1] + m_CurrentColdEnhance;
+		pDes->nValue[1] = pTemp->nValue[1] * (100 + m_CurrentColdEnhance) / 100;
 		pDes->nValue[2] = pTemp->nValue[2];
 	}
 	if (bIsPhysical)
@@ -2692,10 +2728,10 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 	pDes++;
 	if (pTemp->nAttribType == magic_firedamage_v)
 	{
-		// How to use FireEnhance???
+		// 原资源说明：精通火系增加火伤害上限。
 		pDes->nAttribType = magic_firedamage_v;
 		pDes->nValue[0] = pTemp->nValue[0];
-		pDes->nValue[2] = pTemp->nValue[2];
+		pDes->nValue[2] = pTemp->nValue[2] * (100 + m_CurrentFireEnhance) / 100;
 	}
 	if (bIsPhysical)
 	{
@@ -2738,6 +2774,14 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 		pDes->nAttribType = magic_magicdamage_v;
 		pDes->nValue[0] = pTemp->nValue[0];
 		pDes->nValue[2] = pTemp->nValue[2];
+	}
+	pTemp++;
+	pDes++;
+	if (pTemp->nAttribType == magic_earthdamage_v)
+	{
+		pDes->nAttribType = magic_earthdamage_v;
+		pDes->nValue[0] = pTemp->nValue[0];
+		pDes->nValue[2] = pTemp->nValue[2] * (100 + m_CurrentEarthEnhance) / 100;
 	}
 }
 
@@ -3388,7 +3432,11 @@ void KNpc::SetAuraSkill(int nSkillID)
 	else
 	{
 		nCurLevel = m_SkillList.GetCurrentLevel(nSkillID);
-		if (nCurLevel <= 0) 
+		if (nCurLevel <= 0
+#ifdef _SERVER
+			|| (IsPlayer() && !m_SkillList.IsPlayerSkillLearned(nSkillID))
+#endif
+			)
         {
             nSkillID = 0;
         }
@@ -3397,13 +3445,16 @@ void KNpc::SetAuraSkill(int nSkillID)
 			_ASSERT(nSkillID < MAX_SKILL && nCurLevel < MAX_SKILLLEVEL);
 			
 			KSkill * pOrdinSkill = (KSkill *)g_SkillManager.GetSkill(nSkillID, nCurLevel);
-            if (!pOrdinSkill || (!pOrdinSkill->IsAura() &&
-				pOrdinSkill->GetSkillStyle() != SKILL_SS_InitiativeNpcState))
+            if (!pOrdinSkill || !pOrdinSkill->IsAura())
 			{
 				nSkillID  = 0;
 			}
 		}
 	}
+#ifdef _SERVER
+	if (m_ActiveAuraID != nSkillID)
+		m_SkillList.ResetAuraSkillExp();
+#endif
 	m_ActiveAuraID = nSkillID;
 
 #ifdef _SERVER
@@ -4283,6 +4334,23 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 			if (pNode->m_Level == nLevel)
 			{
 				pNode->m_LeftTime = nTime;
+				// 护盾另有实际伤害计时器，重施时须与状态持续时间一起刷新。
+				// 累加型属性保持不变，避免光环周期刷新时重复叠加。
+				pTemp = (KMagicAttrib*)pData;
+				for (int i = 0; i < nDataNum; i++)
+				{
+					switch (pTemp[i].nAttribType)
+					{
+					case magic_manashield_p:
+					case magic_physicsarmor_v:
+					case magic_coldarmor_v:
+					case magic_firearmor_v:
+					case magic_lightingarmor_v:
+					case magic_poisonarmor_v:
+						ModifyAttrib(nLauncher, &pTemp[i]);
+						break;
+					}
+				}
 			}
 			else
 			{
@@ -4876,6 +4944,7 @@ void	KNpc::LoadDataFromTemplate(int nNpcTemplateId, int nLevel)
 		m_AiParam[MAX_AI_PARAM - 1] = nMaxRadius * nMaxRadius;
 	}
 
+	m_EarthResistMax = pNpcTemp->m_EarthResistMax;
 	m_FireResistMax			= pNpcTemp->m_FireResistMax;
 	m_ColdResistMax			= pNpcTemp->m_ColdResistMax;
 	m_LightResistMax		= pNpcTemp->m_LightResistMax;
@@ -4897,6 +4966,7 @@ void	KNpc::LoadDataFromTemplate(int nNpcTemplateId, int nLevel)
 	m_RedLum				= pNpcTemp->m_RedLum;
 	m_GreenLum				= pNpcTemp->m_GreenLum;
 	m_BlueLum				= pNpcTemp->m_BlueLum;
+	m_EarthResist = pNpcTemp->m_EarthResist;
 	m_FireResist			= pNpcTemp->m_FireResist;
 	m_ColdResist			= pNpcTemp->m_ColdResist;
 	m_LightResist			= pNpcTemp->m_LightResist;
@@ -5603,6 +5673,9 @@ void	KNpc::RestoreNpcBaseInfo()
 	m_CurrentExDefend = m_ExDefend;
 	m_CurrentDefend			= m_Defend;
 
+	m_CurrentEarthResist = m_EarthResist;
+	m_CurrentEarthResistMax = m_EarthResistMax;
+	m_CurrentEarthEnhance = 0;
 	m_CurrentFireResist		= m_FireResist;
 	m_CurrentColdResist		= m_ColdResist;
 	m_CurrentPoisonResist	= m_PoisonResist;

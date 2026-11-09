@@ -134,6 +134,8 @@ inline int	KSkill::Param2PCoordinate(int nLauncher, int nParam1, int nParam2 , i
 BOOL KSkill::CanCastSkill(int nLauncher, int &nParam1, int &nParam2)  const 
 {
 	//对自已的主动辅助技能
+	if (Npc[nLauncher].IsPlayer() && (m_bIsAura || m_eSkillStyle == SKILL_SS_PassivityNpcState))
+		return FALSE;
 	if (m_bTargetSelf && nParam1 != -1) 
 	{
 		nParam1 = -1;
@@ -2306,6 +2308,97 @@ BOOL KSkill::ApplyStateSkill(int nLauncher) const
 	return CastInitiativeSkill(nLauncher, -1, nLauncher, 0);
 }
 
+// 光环关系与半径来自子技能原表，复用区域索引，避免遍历全服NPC。
+BOOL KSkill::ApplyAuraSkill(int nLauncher) const
+{
+#ifdef _SERVER
+	if (nLauncher <= 0 || nLauncher >= MAX_NPC || m_nStateAttribsNum <= 0 ||
+		(!m_bTargetSelf && !m_bTargetAlly) || m_bTargetEnemy)
+		return FALSE;
+	KNpc& Owner = Npc[nLauncher];
+	if (Owner.m_SubWorldIndex < 0 || Owner.m_SubWorldIndex >= MAX_SUBWORLD ||
+		Owner.m_RegionIndex < 0 || Owner.m_CurrentLife <= 0 ||
+		Owner.m_Doing == do_death || Owner.m_Doing == do_revive)
+		return FALSE;
+	KSubWorld& World = SubWorld[Owner.m_SubWorldIndex];
+	int nWidth = World.m_nRegionWidth * World.m_nCellWidth;
+	int nHeight = World.m_nRegionHeight * World.m_nCellHeight;
+	if (nWidth <= 0 || nHeight <= 0 || m_nAttackRadius < 0)
+		return FALSE;
+	int nX, nY;
+	Owner.GetMpsPos(&nX, &nY);
+	BOOL bApplied = FALSE;
+	for (int y = max(0, nY - m_nAttackRadius) / nHeight; y <= (nY + m_nAttackRadius) / nHeight; y++)
+	{
+		for (int x = max(0, nX - m_nAttackRadius) / nWidth; x <= (nX + m_nAttackRadius) / nWidth; x++)
+		{
+			int nRegion = World.FindRegion(MAKELONG(x, y));
+			if (nRegion < 0)
+				continue;
+			KIndexNode* pNode = (KIndexNode*)World.m_Region[nRegion].m_NpcList.GetHead();
+			while (pNode)
+			{
+				int nTarget = pNode->m_nIndex;
+				pNode = (KIndexNode*)pNode->GetNext();
+				if (nTarget <= 0 || nTarget >= MAX_NPC || Npc[nTarget].m_SubWorldIndex != Owner.m_SubWorldIndex ||
+					Npc[nTarget].m_RegionIndex < 0 || Npc[nTarget].m_bExchangeServer ||
+					Npc[nTarget].m_CurrentLife <= 0 || Npc[nTarget].m_Doing == do_death ||
+					Npc[nTarget].m_Doing == do_revive)
+					continue;
+				int nDistance = NpcSet.GetDistanceSquare(nLauncher, nTarget);
+				if (nDistance >= 0 && (LONGLONG)nDistance <= (LONGLONG)m_nAttackRadius * m_nAttackRadius &&
+					CastInitiativeSkill(nLauncher, -1, nTarget, 0))
+					bApplied = TRUE;
+			}
+		}
+	}
+	return bApplied;
+#else
+	return ApplyStateSkill(nLauncher);
+#endif
+}
+
+BOOL KSkill::IsElementalMastery() const
+{
+	if (m_eSkillStyle != SKILL_SS_PassivityNpcState)
+		return FALSE;
+	for (int i = 0; i < m_nStateAttribsNum; i++)
+	{
+		int nType = m_StateAttribs[i].nAttribType;
+		if (nType == magic_coldenhance_p || nType == magic_fireenhance_p ||
+			nType == magic_lightingenhance_p || nType == magic_poisonenhance_p || nType == magic_earthenhance_p)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+BOOL KSkill::EnhancesSkillDamage(const KSkill* pAttack) const
+{
+	if (!pAttack || !IsElementalMastery())
+		return FALSE;
+	for (int i = 0; i < m_nStateAttribsNum; i++)
+	{
+		int nDamageType = 0;
+		switch (m_StateAttribs[i].nAttribType)
+		{
+		case magic_coldenhance_p: nDamageType = magic_colddamage_v; break;
+		case magic_fireenhance_p: nDamageType = magic_firedamage_v; break;
+		case magic_lightingenhance_p: nDamageType = magic_lightingdamage_v; break;
+		case magic_poisonenhance_p: nDamageType = magic_poisondamage_v; break;
+		case magic_earthenhance_p: nDamageType = magic_earthdamage_v; break;
+		}
+		if (!nDamageType)
+			continue;
+		for (int j = 0; j < MAX_MISSLE_DAMAGEATTRIB; j++)
+		{
+			if (pAttack->m_DamageAttribs[j].nAttribType == nDamageType &&
+				(pAttack->m_DamageAttribs[j].nValue[0] > 0 || pAttack->m_DamageAttribs[j].nValue[2] > 0))
+				return TRUE;
+		}
+	}
+	return FALSE;
+}
+
 BOOL KSkill::CastInitiativeSkill(int nLauncher, int nParam1, int nParam2, int nWaitTime)  const 
 {
 	
@@ -2411,6 +2504,16 @@ BOOL	KSkill::ParseString2MagicAttrib(unsigned long ulLevel, char * szMagicAttrib
 			//sscanf(szValue, "%d,%d,%d", &nValue1, &nValue2, &nValue3);
 
 
+			// 土系为当前资源新增的独立伤害，不占用旧毒伤或无属性伤害槽。
+			if (i == magic_earthdamage_v)
+			{
+				m_DamageAttribs[8].nAttribType = i;
+				m_DamageAttribs[8].nValue[0] = nValue1;
+				m_DamageAttribs[8].nValue[1] = nValue2;
+				m_DamageAttribs[8].nValue[2] = nValue3;
+				m_nDamageAttribsNum++;
+				return TRUE;
+			}
 			if (i > magic_missle_begin && i < magic_missle_end)
 			{
 				m_MissleAttribs[m_nMissleAttribsNum].nAttribType = i;

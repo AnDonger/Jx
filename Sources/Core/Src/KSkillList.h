@@ -38,6 +38,8 @@ public:
 	NPCSKILL	m_Skills[MAX_NPCSKILL];//下标从1开始，0为无效index
 	int			m_nNpcIndex;
 	PLAYER_SKILL_BUFF m_SkillBuffs[16];
+	int m_nExpAuraId;
+	int m_nAuraExpFrames;
 public:
 	KSkillList();
 	~KSkillList();
@@ -100,6 +102,8 @@ public:
 	{
 		memset(m_Skills, 0, sizeof(m_Skills));
 		memset(m_SkillBuffs, 0, sizeof(m_SkillBuffs));
+		m_nExpAuraId = 0;
+		m_nAuraExpFrames = 0;
 	};
 #ifndef _SERVER
 	void		SetSkillLevel(int nId, int nLevel);
@@ -121,7 +125,7 @@ public:
 	int			FindSame(int nSkillID);
 	int			FindFree();
 	BOOL		CanCast(int nSkillID, DWORD dwTime);
-	void		SetNextCastTime(int nSkillID, DWORD dwTime);
+	void		SetNextCastTime(int nSkillID, DWORD dwTime, BOOL bSync = TRUE);
 	
 	int			GetSkillId(int nListIndex)
 	{
@@ -139,6 +143,15 @@ public:
 	BOOL	LearnPlayerSkill(int nSkillID);
 	BOOL	IncreasePlayerSkillExp(int nSkillID, DWORD dwExp);
 	void	AddMonsterSkillExp(int nExp);
+	void	AddHitSkillExp(int nSkillID);
+	void	UpdateAuraSkillExp();
+	void	ResetAuraSkillExp();
+	DWORD GetPlayerSkillCooldownFrames(int nSkillID);
+	static ULONGLONG GetPlayerSkillCooldownClock();
+	ULONGLONG GetPlayerSkillCooldownEndTime(int nSkillID);
+	BOOL RestorePlayerSkillCooldown(int nSkillID, ULONGLONG ullEndTime);
+	void SyncPlayerSkillCooldown(int nSkillID);
+	BOOL SyncPlayerSkillCooldowns(int nSkillID = 0);
 	void	SyncPlayerSkill(int nIndex);
 	void	RefreshPlayerSkillLevels();
 	BOOL	AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, int nValue, BOOL bAddTime);

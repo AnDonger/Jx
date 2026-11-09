@@ -231,6 +231,31 @@ struct GAME_SKILL_SYNC_DATA
 	DWORD TotalExp;
 };
 
+// 当前客户端扩展技能冷却：F8/2D为相对剩余帧，F8/4B为绝对世界帧列表。
+struct GAME_SKILL_COOLDOWN_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	DWORD SkillId;
+	BYTE unknown_1; // 正式服为1，客户端以该字段大于0作为处理条件。
+	WORD RemainingFrames;
+};
+
+struct GAME_SKILL_COOLDOWN_RECORD
+{
+	WORD SkillId;
+	DWORD NextCastFrame;
+};
+
+struct GAME_SKILL_COOLDOWN_LIST_HEADER
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	BYTE Count;
+};
+
 // 当前客户端 7BE0E0 / 712450：状态、累计熟练度、技能号、永久等级。
 struct GAME_SKILL_LEVEL_SYNC
 {
@@ -239,6 +264,14 @@ struct GAME_SKILL_LEVEL_SYNC
 	DWORD TotalExp;
 	DWORD SkillId;
 	DWORD SkillLevel;
+};
+
+// 20261103 客户端 7C4F80：仅同步技能号和累计熟练度。
+struct GAME_SKILL_EXP_SYNC
+{
+	BYTE ProtocolType;
+	DWORD SkillId;
+	DWORD TotalExp;
 };
 
 struct GAME_SKILL_BUFF_DATA
@@ -786,8 +819,12 @@ static_assert(sizeof(GAME_CURPLAYER_NORMAL_SYNC) == 12, "46 resources");
 static_assert(sizeof(GAME_NPC_NORMAL_SYNC) == 29, "4D entity update");
 static_assert(sizeof(GAME_NPC_PLAYER_NORMAL_SYNC) == 24, "4E player position");
 static_assert(sizeof(GAME_SKILL_LEVEL_SYNC) == 14, "74 skill update");
+static_assert(sizeof(GAME_SKILL_EXP_SYNC) == 9, "B9 skill experience");
 static_assert(sizeof(GAME_SKILL_BUFF_DATA) == 9, "E5 timed buff record");
 static_assert(sizeof(GAME_SKILL_SYNC_DATA) == 9, "45 skill record");
+static_assert(sizeof(GAME_SKILL_COOLDOWN_SYNC) == 11, "F8/2D skill cooldown");
+static_assert(sizeof(GAME_SKILL_COOLDOWN_RECORD) == 6, "F8/4B cooldown record");
+static_assert(sizeof(GAME_SKILL_COOLDOWN_LIST_HEADER) == 5, "F8/4B cooldown header");
 static_assert(sizeof(GAME_ITEM_SYNC) == 58, "CB item sync");
 static_assert(sizeof(GAME_AURA_SKILL_SYNC) == 25, "90 aura skill sync");
 static_assert(sizeof(GAME_NPC_STATE_SYNC) == 13, "8A state graphics sync");

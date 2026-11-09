@@ -23,6 +23,9 @@ private:
 	void	PoisonEnhanceP(KNpc* pNpc, void* pData);
 	void	LightingEnhanceP(KNpc* pNpc, void* pData);
 	void	FireEnhanceP(KNpc* pNpc, void* pData);
+	void EarthEnhanceP(KNpc* pNpc, void* pData);
+	void EarthResP(KNpc* pNpc, void* pData);
+	void EarthResMaxP(KNpc* pNpc, void* pData);
 	void	ColdEnhanceP(KNpc* pNpc, void* pData);
 	void	ExDefenseV(KNpc* pNpc, void* pData);
 	void	ArmorDefenseV(KNpc* pNpc, void* pData);

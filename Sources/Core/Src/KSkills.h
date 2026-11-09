@@ -10,7 +10,7 @@
 #include "KNode.h"
 #include "KMissleMagicAttribsData.h"
 #include "Skill.h"
-#define MAX_MISSLE_DAMAGEATTRIB 8
+#define MAX_MISSLE_DAMAGEATTRIB 9
 typedef  KSkill KFightSkill;
 class KMissle;
 class KSkill;
@@ -148,6 +148,9 @@ public:
 
 	const char * GetSkillName(){return m_szName;};
 	BOOL				ApplyStateSkill(int nLauncher) const;
+	BOOL				ApplyAuraSkill(int nLauncher) const;
+	BOOL				IsElementalMastery() const;
+	BOOL				EnhancesSkillDamage(const KSkill* pAttack) const;
 	int					GetSkillStyle(){ return m_eSkillStyle;};
 	BOOL				GetInfoFromTabFile(int nCol);
 	BOOL				GetInfoFromTabFile(KITabFile *pSkillsSettingFile, int nRow);

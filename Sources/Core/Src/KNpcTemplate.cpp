@@ -124,6 +124,7 @@ void	KNpcTemplate::InitNpcBaseData(int nNpcTemplateId)
 	g_NpcSetting.GetInteger(nNpcTempRow, "AIParam9",	0, &m_AiParam[8]);
 	g_NpcSetting.GetInteger(nNpcTempRow, "AIParam10",	5, &m_AiParam[9]);
 
+	g_NpcSetting.GetInteger(nNpcTempRow, "EarthResistMax", 0, &m_EarthResistMax);
 	g_NpcSetting.GetInteger(nNpcTempRow, "FireResistMax",	0, &m_FireResistMax);
 	g_NpcSetting.GetInteger(nNpcTempRow, "ColdResistMax",	0, &m_ColdResistMax);
 	g_NpcSetting.GetInteger(nNpcTempRow, "LightResistMax",	0, &m_LightResistMax);
@@ -278,6 +279,8 @@ void KNpcTemplate::InitNpcLevelData(KTabFile * pKindFile, int nNpcTemplateId, KL
 		m_BlueLum = GetNpcLevelDataFromScript(pLevelScript, "BlueLum", nLevel, szValue1);
 		
 	
+		g_NpcSetting.GetString(nNpcTempRow, "EarthResist", "", szValue1, MAX_VALUE_LEN);
+		m_EarthResist = GetNpcLevelDataFromScript(pLevelScript, "EarthResist", nLevel, szValue1);
 		g_NpcSetting.GetString(nNpcTempRow, "FireResist", "", szValue1, MAX_VALUE_LEN);
 		m_FireResist = GetNpcLevelDataFromScript(pLevelScript, "FireResist", nLevel, szValue1);
 

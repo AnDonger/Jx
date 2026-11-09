@@ -918,7 +918,7 @@ BOOL KPlayer::SendSyncData_Skill()
 	if (SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSkill, sSkill.m_wProtocolLong + 1)))
 	{
 		Npc[m_nIndex].m_SkillList.SyncPlayerSkillBuffs(TRUE);
-		return TRUE;
+		return Npc[m_nIndex].m_SkillList.SyncPlayerSkillCooldowns();
 	}
 
 	printf("player Packing skill sync data failed...\n");
@@ -2372,6 +2372,9 @@ void	KPlayer::LevelUp()
 	
 	// 处理各种抗性的变化 火、冰、毒、电、物理
 	Npc[m_nIndex].m_FireResist				= PlayerSet.m_cLevelAdd.GetFireResist(Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level);
+	// 当前等级成长表无土抗成长列，玩家基础土抗为0，不继承NPC模板抗性。
+	Npc[m_nIndex].m_EarthResist = 0;
+	Npc[m_nIndex].m_CurrentEarthResist = 0;
 	Npc[m_nIndex].m_CurrentFireResist		= Npc[m_nIndex].m_FireResist;
 	Npc[m_nIndex].m_ColdResist				= PlayerSet.m_cLevelAdd.GetColdResist(Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level);
 	Npc[m_nIndex].m_CurrentColdResist		= Npc[m_nIndex].m_ColdResist;
@@ -2382,6 +2385,8 @@ void	KPlayer::LevelUp()
 	Npc[m_nIndex].m_PhysicsResist			= PlayerSet.m_cLevelAdd.GetPhysicsResist(Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level);
 	Npc[m_nIndex].m_CurrentPhysicsResist	= Npc[m_nIndex].m_PhysicsResist;
 	Npc[m_nIndex].m_FireResistMax			= BASE_FIRE_RESIST_MAX;
+	Npc[m_nIndex].m_EarthResistMax = BASE_FIRE_RESIST_MAX;
+	Npc[m_nIndex].m_CurrentEarthResistMax = Npc[m_nIndex].m_EarthResistMax;
 	Npc[m_nIndex].m_ColdResistMax			= BASE_COLD_RESIST_MAX;
 	Npc[m_nIndex].m_PoisonResistMax			= BASE_POISON_RESIST_MAX;
 	Npc[m_nIndex].m_LightResistMax			= BASE_LIGHT_RESIST_MAX;
@@ -2474,6 +2479,9 @@ void	KPlayer::UpdataCurData()
 	Npc[m_nIndex].m_CurrentDefend		= Npc[m_nIndex].m_Defend;
 	Npc[m_nIndex].m_CurrentElementDamageReduce = 0;
 	ZeroMemory(&Npc[m_nIndex].m_CurrentFireDamage, sizeof(KMagicAttrib));
+	Npc[m_nIndex].m_CurrentEarthEnhance = 0;
+	Npc[m_nIndex].m_CurrentEarthResist = Npc[m_nIndex].m_EarthResist;
+	Npc[m_nIndex].m_CurrentEarthResistMax = Npc[m_nIndex].m_EarthResistMax;
 	Npc[m_nIndex].m_CurrentFireEnhance	= 0;
 	Npc[m_nIndex].m_CurrentFireResist	= Npc[m_nIndex].m_FireResist;
 	Npc[m_nIndex].m_CurrentFireResistMax	= Npc[m_nIndex].m_FireResistMax;
@@ -5725,6 +5733,9 @@ void	KPlayer::s2cLevelUp(BYTE* pMsg)
 	
 	// 处理各种抗性的变化 火、冰、毒、电、物理
 	Npc[m_nIndex].m_FireResist				= PlayerSet.m_cLevelAdd.GetFireResist(Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level);
+	// 当前等级成长表无土抗成长列，玩家基础土抗为0，不继承NPC模板抗性。
+	Npc[m_nIndex].m_EarthResist = 0;
+	Npc[m_nIndex].m_CurrentEarthResist = 0;
 	Npc[m_nIndex].m_CurrentFireResist		= Npc[m_nIndex].m_FireResist;
 	Npc[m_nIndex].m_ColdResist				= PlayerSet.m_cLevelAdd.GetColdResist(Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level);
 	Npc[m_nIndex].m_CurrentColdResist		= Npc[m_nIndex].m_ColdResist;
@@ -5735,6 +5746,8 @@ void	KPlayer::s2cLevelUp(BYTE* pMsg)
 	Npc[m_nIndex].m_PhysicsResist			= PlayerSet.m_cLevelAdd.GetPhysicsResist(Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level);
 	Npc[m_nIndex].m_CurrentPhysicsResist	= Npc[m_nIndex].m_PhysicsResist;
 	Npc[m_nIndex].m_FireResistMax			= BASE_FIRE_RESIST_MAX;
+	Npc[m_nIndex].m_EarthResistMax = BASE_FIRE_RESIST_MAX;
+	Npc[m_nIndex].m_CurrentEarthResistMax = Npc[m_nIndex].m_EarthResistMax;
 	Npc[m_nIndex].m_ColdResistMax			= BASE_COLD_RESIST_MAX;
 	Npc[m_nIndex].m_PoisonResistMax			= BASE_POISON_RESIST_MAX;
 	Npc[m_nIndex].m_LightResistMax			= BASE_LIGHT_RESIST_MAX;
@@ -6218,11 +6231,16 @@ void	KPlayer::SetBaseDefence()
 void	KPlayer::SetBaseResistData()
 {
 	Npc[m_nIndex].m_FireResist			= PlayerSet.m_cLevelAdd.GetFireResist(Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level);
+	// 当前等级成长表无土抗成长列，玩家基础土抗为0，不继承NPC模板抗性。
+	Npc[m_nIndex].m_EarthResist = 0;
+	Npc[m_nIndex].m_CurrentEarthResist = 0;
 	Npc[m_nIndex].m_ColdResist			= PlayerSet.m_cLevelAdd.GetColdResist(Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level);
 	Npc[m_nIndex].m_PoisonResist		= PlayerSet.m_cLevelAdd.GetPoisonResist(Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level);
 	Npc[m_nIndex].m_LightResist			= PlayerSet.m_cLevelAdd.GetLightResist(Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level);
 	Npc[m_nIndex].m_PhysicsResist		= PlayerSet.m_cLevelAdd.GetPhysicsResist(Npc[m_nIndex].m_Series, Npc[m_nIndex].m_Level);
 	Npc[m_nIndex].m_FireResistMax		= BASE_FIRE_RESIST_MAX;
+	Npc[m_nIndex].m_EarthResistMax = BASE_FIRE_RESIST_MAX;
+	Npc[m_nIndex].m_CurrentEarthResistMax = Npc[m_nIndex].m_EarthResistMax;
 	Npc[m_nIndex].m_ColdResistMax		= BASE_COLD_RESIST_MAX;
 	Npc[m_nIndex].m_PoisonResistMax		= BASE_POISON_RESIST_MAX;
 	Npc[m_nIndex].m_LightResistMax		= BASE_LIGHT_RESIST_MAX;

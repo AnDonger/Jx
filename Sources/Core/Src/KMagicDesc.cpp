@@ -186,6 +186,10 @@ const char MAGIC_ATTRIB_STRING[][100] =
 	"attackratingenhance_v",
 	"attackratingenhance_p",
 	"addexdefense_v",
+	"earthdamage_v",
+	"earthenhance_p",
+	"earthres_p",
+	"earthresmax_p",
 	"normal_end",
 };
 
@@ -603,39 +607,43 @@ int GetCurrentMagicAttribId(int nAttrib)
 	case magic_lightingarmor_v: return 133;
 	case magic_damagetomana_p: return 134;
 	case magic_lucky_v: return 135;
-	case magic_steallifeenhance_p: return 163;
-	case magic_stealmanaenhance_p: return 164;
-	case magic_stealstaminaenhance_p: return 165;
-	case magic_allskill_v: return 136;
-	case magic_metalskill_v: return 137;
-	case magic_woodskill_v: return 138;
-	case magic_waterskill_v: return 139;
-	case magic_fireskill_v: return 140;
-	case magic_earthskill_v: return 141;
-	case magic_knockbackenhance_p: return 166;
-	case magic_deadlystrikeenhance_p: return 142;
-	case magic_stunenhance_p: return 167;
-	case magic_badstatustimereduce_v: return 143;
-	case magic_manashield_p: return 144;
-	case magic_adddefense_v: return 145;
-	case magic_adddefense_p: return 146;
-	case magic_fatallystrikeenhance_p: return 147;
-	case magic_lifepotion_v: return 148;
-	case magic_manapotion_v: return 149;
-	case magic_physicsresmax_p: return 150;
-	case magic_coldresmax_p: return 151;
-	case magic_fireresmax_p: return 152;
-	case magic_lightingresmax_p: return 153;
-	case magic_poisonresmax_p: return 154;
-	case magic_allresmax_p: return 155;
-	case magic_coldenhance_p: return 156;
-	case magic_fireenhance_p: return 157;
-	case magic_lightingenhance_p: return 158;
-	case magic_poisonenhance_p: return 159;
-	case magic_magicenhance_p: return 160;
-	case magic_attackratingenhance_v: return 161;
-	case magic_attackratingenhance_p: return 162;
+	case magic_steallifeenhance_p: return 136;
+	case magic_stealmanaenhance_p: return 137;
+	case magic_stealstaminaenhance_p: return 138;
+	case magic_allskill_v: return 139;
+	case magic_metalskill_v: return 140;
+	case magic_woodskill_v: return 141;
+	case magic_waterskill_v: return 142;
+	case magic_fireskill_v: return 143;
+	case magic_earthskill_v: return 144;
+	case magic_knockbackenhance_p: return 145;
+	case magic_deadlystrikeenhance_p: return 146;
+	case magic_stunenhance_p: return 147;
+	case magic_badstatustimereduce_v: return 148;
+	case magic_manashield_p: return 149;
+	case magic_adddefense_v: return 150;
+	case magic_adddefense_p: return 151;
+	case magic_fatallystrikeenhance_p: return 152;
+	case magic_lifepotion_v: return 153;
+	case magic_manapotion_v: return 154;
+	case magic_physicsresmax_p: return 155;
+	case magic_coldresmax_p: return 156;
+	case magic_fireresmax_p: return 157;
+	case magic_lightingresmax_p: return 158;
+	case magic_poisonresmax_p: return 159;
+	case magic_allresmax_p: return 160;
+	case magic_coldenhance_p: return 161;
+	case magic_fireenhance_p: return 162;
+	case magic_lightingenhance_p: return 163;
+	case magic_poisonenhance_p: return 164;
+	case magic_magicenhance_p: return 165;
+	case magic_attackratingenhance_v: return 166;
+	case magic_attackratingenhance_p: return 167;
 	case magic_addexdefense_v: return 179;
+	case magic_earthdamage_v: return 73;
+	case magic_earthenhance_p: return 173;
+	case magic_earthres_p: return 176;
+	case magic_earthresmax_p: return 178;
 	default: return -1;
 	}
 }

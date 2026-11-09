@@ -28,6 +28,9 @@ KNpcAttribModify::KNpcAttribModify()
 	ProcessFunc[magic_poisonenhance_p] = &KNpcAttribModify::PoisonEnhanceP;
 	ProcessFunc[magic_lightingenhance_p] = &KNpcAttribModify::LightingEnhanceP;
 	ProcessFunc[magic_fireenhance_p] = &KNpcAttribModify::FireEnhanceP;
+	ProcessFunc[magic_earthenhance_p] = &KNpcAttribModify::EarthEnhanceP;
+	ProcessFunc[magic_earthres_p] = &KNpcAttribModify::EarthResP;
+	ProcessFunc[magic_earthresmax_p] = &KNpcAttribModify::EarthResMaxP;
 	ProcessFunc[magic_coldenhance_p] = &KNpcAttribModify::ColdEnhanceP;
 	ProcessFunc[magic_armordefense_v] = &KNpcAttribModify::ExDefenseV;
 	ProcessFunc[magic_addexdefense_v] = &KNpcAttribModify::ExDefenseV;
@@ -230,6 +233,7 @@ void KNpcAttribModify::AddPhysicsDamageV(KNpc* pNpc, void* pData)
 void KNpcAttribModify::AllresP(KNpc* pNpc, void* pData)
 {
 	KMagicAttrib* pMagic = (KMagicAttrib *)pData;
+	pNpc->m_CurrentEarthResist += pMagic->nValue[0];
 	pNpc->m_CurrentFireResist += pMagic->nValue[0];
 	pNpc->m_CurrentColdResist += pMagic->nValue[0];
 	pNpc->m_CurrentLightResist += pMagic->nValue[0];
@@ -773,6 +777,21 @@ void KNpcAttribModify::ArmorDefenseV(KNpc* pNpc, void* pData)
 	g_DebugLog("[数值]%s防御增加了%d点", pNpc->Name, pMagic->nValue[0]);
 }
 
+void KNpcAttribModify::EarthEnhanceP(KNpc* pNpc, void* pData)
+{
+	pNpc->m_CurrentEarthEnhance += ((KMagicAttrib*)pData)->nValue[0];
+}
+
+void KNpcAttribModify::EarthResP(KNpc* pNpc, void* pData)
+{
+	pNpc->m_CurrentEarthResist += ((KMagicAttrib*)pData)->nValue[0];
+}
+
+void KNpcAttribModify::EarthResMaxP(KNpc* pNpc, void* pData)
+{
+	pNpc->m_CurrentEarthResistMax += ((KMagicAttrib*)pData)->nValue[0];
+}
+
 void KNpcAttribModify::ColdEnhanceP(KNpc* pNpc, void* pData)
 {
 	KMagicAttrib* pMagic = (KMagicAttrib *)pData;
@@ -878,6 +897,7 @@ void KNpcAttribModify::PoisonResMaxP(KNpc* pNpc, void* pData)
 void KNpcAttribModify::AllResMaxP(KNpc* pNpc, void* pData)
 {
 	KMagicAttrib* pMagic = (KMagicAttrib *)pData;
+	pNpc->m_CurrentEarthResistMax += pMagic->nValue[0];
 	pNpc->m_CurrentFireResistMax += pMagic->nValue[0];
 	pNpc->m_CurrentColdResistMax += pMagic->nValue[0];
 	pNpc->m_CurrentLightResistMax += pMagic->nValue[0];
