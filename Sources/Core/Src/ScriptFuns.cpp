@@ -196,6 +196,7 @@ struct KNpcScriptExchange
 {
 	KPlayerTask Task;
 	PLAYER_PET_DATA Pet;
+	PLAYER_INVENTORY_EXPANSION Expansion;
 	PLAYER_SKILL_BUFF Buffs[16];
 	BOOL HasMorph;
 	int MorphType;
@@ -245,6 +246,7 @@ KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
 	pState = new KNpcScriptExchange;
 	pState->Task = Player[m_nPlayer].m_cTask;
 	pState->Pet = Player[m_nPlayer].m_Pet;
+	pState->Expansion = Player[m_nPlayer].m_InventoryExpansion;
 	memcpy(pState->Buffs, Npc[Player[m_nPlayer].m_nIndex].m_SkillList.m_SkillBuffs, sizeof(pState->Buffs));
 	pState->HasMorph = FALSE;
 	pState->Depth = 1;
@@ -258,7 +260,7 @@ KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
 		pState->Money[i] = List.GetMoney(i);
 	for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
 	{
-		if (pItem->nPlace != pos_equiproom && pItem->nPlace != pos_immediacy &&
+		if (!IsBagItemPlace(pItem->nPlace) && pItem->nPlace != pos_immediacy &&
 			pItem->nPlace != pos_hand)
 			continue;
 		KNpcScriptItem Saved;
@@ -361,11 +363,12 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 			Skills.RefreshPlayerSkillLevels();
 			Skills.SyncPlayerSkillBuffs();
 		}
+		Role.m_InventoryExpansion = pState->Expansion;
 		KItemList& List = Role.m_ItemList;
 		std::vector<int> Indices;
 		for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
 		{
-			if (pItem->nPlace == pos_equiproom || pItem->nPlace == pos_immediacy ||
+			if (IsBagItemPlace(pItem->nPlace) || pItem->nPlace == pos_immediacy ||
 				pItem->nPlace == pos_hand)
 				Indices.push_back(pItem->nIdx);
 		}
@@ -382,7 +385,7 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 			if (nItem > 0)
 			{
 				Item[nItem].SetID(Saved.Data.GetID());
-				if (!List.Add(nItem, Saved.Place, Saved.X, Saved.Y))
+				if (!List.Add(nItem, Saved.Place, Saved.X, Saved.Y, TRUE))
 				{
 					ItemSet.Remove(nItem);
 					bRestored = FALSE;
@@ -413,6 +416,15 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 	}
 	else
 	{
+		if (memcmp(&pState->Expansion, &Role.m_InventoryExpansion, sizeof(pState->Expansion)))
+		{
+			Role.m_ulLastSaveTime = 0;
+			if (pState->Expansion.BagRows != Role.m_InventoryExpansion.BagRows)
+				Role.SyncInventoryExpansion();
+			for (int i = 0; i < 6; i++)
+				if (pState->Expansion.StoreTime[i] != Role.m_InventoryExpansion.StoreTime[i])
+					Role.SyncStoreBoxPage(i);
+		}
 		if (memcmp(&pState->Pet, &Role.m_Pet, sizeof(Role.m_Pet)) != 0)
 			Role.SyncPetState();
 		KSkillList& Skills = Npc[Role.m_nIndex].m_SkillList;
@@ -1171,7 +1183,7 @@ int LuaMsgBox(Lua_State *L)
 // 四参数旧脚本只匹配普通背包；数量按堆叠计，不包括仓库、身穿和鼠标物品。
 static BOOL MatchNormalItem(PlayerItem *pItem, int nGenre, int nDetail, int nParticular, int nLevel)
 {
-	if (!pItem || pItem->nPlace != pos_equiproom || pItem->nIdx <= 0 || pItem->nIdx >= MAX_ITEM)
+	if (!pItem || !IsBagItemPlace(pItem->nPlace) || pItem->nIdx <= 0 || pItem->nIdx >= MAX_ITEM)
 		return FALSE;
 	KItem& Data = Item[pItem->nIdx];
 	return Data.GetGenre() == nGenre && Data.GetDetailType() == nDetail &&
@@ -1461,7 +1473,7 @@ int LuaGetItemLevel2(Lua_State *L)
 		KItemList& List = Player[nPlayer].m_ItemList;
 		for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
 		{
-			if (pItem->nPlace != pos_equiproom || pItem->nIdx <= 0 || pItem->nIdx >= MAX_ITEM)
+			if (!IsBagItemPlace(pItem->nPlace) || pItem->nIdx <= 0 || pItem->nIdx >= MAX_ITEM)
 				continue;
 			KItem& Data = Item[pItem->nIdx];
 			if (Data.GetGenre() == nGenre && Data.GetDetailType() == nDetail &&
@@ -1552,7 +1564,7 @@ int LuaWasteCopperCash(Lua_State *L)
 	std::vector<int> Costs;
 	for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
 	{
-		if (pItem->nPlace == pos_equiproom && pItem->nIdx > 0 &&
+		if (IsBagItemPlace(pItem->nPlace) && pItem->nIdx > 0 &&
 			Item[pItem->nIdx].GetGenre() == item_task && Item[pItem->nIdx].GetDetailType() == 47)
 			Costs.push_back(pItem->nIdx);
 	}
@@ -3280,9 +3292,10 @@ int LuaAddEventItem(Lua_State *L)
 	}
 	
 	int		x, y;
-	if (Player[nPlayerIndex].m_ItemList.CheckCanPlaceInEquipment(Item[nIndex].GetWidth(), Item[nIndex].GetHeight(), &x, &y))
+	int nBagPlace;
+	if (Player[nPlayerIndex].m_ItemList.CheckCanPlaceInEquipment(Item[nIndex].GetWidth(), Item[nIndex].GetHeight(), &x, &y, &nBagPlace))
 	{
-		Player[nPlayerIndex].m_ItemList.Add(nIndex, pos_equiproom, x, y);
+		Player[nPlayerIndex].m_ItemList.Add(nIndex, nBagPlace, x, y);
 	}
 	else
 	{
@@ -3376,9 +3389,10 @@ int LuaAddItem(Lua_State * L)
 	}
 	
 	int		x, y;
-	if (Player[nPlayerIndex].m_ItemList.CheckCanPlaceInEquipment(Item[nIndex].GetWidth(), Item[nIndex].GetHeight(), &x, &y))
+	int nBagPlace;
+	if (Player[nPlayerIndex].m_ItemList.CheckCanPlaceInEquipment(Item[nIndex].GetWidth(), Item[nIndex].GetHeight(), &x, &y, &nBagPlace))
 	{
-		Player[nPlayerIndex].m_ItemList.Add(nIndex, pos_equiproom, x, y);
+		Player[nPlayerIndex].m_ItemList.Add(nIndex, nBagPlace, x, y);
 	}
 	else
 	{
@@ -7020,6 +7034,83 @@ int LuaOpenNewCompound(Lua_State* L)
 }
 #endif
 
+#ifdef _SERVER
+// UI context is server-owned; Lua cannot choose a different player's purchase.
+static int LuaGetInventoryPurchase(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	BOOL bValid = nTop == 0 && nPlayer > 0 && Player[nPlayer].IsInventoryPurchaseContext();
+	Lua_PushNumber(L, bValid ? Player[nPlayer].m_nInventoryPurchaseKind : 0);
+	Lua_PushNumber(L, bValid ? Player[nPlayer].m_nInventoryPurchaseIndex : -1);
+	return 2;
+}
+
+static int LuaGetBagRowState(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	double dRow = nTop == 1 && Lua_IsNumber(L, 1) ? Lua_ValueToNumber(L, 1) : -1;
+	int nRow = dRow >= 0 && dRow < 7 && dRow == (int)dRow ? (int)dRow : -1;
+	Lua_PushNumber(L, nPlayer > 0 && nRow >= 0 && nRow < 7 &&
+		(Player[nPlayer].m_InventoryExpansion.BagRows & (1UL << nRow)) ? 1 : 0);
+	return 1;
+}
+
+static int LuaExtendBag(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	double dRow = nTop == 1 && Lua_IsNumber(L, 1) ? Lua_ValueToNumber(L, 1) : -1;
+	int nRow = dRow >= 0 && dRow < 7 && dRow == (int)dRow ? (int)dRow : -1;
+	BOOL bValid = nPlayer > 0 && nRow >= 0 && nRow < 7 &&
+		g_NpcScriptExchange[nPlayer] && Player[nPlayer].CanChangeInventory() &&
+		Player[nPlayer].m_InventoryExpansion.BagRows == ((1UL << nRow) - 1);
+	if (bValid)
+		Player[nPlayer].m_InventoryExpansion.BagRows |= 1UL << nRow;
+	else
+		RejectNpcScriptItem(L, nPlayer);
+	Lua_PushNumber(L, bValid ? 1 : 0);
+	return 1;
+}
+
+static int LuaGetStoreBoxRentTime(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	double dPage = nTop == 1 && Lua_IsNumber(L, 1) ? Lua_ValueToNumber(L, 1) : -1;
+	int nPage = dPage >= 0 && dPage < 6 && dPage == (int)dPage ? (int)dPage : -1;
+	Lua_PushNumber(L, nPlayer > 0 && nPage >= 0 && nPage < 6 ?
+		Player[nPlayer].m_InventoryExpansion.StoreTime[nPage] : 0);
+	return 1;
+}
+
+static int LuaRentStoreBox(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	BOOL bArgs = nTop == 3 && Lua_IsNumber(L, 1) && Lua_IsNumber(L, 2) && Lua_IsNumber(L, 3);
+	double dPage = bArgs ? Lua_ValueToNumber(L, 1) : -1;
+	int nPage = dPage >= 0 && dPage < 6 && dPage == (int)dPage ? (int)dPage : -1;
+	double dCost = bArgs ? Lua_ValueToNumber(L, 3) : -1;
+	BOOL bValid = nPlayer > 0 && bArgs && nPage >= 0 && nPage < 6 &&
+		Lua_ValueToNumber(L, 2) == 31536000 && dCost > 0 && dCost <= 0x7FFFFFFF && dCost == (int)dCost &&
+		g_NpcScriptExchange[nPlayer] && Player[nPlayer].CanUseStoreBox() &&
+		Player[nPlayer].m_InventoryExpansion.StoreTime[nPage] == 0;
+	if (bValid)
+		Player[nPlayer].m_InventoryExpansion.StoreTime[nPage] = 31536000;
+	else
+		RejectNpcScriptItem(L, nPlayer);
+	Lua_PushNumber(L, bValid ? 1 : 0);
+	return 1;
+}
+#endif
+
 TLua_Funcs GameScriptFuns[] = 
 {
 	//通用指令
@@ -7033,6 +7124,11 @@ TLua_Funcs GameScriptFuns[] =
 	{"EnchaseItem", LuaEnchaseItem},
 	{"OpenNewCompound", LuaOpenNewCompound},
 	{"ReadTabFile", LuaReadTabFile},
+	{"GetInventoryPurchase", LuaGetInventoryPurchase},
+	{"GetBagRowState", LuaGetBagRowState},
+	{"ExtendBag", LuaExtendBag},
+	{"GetStoreBoxRentTime", LuaGetStoreBoxRentTime},
+	{"RentStoreBox", LuaRentStoreBox},
 	{"GetItemInfo", LuaGetItemInfo},
 	{"RepairItem", LuaRepairItem},
 	{"GetPetFuncActive", LuaGetPetFuncActive},

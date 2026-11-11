@@ -355,7 +355,7 @@ BOOL KItemList::MoveShopItem(int nIdx, int nPlace, int nX, int nY, BOOL bSync)
 	PlayerItem& Entry = m_Items[nList];
 	if (nPlace == pos_buyback)
 	{
-		if ((Entry.nPlace != pos_hand && Entry.nPlace != pos_equiproom && Entry.nPlace != pos_buyback) ||
+		if ((Entry.nPlace != pos_hand && !IsBagItemPlace(Entry.nPlace) && Entry.nPlace != pos_buyback) ||
 			nX < 0 || nX >= 2 || nY < 0 || nY >= MAX_SHOP_BUYBACK_ITEM / 2)
 			return FALSE;
 		for (int nOther = m_UseIdx.GetNext(0); nOther; nOther = m_UseIdx.GetNext(nOther))
@@ -366,15 +366,16 @@ BOOL KItemList::MoveShopItem(int nIdx, int nPlace, int nX, int nY, BOOL bSync)
 		}
 		if (Entry.nPlace == pos_hand)
 			m_Hand = 0;
-		else if (Entry.nPlace == pos_equiproom)
+		else if (IsBagItemPlace(Entry.nPlace))
 		{
-			m_Room[room_equipment].PickUpItem(nIdx, Entry.nX, Entry.nY,
+			m_Room[InventoryRoomFromPlace(Entry.nPlace)].PickUpItem(nIdx, Entry.nX, Entry.nY,
 				Item[nIdx].GetWidth(), Item[nIdx].GetHeight());
 		}
 	}
-	else if (nPlace == pos_equiproom && Entry.nPlace == pos_buyback)
+	else if (IsBagItemPlace(nPlace) && Entry.nPlace == pos_buyback)
 	{
-		if (!m_Room[room_equipment].PlaceItem(nX, nY, nIdx, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
+		if (!Player[m_PlayerIdx].IsInventoryPosition(nPlace, nX, nY, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()) ||
+			!m_Room[InventoryRoomFromPlace(nPlace)].PlaceItem(nX, nY, nIdx, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
 			return FALSE;
 	}
 	else
@@ -412,6 +413,7 @@ BOOL KItemList::BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, in
 	struct NewStack
 	{
 		int nIdx;
+		int Place;
 		POINT Pos;
 	};
 	ItemChange Currency[MAX_PLAYER_ITEM];
@@ -430,7 +432,7 @@ BOOL KItemList::BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, in
 	for (int nList = m_UseIdx.GetNext(0); nList && nRemainingCost; nList = m_UseIdx.GetNext(nList))
 	{
 		int nIdx = m_Items[nList].nIdx;
-		if (m_Items[nList].nPlace != pos_equiproom || Item[nIdx].GetGenre() != nGenre ||
+		if (!IsBagItemPlace(m_Items[nList].nPlace) || Item[nIdx].GetGenre() != nGenre ||
 			Item[nIdx].GetDetailType() != nDetail)
 			continue;
 		int nUsed = Item[nIdx].GetStackCount();
@@ -446,12 +448,13 @@ BOOL KItemList::BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, in
 	if (nRemainingCost)
 		return FALSE;
 
-	KInventory PlannedRoom;
-	if (!PlannedRoom.Init(EQUIPMENT_ROOM_WIDTH, EQUIPMENT_ROOM_HEIGHT))
+	KInventory PlannedRoom[2];
+	if (!PlannedRoom[0].Init(EQUIPMENT_ROOM_WIDTH, EQUIPMENT_ROOM_HEIGHT) ||
+		!PlannedRoom[1].Init(5, 7))
 		return FALSE;
 	for (int nList = m_UseIdx.GetNext(0); nList; nList = m_UseIdx.GetNext(nList))
 	{
-		if (m_Items[nList].nPlace != pos_equiproom)
+		if (!IsBagItemPlace(m_Items[nList].nPlace))
 			continue;
 		int nIdx = m_Items[nList].nIdx;
 		BOOL bRemoved = FALSE;
@@ -462,11 +465,11 @@ BOOL KItemList::BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, in
 		}
 		if (bRemoved)
 			continue;
-		if (!PlannedRoom.PlaceItem(m_Items[nList].nX, m_Items[nList].nY, nIdx,
+		if (!PlannedRoom[m_Items[nList].nPlace == pos_equipment2 ? 1 : 0].PlaceItem(m_Items[nList].nX, m_Items[nList].nY, nIdx,
 			Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
 			return FALSE;
 		if (nRemainingItems > 0 &&
-			IsEquipmentPosition(m_Items[nList].nX, m_Items[nList].nY,
+			Player[m_PlayerIdx].IsInventoryPosition(m_Items[nList].nPlace, m_Items[nList].nX, m_Items[nList].nY,
 				Item[nIdx].GetWidth(), Item[nIdx].GetHeight()) &&
 			Item[nIdx].CanStackWith(*pTemplate))
 		{
@@ -486,9 +489,23 @@ BOOL KItemList::BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, in
 	while (nRemainingItems > 0)
 	{
 		POINT Pos;
-		if (nNewCount >= nFreeCount || nNewCount >= MAX_PLAYER_ITEM ||
-			!FindEquipmentRoom(PlannedRoom, pTemplate->GetWidth(), pTemplate->GetHeight(), &Pos))
+		if (nNewCount >= nFreeCount || nNewCount >= MAX_PLAYER_ITEM)
 			break;
+		int nBag = 0;
+		if (!FindEquipmentRoom(PlannedRoom[0], pTemplate->GetWidth(), pTemplate->GetHeight(), &Pos))
+		{
+			nBag = 1;
+			BOOL bFound = FALSE;
+			for (int y = 0; y < 7 && !bFound; y++)
+				for (int x = 0; x < 5 && !bFound; x++)
+					if (Player[m_PlayerIdx].IsInventoryPosition(pos_equipment2, x, y,
+						pTemplate->GetWidth(), pTemplate->GetHeight()) &&
+						PlannedRoom[1].CheckRoom(x, y, pTemplate->GetWidth(), pTemplate->GetHeight()))
+					{
+						Pos.x = x; Pos.y = y; bFound = TRUE;
+					}
+			if (!bFound) break;
+		}
 		int nIdx = ItemSet.Add(pTemplate);
 		if (!nIdx)
 			break;
@@ -496,8 +513,9 @@ BOOL KItemList::BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, in
 		if (nStack > nRemainingItems)
 			nStack = nRemainingItems;
 		Item[nIdx].SetStackCount(nStack);
-		PlannedRoom.PlaceItem(Pos.x, Pos.y, nIdx, pTemplate->GetWidth(), pTemplate->GetHeight());
+		PlannedRoom[nBag].PlaceItem(Pos.x, Pos.y, nIdx, pTemplate->GetWidth(), pTemplate->GetHeight());
 		NewItems[nNewCount].nIdx = nIdx;
+		NewItems[nNewCount].Place = nBag ? pos_equipment2 : pos_equiproom;
 		NewItems[nNewCount++].Pos = Pos;
 		nRemainingItems -= nStack;
 	}
@@ -523,8 +541,9 @@ BOOL KItemList::BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, in
 			ItemSet.Remove(nIdx);
 		}
 	}
-	memcpy(m_Room[room_equipment].m_pArray, PlannedRoom.m_pArray,
+	memcpy(m_Room[room_equipment].m_pArray, PlannedRoom[0].m_pArray,
 		EQUIPMENT_ROOM_WIDTH * EQUIPMENT_ROOM_HEIGHT * sizeof(int));
+	memcpy(m_Room[room_equipment2].m_pArray, PlannedRoom[1].m_pArray, 5 * 7 * sizeof(int));
 	for (int i = 0; i < nTargetCount; i++)
 	{
 		Item[Targets[i].nIdx].SetStackCount(Targets[i].nCount);
@@ -535,7 +554,7 @@ BOOL KItemList::BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, in
 		int nList = m_FreeIdx.GetNext(0);
 		_ASSERT(nList);
 		m_Items[nList].nIdx = NewItems[i].nIdx;
-		m_Items[nList].nPlace = pos_equiproom;
+		m_Items[nList].nPlace = NewItems[i].Place;
 		m_Items[nList].nX = NewItems[i].Pos.x;
 		m_Items[nList].nY = NewItems[i].Pos.y;
 		m_FreeIdx.Remove(nList);
@@ -549,10 +568,10 @@ BOOL KItemList::SplitItem(ItemPos* pSource, DWORD dwCount)
 {
 	if (!pSource || m_Hand || !dwCount || Player[m_PlayerIdx].CheckTrading())
 		return FALSE;
-	if (pSource->nPlace != pos_equiproom && pSource->nPlace != pos_repositoryroom)
+	int nRoom = InventoryRoomFromPlace(pSource->nPlace);
+	if (nRoom < 0 || !Player[m_PlayerIdx].IsInventoryPosition(pSource->nPlace, pSource->nX, pSource->nY, 1, 1) ||
+		(StoreBoxPageFromPlace(pSource->nPlace) >= 0 && !Player[m_PlayerIdx].CanUseStoreBox()))
 		return FALSE;
-
-	int nRoom = pSource->nPlace == pos_equiproom ? room_equipment : room_repository;
 	int nSource = m_Room[nRoom].FindItem(pSource->nX, pSource->nY);
 	int nList = nSource > 0 ? FindSame(nSource) : 0;
 	if (!nList || m_Items[nList].nPlace != pSource->nPlace ||
@@ -646,8 +665,9 @@ BOOL KItemList::SellPickupItem(int nIdx, int nMoney)
 	return TRUE;
 }
 
-BOOL KItemList::AddPickupItem(int nIdx, int nX, int nY)
+BOOL KItemList::AddPickupItem(int nIdx, int nX, int nY, int nPlace)
 {
+	if (!IsBagItemPlace(nPlace)) return FALSE;
 	if (nIdx <= 0 || nIdx >= MAX_ITEM || !Item[nIdx].GetID() || FindSame(nIdx))
 		return FALSE;
 
@@ -657,8 +677,8 @@ BOOL KItemList::AddPickupItem(int nIdx, int nX, int nY)
 	while (nList && nRemaining > 0)
 	{
 		int nTarget = m_Items[nList].nIdx;
-		if (m_Items[nList].nPlace == pos_equiproom &&
-			IsEquipmentPosition(m_Items[nList].nX, m_Items[nList].nY,
+		if (IsBagItemPlace(m_Items[nList].nPlace) &&
+			Player[m_PlayerIdx].IsInventoryPosition(m_Items[nList].nPlace, m_Items[nList].nX, m_Items[nList].nY,
 				Item[nTarget].GetWidth(), Item[nTarget].GetHeight()) &&
 			Item[nTarget].CanStackWith(Item[nIdx]))
 		{
@@ -675,17 +695,14 @@ BOOL KItemList::AddPickupItem(int nIdx, int nX, int nY)
 	{
 		if (!FindFree())
 			return FALSE;
-		if (!IsEquipmentPosition(nX, nY, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()) ||
-			!m_Room[room_equipment].CheckRoom(nX, nY, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
+		if (!Player[m_PlayerIdx].IsInventoryPosition(nPlace, nX, nY, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()) ||
+			!m_Room[InventoryRoomFromPlace(nPlace)].CheckRoom(nX, nY, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
 		{
-			POINT Pos;
-			if (!FindEquipmentRoom(m_Room[room_equipment], Item[nIdx].GetWidth(), Item[nIdx].GetHeight(), &Pos))
+			if (!CheckCanPlaceInEquipment(Item[nIdx].GetWidth(), Item[nIdx].GetHeight(), &nX, &nY, &nPlace))
 				return FALSE;
-			nX = Pos.x;
-			nY = Pos.y;
 		}
 		Item[nIdx].SetStackCount(nRemaining);
-		if (!Add(nIdx, pos_equiproom, nX, nY))
+		if (!Add(nIdx, nPlace, nX, nY))
 		{
 			Item[nIdx].SetStackCount(nCount);
 			return FALSE;
@@ -697,8 +714,8 @@ BOOL KItemList::AddPickupItem(int nIdx, int nX, int nY)
 	while (nList && nToStack > 0)
 	{
 		int nTarget = m_Items[nList].nIdx;
-		if (nTarget != nIdx && m_Items[nList].nPlace == pos_equiproom &&
-			IsEquipmentPosition(m_Items[nList].nX, m_Items[nList].nY,
+		if (nTarget != nIdx && IsBagItemPlace(m_Items[nList].nPlace) &&
+			Player[m_PlayerIdx].IsInventoryPosition(m_Items[nList].nPlace, m_Items[nList].nX, m_Items[nList].nY,
 				Item[nTarget].GetWidth(), Item[nTarget].GetHeight()) &&
 			Item[nTarget].CanStackWith(Item[nIdx]))
 		{
@@ -721,7 +738,7 @@ BOOL KItemList::AddPickupItem(int nIdx, int nX, int nY)
 }
 #endif
 
-int KItemList::Add(int nIdx, int nPlace, int nX, int nY)
+int KItemList::Add(int nIdx, int nPlace, int nX, int nY, BOOL bRestoreOriginal)
 {
 	if (nIdx <= 0)
 		return 0;
@@ -733,6 +750,15 @@ int KItemList::Add(int nIdx, int nPlace, int nX, int nY)
 	if (!i)
 		return 0;
 
+#ifdef _SERVER
+	// 旧角色可能保存了原6x10房间的额外行。仅数据库读取和事务原样恢复可以
+	// 保留这些坐标；普通请求、发奖和移动仍受当前5x7/6x8及购买权限校验。
+	BOOL bLegacyRestore = bRestoreOriginal && (nPlace == pos_equiproom || nPlace == pos_repositoryroom);
+	if (InventoryRoomFromPlace(nPlace) >= 0 && !bLegacyRestore &&
+		!Player[m_PlayerIdx].IsInventoryPosition(nPlace, nX, nY, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
+		return 0;
+	// 后续原房间PlaceItem仍检查6x10边界、尺寸和重叠，兼容不接受损坏坐标。
+#endif
 	switch(nPlace)
 	{
 	case pos_hand:
@@ -807,7 +833,19 @@ int KItemList::Add(int nIdx, int nPlace, int nX, int nY)
 		m_Items[i].nY = nY;		
 		break;		
 	default:
+#ifdef _SERVER
+		{
+			int nRoom = InventoryRoomFromPlace(nPlace);
+			if (nRoom < 0 || !m_Room[nRoom].PlaceItem(nX, nY, nIdx, Item[nIdx].GetWidth(), Item[nIdx].GetHeight()))
+				return 0;
+			m_Items[i].nPlace = nPlace;
+			m_Items[i].nX = nX;
+			m_Items[i].nY = nY;
+			break;
+		}
+#else
 		return 0;
+#endif
 	}
 
 	m_Items[i].nIdx = nIdx;
@@ -979,7 +1017,17 @@ BOOL KItemList::Remove(int nGameIdx)
 		break;
 #endif
 	default:
+#ifdef _SERVER
+		{
+			int nRoom = InventoryRoomFromPlace(m_Items[nIdx].nPlace);
+			if (nRoom < 0) return FALSE;
+			m_Room[nRoom].PickUpItem(nGameIdx, m_Items[nIdx].nX, m_Items[nIdx].nY,
+				Item[nGameIdx].GetWidth(), Item[nGameIdx].GetHeight());
+			break;
+		}
+#else
 		return FALSE;
+#endif
 	}
 #ifndef _SERVER
 	// 客户端从玩家身上去除装备就应该从装备表中去除掉。
@@ -1118,6 +1166,9 @@ BOOL KItemList::Init(int nPlayerIdx)
 //	m_Room[room_tradeback].Init(nWidth, nHeight);
 	m_Room[room_equipment].Init(EQUIPMENT_ROOM_WIDTH, EQUIPMENT_ROOM_HEIGHT);
 	m_Room[room_repository].Init(REPOSITORY_ROOM_WIDTH, REPOSITORY_ROOM_HEIGHT);
+	for (int nRoom = room_storepage2; nRoom <= room_storepage7; nRoom++)
+		m_Room[nRoom].Init(6, 8);
+	m_Room[room_equipment2].Init(5, 7);
 	m_Room[room_trade].Init(TRADE_ROOM_WIDTH, TRADE_ROOM_HEIGHT);
 	m_Room[room_tradeback].Init(EQUIPMENT_ROOM_WIDTH, EQUIPMENT_ROOM_HEIGHT);
 	m_Room[room_immediacy].Init(IMMEDIACY_ROOM_WIDTH, IMMEDIACY_ROOM_HEIGHT);
@@ -1978,6 +2029,16 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 	if (SrcPos->nPlace != DesPos->nPlace)
 		return;
 
+#ifdef _SERVER
+	int nGridRoom = InventoryRoomFromPlace(SrcPos->nPlace);
+	if (nGridRoom >= 0 && (!Player[m_PlayerIdx].CanChangeInventory() ||
+		!Player[m_PlayerIdx].IsInventoryPosition(SrcPos->nPlace, SrcPos->nX, SrcPos->nY, 1, 1) ||
+		!Player[m_PlayerIdx].IsInventoryPosition(DesPos->nPlace, DesPos->nX, DesPos->nY,
+			m_Hand ? Item[m_Hand].GetWidth() : 1, m_Hand ? Item[m_Hand].GetHeight() : 1) ||
+		(StoreBoxPageFromPlace(SrcPos->nPlace) >= 0 && !Player[m_PlayerIdx].CanUseStoreBox())))
+		return;
+#endif
+
 	int nTempHand = m_Hand;
 	int	nEquipIdx1 = 0;
 
@@ -1993,13 +2054,11 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 	// Quantity-only AD does not redraw the client cell. Recreate affected client entries
 	// through the existing remove/add notifications, without running its implicit 78 merge.
 	if (m_Hand && SrcPos->nX == DesPos->nX && SrcPos->nY == DesPos->nY &&
-		(SrcPos->nPlace == pos_equiproom || SrcPos->nPlace == pos_repositoryroom ||
+		(nGridRoom >= 0 ||
 		SrcPos->nPlace == pos_immediacy))
 	{
-		int nRoom = room_equipment;
-		if (SrcPos->nPlace == pos_repositoryroom)
-			nRoom = room_repository;
-		else if (SrcPos->nPlace == pos_immediacy)
+		int nRoom = nGridRoom;
+		if (SrcPos->nPlace == pos_immediacy)
 			nRoom = room_immediacy;
 		int nTarget = m_Room[nRoom].FindItem(SrcPos->nX, SrcPos->nY);
 		if (nTarget > 0 && Item[nTarget].GetMaxStackCount() > 1 &&
@@ -2048,6 +2107,36 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 		DesPos = &DesEquipmentPos;
 	}
 
+#endif
+
+#ifdef _SERVER
+	// Every bag/warehouse page has a separate matrix; use the same atomic cursor exchange.
+	if (nGridRoom >= 0)
+	{
+		KInventory& Room = m_Room[nGridRoom];
+		int nSource = Room.FindItem(SrcPos->nX, SrcPos->nY);
+		if (nSource < 0) return;
+		if (nSource && !Room.PickUpItem(nSource, SrcPos->nX, SrcPos->nY,
+			Item[nSource].GetWidth(), Item[nSource].GetHeight())) return;
+		if (m_Hand && !Room.PlaceItem(DesPos->nX, DesPos->nY, m_Hand,
+			Item[m_Hand].GetWidth(), Item[m_Hand].GetHeight()))
+		{
+			if (nSource) Room.PlaceItem(SrcPos->nX, SrcPos->nY, nSource,
+				Item[nSource].GetWidth(), Item[nSource].GetHeight());
+			return;
+		}
+		if (m_Hand)
+		{
+			PlayerItem& Entry = m_Items[FindSame(m_Hand)];
+			Entry.nPlace = DesPos->nPlace;
+			Entry.nX = DesPos->nX;
+			Entry.nY = DesPos->nY;
+		}
+		m_Hand = nSource;
+		if (nSource) m_Items[FindSame(nSource)].nPlace = pos_hand;
+		g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &sMove, sizeof(sMove));
+		return;
+	}
 #endif
 
 	// 源装备从SrcPos到手上，手上的装备到DesPos
@@ -2908,17 +2997,31 @@ BOOL	KItemList::TradeCheckCanPlace()
 //--------------------------------------------------------------------------
 //	功能：判断一定长宽的物品能否放进物品栏 (为了服务器效率，本函数里面没有调用其他函数)
 //--------------------------------------------------------------------------
-BOOL KItemList::CheckCanPlaceInEquipment(int nWidth, int nHeight, int *pnX, int *pnY)
+BOOL KItemList::CheckCanPlaceInEquipment(int nWidth, int nHeight, int *pnX, int *pnY, int *pnPlace)
 {
 	if (!pnX || !pnY)
 		return FALSE;
 	POINT Pos;
-	if (!FindEquipmentRoom(m_Room[room_equipment], nWidth, nHeight, &Pos))
-		return FALSE;
-	*pnX = Pos.x;
-	*pnY = Pos.y;
-	return TRUE;
+	if (FindEquipmentRoom(m_Room[room_equipment], nWidth, nHeight, &Pos))
+	{
+		*pnX = Pos.x;
+		*pnY = Pos.y;
+		if (pnPlace) *pnPlace = pos_equiproom;
+		return TRUE;
+	}
+	// 旧调用者未接收Place时只能返回第一页，避免将第二页坐标误写到第一页。
+	if (!pnPlace) return FALSE;
+	for (int y = 0; y < 7; y++)
+		for (int x = 0; x < 5; x++)
+			if (Player[m_PlayerIdx].IsInventoryPosition(pos_equipment2, x, y, nWidth, nHeight) &&
+				m_Room[room_equipment2].CheckRoom(x, y, nWidth, nHeight))
+			{
+				*pnX = x; *pnY = y; *pnPlace = pos_equipment2;
+				return TRUE;
+			}
+	return FALSE;
 }
+
 #endif
 
 //------------------------------------------------------------------------------
@@ -3258,7 +3361,7 @@ int KItemList::CountNormalItem(int nGenre, int nDetail, int nParticular, int nLe
 	int nCount = 0;
 	for (PlayerItem* p = GetFirstItem(); p; p = GetNextItem())
 	{
-		if (p->nPlace != pos_equiproom && (!bQuick || p->nPlace != pos_immediacy))
+		if (!IsBagItemPlace(p->nPlace) && (!bQuick || p->nPlace != pos_immediacy))
 			continue;
 		KItem& Data = Item[p->nIdx];
 		if (Data.GetGenre() == nGenre && Data.GetDetailType() == nDetail &&
@@ -3275,7 +3378,7 @@ BOOL KItemList::ConsumeItem(int nIdx, int nCount)
 	BOOL bOwned = FALSE;
 	for (PlayerItem* p = GetFirstItem(); p; p = GetNextItem())
 	{
-		if (p->nIdx == nIdx && (p->nPlace == pos_equiproom || p->nPlace == pos_immediacy))
+		if (p->nIdx == nIdx && (IsBagItemPlace(p->nPlace) || p->nPlace == pos_immediacy))
 		{
 			bOwned = TRUE;
 			break;
@@ -3305,7 +3408,7 @@ BOOL KItemList::ConsumeNormalItem(int nGenre, int nDetail, int nParticular, int 
 	int nItems = 0;
 	for (PlayerItem* p = GetFirstItem(); p; p = GetNextItem())
 	{
-		if (p->nPlace != pos_equiproom && (!bQuick || p->nPlace != pos_immediacy))
+		if (!IsBagItemPlace(p->nPlace) && (!bQuick || p->nPlace != pos_immediacy))
 			continue;
 		KItem& Data = Item[p->nIdx];
 		if (Data.GetGenre() == nGenre && Data.GetDetailType() == nDetail &&
@@ -3337,13 +3440,23 @@ static void ReforgeMessage(int nPlayer, const char* pszMessage)
 	Player[nPlayer].DoScriptAction(&Info);
 }
 
+
+int KItemList::InventoryRoomFromPlace(int nPlace)
+{
+	if (nPlace == pos_equiproom) return room_equipment;
+	if (nPlace == pos_equipment2) return room_equipment2;
+	int nPage = StoreBoxPageFromPlace(nPlace);
+	if (nPage == 0) return room_repository;
+	return nPage > 0 ? room_storepage2 + nPage - 1 : -1;
+}
+
 int KItemList::GetCopperCashCount()
 {
 	int nCount = 0;
 	for (int nList = m_UseIdx.GetNext(0); nList; nList = m_UseIdx.GetNext(nList))
 	{
 		KItem& Data = Item[m_Items[nList].nIdx];
-		if (m_Items[nList].nPlace == pos_equiproom && Data.GetGenre() == item_task &&
+		if (IsBagItemPlace(m_Items[nList].nPlace) && Data.GetGenre() == item_task &&
 			Data.GetDetailType() == 47)
 			nCount += Data.GetStackCount();
 	}
@@ -3355,7 +3468,7 @@ int KItemList::ReforgeItem(int nIdx, int nParticular, int nLevel, int nCostGenre
 {
 	int nBase, nLuckMin, nLuckMax;
 	int nList = FindSame(nIdx);
-	if (!nList || m_Items[nList].nPlace != pos_equiproom || m_Hand ||
+	if (!nList || !IsBagItemPlace(m_Items[nList].nPlace) || m_Hand ||
 		Player[m_PlayerIdx].CheckTrading() || Item[nIdx].GetGenre() != item_equip ||
 		nMaterialCount <= 0 || nCopperCount <= 0 || nMaterialCount > 1000 || nCopperCount > 100000 ||
 		!ItemGen.GetReforgeRule(&nBase, &nLuckMin, &nLuckMax))
@@ -3415,7 +3528,7 @@ int KItemList::ReforgeItem(int nIdx, int nParticular, int nLevel, int nCostGenre
 		for (int n = m_UseIdx.GetNext(0); n; n = m_UseIdx.GetNext(n))
 		{
 			int nItem = m_Items[n].nIdx;
-			if (m_Items[n].nPlace == pos_equiproom && Item[nItem].GetGenre() == item_task &&
+			if (IsBagItemPlace(m_Items[n].nPlace) && Item[nItem].GetGenre() == item_task &&
 				Item[nItem].GetDetailType() == 47)
 				nCosts[nCostsCount++] = nItem;
 		}
@@ -3467,8 +3580,8 @@ int KItemList::CompoundItems(const GAME_COMPOUND_ITEM_POS* pPositions, int nCoun
 		const GAME_COMPOUND_ITEM_POS& Pos = pPositions[i];
 		if (Pos.Place == 0 && Pos.X == 0 && Pos.Y == 0)
 			continue;
-		if (Pos.Place != pos_equiproom || Pos.X < 0 || Pos.X >= EQUIPMENT_ROOM_WIDTH ||
-			Pos.Y < 0 || Pos.Y >= EQUIPMENT_ROOM_HEIGHT)
+		if (!IsBagItemPlace(Pos.Place) ||
+			!Player[m_PlayerIdx].IsInventoryPosition(Pos.Place, Pos.X, Pos.Y, 1, 1))
 			return -1;
 		int nItem = 0;
 		for (int n = m_UseIdx.GetNext(0); n; n = m_UseIdx.GetNext(n))

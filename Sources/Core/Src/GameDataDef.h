@@ -75,7 +75,29 @@ enum INVENTORY_ROOM
 	room_tradeback,		// 交易过程中装备栏的备份
 	room_trade1,		// 交易过程中对方的交易栏
 	room_immediacy,		// 快捷物品
+	room_storepage2,
+	room_storepage3,
+	room_storepage4,
+	room_storepage5,
+	room_storepage6,
+	room_storepage7,
+	room_equipment2,
 	room_num,			// 空间数量
+};
+
+// 现客户端仓库第2～6页Place=13～17，第7页Place=21。
+inline BOOL IsBagItemPlace(int nPlace) { return nPlace == 3 || nPlace == 19; }
+inline int StoreBoxPageFromPlace(int nPlace)
+{
+	if (nPlace == 4) return 0;
+	if (nPlace >= 13 && nPlace <= 17) return nPlace - 12;
+	return nPlace == 21 ? 6 : -1;
+}
+
+struct PLAYER_INVENTORY_EXPANSION
+{
+	DWORD BagRows;
+	DWORD StoreTime[6];
 };
 
 enum ITEM_POSITION
@@ -87,6 +109,7 @@ enum ITEM_POSITION
 	pos_traderoom,		// 交易栏
 	pos_trade1,			// 交易过程中对方的交易栏
 	pos_immediacy,		// 快捷物品
+	pos_equipment2 = 19, // 新版背包第二页，7行按位永久开启
 	pos_buyback = 12,	// 商店回购栏，按原物品属性保存，不计入随身背包
 };
 
@@ -106,8 +129,9 @@ enum ITEM_POSITION
 #define		IMMEDIACY_ROOM_WIDTH		3
 #define		IMMEDIACY_ROOM_HEIGHT		1
 #define		MAX_IMMEDIACY_ITEM			(IMMEDIACY_ROOM_WIDTH * IMMEDIACY_ROOM_HEIGHT)
+#define		MAX_EXPANSION_ITEM (5 * 7 + 6 * 6 * 8)
 #define		MAX_PLAYER_ITEM_RESERVED	32
-#define		MAX_PLAYER_ITEM				(MAX_EQUIPMENT_ITEM + MAX_REPOSITORY_ITEM + MAX_TRADE_ITEM + MAX_TRADE1_ITEM + MAX_IMMEDIACY_ITEM + itempart_num + MAX_HAND_ITEM + MAX_PLAYER_ITEM_RESERVED)
+#define		MAX_PLAYER_ITEM				(MAX_EQUIPMENT_ITEM + MAX_REPOSITORY_ITEM + MAX_TRADE_ITEM + MAX_TRADE1_ITEM + MAX_IMMEDIACY_ITEM + itempart_num + MAX_HAND_ITEM + MAX_PLAYER_ITEM_RESERVED + MAX_EXPANSION_ITEM)
 
 
 #define		REMOTE_REVIVE_TYPE			0

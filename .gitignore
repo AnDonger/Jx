@@ -115,3 +115,6 @@ Resources/settings/ibshop.txt
 !Resources/maps/朝歌/v_089/
 /Resources/maps/朝歌/v_089/*
 !Resources/maps/朝歌/v_089/111_npc_s.dat
+
+# Lua-owned permanent backpack and warehouse expansion.
+!Resources/script/背包仓库扩展.lua

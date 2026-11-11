@@ -163,6 +163,7 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[c2s_npchurt] = NULL;
 	ProcessFunc[c2s_npcdeath] = NULL;
 	ProcessFunc[0x50] = &KProtocolProcess::CurrentRunCommand;
+	ProcessFunc[0xB2] = &KProtocolProcess::InventoryPurchaseCommand;
 	ProcessFunc[0xB8] = &KProtocolProcess::CurrentExtensionCommand;
 	ProcessFunc[c2s_playertalk] = &KProtocolProcess::PlayerTalkCommand;
 	ProcessFunc[c2s_teamapplyinfo] = &KProtocolProcess::PlayerApplyTeamInfo;
@@ -3539,7 +3540,7 @@ static BOOL ReadScriptFeedback(const BYTE *pData, const BYTE *pEnd, DWORD &dwTok
 		return FALSE;
 	__int64 nToken, nIndex, unknown_1, unknown_2, unknown_3, unknown_4;
 	if (!ReadScriptFeedbackInteger(pData, pEnd, nToken) || nToken < 0 || nToken > 0xFFFFFFFFLL ||
-		!ReadScriptFeedbackInteger(pData, pEnd, nIndex) || nIndex < -1 || nIndex >= MAX_ANSWERNUM ||
+		!ReadScriptFeedbackInteger(pData, pEnd, nIndex) || nIndex < -1 || (nIndex >= MAX_ANSWERNUM && nIndex != 255) ||
 		!ReadScriptFeedbackInteger(pData, pEnd, unknown_1) || unknown_1 != 0 ||
 		!ReadScriptFeedbackInteger(pData, pEnd, unknown_2) || unknown_2 != 0 ||
 		!ReadScriptFeedbackInteger(pData, pEnd, unknown_3) || unknown_3 != 0 ||
@@ -3548,7 +3549,7 @@ static BOOL ReadScriptFeedback(const BYTE *pData, const BYTE *pEnd, DWORD &dwTok
 		pData >= pEnd || *pData++ != 0x90 || pData != pEnd)
 		return FALSE;
 	dwToken = (DWORD)nToken;
-	nSelectIndex = (int)nIndex;
+	nSelectIndex = nIndex == 255 ? -1 : (int)nIndex;
 	return TRUE;
 }
 
@@ -3558,6 +3559,12 @@ void KProtocolProcess::CurrentExtensionCommand(int nIndex, BYTE* pProtocol)
 	memcpy(&wLength, pProtocol + 1, sizeof(wLength));
 	if (wLength < 3)
 		return;
+	if (pProtocol[3] == 0x0B)
+	{
+		if (wLength == 5 && pProtocol[4] == 0)
+			Player[nIndex].RequestInventoryPurchase(1, pProtocol[5]);
+		return;
+	}
 	if (pProtocol[3] == 5)
 	{
 		if (wLength != sizeof(GAME_BUY_ITEM_COMMAND) - 1)
@@ -3804,7 +3811,7 @@ void KProtocolProcess::CurrentSplitItemCommand(int nIndex, BYTE* pProtocol)
 	const GAME_SPLIT_ITEM_COMMAND* pCommand = (const GAME_SPLIT_ITEM_COMMAND*)pProtocol;
 	BOOL bSplit = FALSE;
 	if (!Player[nIndex].CheckTrading() && pCommand->Mode == 0 && pCommand->unknown_1 == 1 &&
-		(pCommand->Place != pos_repositoryroom || Player[nIndex].CanUseStoreBox()))
+		(StoreBoxPageFromPlace(pCommand->Place) < 0 || Player[nIndex].CanUseStoreBox()))
 	{
 		ItemPos Source;
 		Source.nPlace = pCommand->Place;
@@ -3823,7 +3830,7 @@ void KProtocolProcess::CurrentSplitItemCommand(int nIndex, BYTE* pProtocol)
 void KProtocolProcess::PlayerMoveItem(int nIndex, BYTE* pProtocol)
 {
 	const PLAYER_MOVE_ITEM_COMMAND* pCommand = (const PLAYER_MOVE_ITEM_COMMAND*)pProtocol;
-	if ((pCommand->m_btDownPos == pos_repositoryroom || pCommand->m_btUpPos == pos_repositoryroom) &&
+	if ((StoreBoxPageFromPlace(pCommand->m_btDownPos) >= 0 || StoreBoxPageFromPlace(pCommand->m_btUpPos) >= 0) &&
 		!Player[nIndex].CanUseStoreBox())
 	{
 		BYTE byFinished = s2c_itemexchangefinish;
@@ -4219,5 +4226,12 @@ void KProtocolProcess::ItemRepair(int nIndex, BYTE* pProtocol)
 	{
 		BuySell.Repair(nIndex, pIR->dwItemID);
 	}
+}
+#endif
+
+#ifdef _SERVER
+void KProtocolProcess::InventoryPurchaseCommand(int nIndex, BYTE* pProtocol)
+{
+	Player[nIndex].RequestInventoryPurchase(2, pProtocol[1]);
 }
 #endif

@@ -102,6 +102,10 @@ void	KPlayer::Release()
 {
 #ifdef _SERVER
 	ZeroMemory(&m_Pet, sizeof(m_Pet));
+	ZeroMemory(&m_InventoryExpansion, sizeof(m_InventoryExpansion));
+	m_nInventoryPurchaseKind = 0;
+	m_nInventoryPurchaseIndex = 0;
+	m_nInventoryPurchaseWorld = -1;
 	m_dwPetPickupTime = 0;
 	m_dwUseItemScriptID = 0;
 	m_dwUseItemID = 0;
@@ -826,7 +830,7 @@ BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 	switch(nStep)
 	{
 	case STEP_BASE_INFO:
-		{	
+		{
 			bRet = SubWorld[Npc[m_nIndex].m_SubWorldIndex].SendSyncData(m_nIndex, m_nNetConnectIdx);
 			if (!bRet)
 			{
@@ -876,6 +880,8 @@ BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 		break;
 	case STEP_FIGHT_SKILL_LIST:	
 		{
+			// SPG1权限在战斗技能扩展加载完成后可用，必须先于物品入包同步。
+			SyncInventoryExpansion();
 			bRet = SendSyncData_Skill();
 		}
 		break;
@@ -3634,7 +3640,7 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol, BOOL bPet)
 		Npc[m_nIndex].m_RegionIndex < 0 || Npc[m_nIndex].m_bExchangeServer ||
 		Npc[m_nIndex].m_Doing == do_death || Npc[m_nIndex].m_Doing == do_revive ||
 		CheckTrading() || !m_bFinishLoading || m_bExchangeServer ||
-		(bPet && !IsPetFunctionActive(0)) || pPickUp->Place != pos_equiproom)
+		(bPet && !IsPetFunctionActive(0)) || !IsBagItemPlace(pPickUp->Place))
 		return FALSE;
 	
 	int		nObjIndex, nNpcX, nNpcY, nObjX, nObjY;
@@ -3738,7 +3744,7 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol, BOOL bPet)
 				g_DebugLog("[Pet] sale: player=%d item=%lu money=%d name=%s",
 					m_nPlayerIndex, dwItem, (int)nPrice, szName);
 			}
-			else if (!m_ItemList.AddPickupItem(nItem, pPickUp->X, pPickUp->Y))
+			else if (!m_ItemList.AddPickupItem(nItem, pPickUp->X, pPickUp->Y, pPickUp->Place))
 				return FALSE;
 			if (bPet || bSold)
 				SendPetItemNotice(szName, pszColor, FALSE);
@@ -3786,10 +3792,11 @@ void	KPlayer::EatItem(BYTE* pProtocol)
 	const GAME_USE_ITEM_COMMAND *pEat = (const GAME_USE_ITEM_COMMAND*)pProtocol;
 	
 	if ((pEat->UseMode != 1 && pEat->UseMode != 2) ||
-		(pEat->Place != pos_equiproom && pEat->Place != pos_immediacy) ||
+		(!IsBagItemPlace(pEat->Place) && pEat->Place != pos_immediacy) ||
 		Npc[m_nIndex].m_Doing == do_death || Npc[m_nIndex].m_Doing == do_revive || CheckTrading())
 		return;
-	int nRoom = pEat->Place == pos_equiproom ? room_equipment : room_immediacy;
+	int nRoom = IsBagItemPlace(pEat->Place) ? KItemList::InventoryRoomFromPlace(pEat->Place) : room_immediacy;
+	if (IsBagItemPlace(pEat->Place) && !IsInventoryPosition(pEat->Place, pEat->X, pEat->Y, 1, 1)) return;
 	int nItem = m_ItemList.m_Room[nRoom].FindItem(pEat->X, pEat->Y);
 	if (nItem <= 0 || nItem >= MAX_ITEM)
 		return;
@@ -4604,7 +4611,7 @@ void KPlayer::Revive(int nType)
 		int nCopper = 0;
 		for (PlayerItem* pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
 		{
-			if (pItem->nPlace == pos_equiproom && Item[pItem->nIdx].GetGenre() == item_task &&
+			if (IsBagItemPlace(pItem->nPlace) && Item[pItem->nIdx].GetGenre() == item_task &&
 				Item[pItem->nIdx].GetDetailType() == 47 && Item[pItem->nIdx].GetStackCount() > 0)
 			{
 				nCopper = pItem->nIdx;
@@ -4753,7 +4760,10 @@ BOOL KPlayer::CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, 
 
 BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 {
-	if ((m_dwUseItemScriptID == dwScriptId ||
+	BOOL bInventoryScript = dwScriptId == g_FileName2Id("\\script\\背包仓库扩展.lua");
+	if (bInventoryScript && !IsInventoryPurchaseContext())
+		return FALSE;
+	if ((bInventoryScript || m_dwUseItemScriptID == dwScriptId ||
 		(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
 		Npc[m_nPeapleIdx].m_Kind == kind_dialoger &&
@@ -4761,7 +4771,7 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 		!CheckNpcScriptFunction(dwScriptId, szFunName, m_dwUseItemScriptID == dwScriptId))
 		return FALSE;
 	// 所有NPC物品、现金与任务交换使用同一事务，异常时恢复本次变更。
-	KNpcScriptTransaction Exchange((m_dwUseItemScriptID == dwScriptId ||
+	KNpcScriptTransaction Exchange((bInventoryScript || m_dwUseItemScriptID == dwScriptId ||
 		(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
@@ -4839,7 +4849,10 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 
 BOOL	KPlayer::ExecuteScript(DWORD dwScriptId, char * szFunName, char *  szParams)
 {
-	if ((m_dwUseItemScriptID == dwScriptId ||
+	BOOL bInventoryScript = dwScriptId == g_FileName2Id("\\script\\背包仓库扩展.lua");
+	if (bInventoryScript && !IsInventoryPurchaseContext())
+		return FALSE;
+	if ((bInventoryScript || m_dwUseItemScriptID == dwScriptId ||
 		(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
 		Npc[m_nPeapleIdx].m_Kind == kind_dialoger &&
@@ -4847,7 +4860,7 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId, char * szFunName, char *  szParams
 		!CheckNpcScriptFunction(dwScriptId, szFunName, m_dwUseItemScriptID == dwScriptId))
 		return FALSE;
 	// 所有NPC物品、现金与任务交换使用同一事务，异常时恢复本次变更。
-	KNpcScriptTransaction Exchange((m_dwUseItemScriptID == dwScriptId ||
+	KNpcScriptTransaction Exchange((bInventoryScript || m_dwUseItemScriptID == dwScriptId ||
 		(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
@@ -6227,6 +6240,72 @@ void KPlayer::CloseStoreBox()
 	m_nStoreBoxObjectID = 0;
 }
 
+BOOL KPlayer::CanChangeInventory()
+{
+	return m_bFinishLoading && !m_bExchangeServer && m_nIndex > 0 && m_nIndex < MAX_NPC &&
+		!Npc[m_nIndex].m_bExchangeServer && Npc[m_nIndex].m_CurrentLife > 0 &&
+		Npc[m_nIndex].m_Doing != do_death && Npc[m_nIndex].m_Doing != do_revive &&
+		!m_bIsQuiting && !CheckTrading();
+}
+
+BOOL KPlayer::IsInventoryPosition(int nPlace, int nX, int nY, int nWidth, int nHeight) const
+{
+	if (nX < 0 || nY < 0 || nWidth <= 0 || nHeight <= 0)
+		return FALSE;
+	if (IsBagItemPlace(nPlace))
+	{
+		if (nWidth > 5 || nHeight > 7 || nX > 5 - nWidth || nY > 7 - nHeight)
+			return FALSE;
+		if (nPlace == pos_equipment2)
+		{
+			for (int nRow = nY; nRow < nY + nHeight; nRow++)
+				if (!(m_InventoryExpansion.BagRows & (1UL << nRow)))
+					return FALSE;
+		}
+		return TRUE;
+	}
+	int nPage = StoreBoxPageFromPlace(nPlace);
+	return nPage >= 0 && nWidth <= 6 && nHeight <= 8 && nX <= 6 - nWidth && nY <= 8 - nHeight &&
+		(nPage == 0 || m_InventoryExpansion.StoreTime[nPage - 1] >= 31536000);
+}
+
+void KPlayer::SyncInventoryExpansion()
+{
+	BYTE Info[] = {0xF8, 5, 0, 0x18, 1, (BYTE)m_InventoryExpansion.BagRows};
+	g_pServer->PackDataToClient(m_nNetConnectIdx, Info, sizeof(Info));
+}
+
+void KPlayer::SyncStoreBoxPage(int nIndex)
+{
+	if (nIndex < 0 || nIndex >= 6)
+		return;
+	BYTE Info[] = {0x93, 8, 0, 1, (BYTE)nIndex, 0, 0, 0, 0};
+	memcpy(Info + 5, &m_InventoryExpansion.StoreTime[nIndex], sizeof(DWORD));
+	g_pServer->PackDataToClient(m_nNetConnectIdx, Info, sizeof(Info));
+}
+
+BOOL KPlayer::IsInventoryPurchaseContext()
+{
+	return CanChangeInventory() && Npc[m_nIndex].m_SubWorldIndex == m_nInventoryPurchaseWorld &&
+		(m_nInventoryPurchaseKind == 1 || (m_nInventoryPurchaseKind == 2 && CanUseStoreBox()));
+}
+
+void KPlayer::RequestInventoryPurchase(int nKind, int nIndex)
+{
+	if (!CanChangeInventory() || (nKind != 1 && nKind != 2) ||
+		nIndex < 0 || nIndex >= (nKind == 1 ? 7 : 6) || (nKind == 2 && !CanUseStoreBox()))
+		return;
+	m_nPeapleIdx = 0;
+	ClearUseItemContext();
+	m_nInventoryPurchaseKind = nKind;
+	m_nInventoryPurchaseIndex = nIndex;
+	m_nInventoryPurchaseWorld = Npc[m_nIndex].m_SubWorldIndex;
+	const char* pszScript = "\\script\\背包仓库扩展.lua";
+	if (!g_GetScript(pszScript) && !ReLoadScript(pszScript))
+		return;
+	ExecuteScript((char*)pszScript, "main", nKind);
+}
+
 BOOL KPlayer::OpenStoreBox(int nBox)
 {
 	CloseStoreBox();
@@ -6243,6 +6322,7 @@ BOOL KPlayer::OpenStoreBox(int nBox)
 	Info.ProtocolType = s2c_openstorebox;
 	Info.Length = sizeof(Info) - 1;
 	// 7 和两个尾部 DWORD 均取自本批正式服记录；细分含义尚未确认。
+	memcpy(Info.unknown_4, m_InventoryExpansion.StoreTime, sizeof(m_InventoryExpansion.StoreTime));
 	Info.unknown_3 = 7;
 	Info.unknown_5 = 1;
 	Info.unknown_6 = 1;
@@ -6806,7 +6886,7 @@ BOOL KPlayer::UseSkillBuffItem(int nItem)
 	for (PlayerItem* pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
 	{
 		if (pItem->nIdx == nItem &&
-			(pItem->nPlace == pos_equiproom || pItem->nPlace == pos_immediacy))
+			(IsBagItemPlace(pItem->nPlace) || pItem->nPlace == pos_immediacy))
 		{
 			bOwned = TRUE;
 			break;
@@ -7421,7 +7501,7 @@ int KPlayer::FindUseScriptItem()
 	for (PlayerItem* pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
 	{
 		if (pItem->nIdx <= 0 || pItem->nIdx >= MAX_ITEM ||
-			(pItem->nPlace != pos_equiproom && pItem->nPlace != pos_immediacy))
+			(!IsBagItemPlace(pItem->nPlace) && pItem->nPlace != pos_immediacy))
 			continue;
 		KItem& Data = Item[pItem->nIdx];
 		if (Data.GetID() != m_dwUseItemID || Data.GetStackCount() <= 0)

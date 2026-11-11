@@ -75,12 +75,13 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	PLAYER_SKILL_EXT_HEADER Header;
 	memcpy(&Header, pData, sizeof(Header));
 	DWORD dwRecordSize = Header.Version >= 3 ? sizeof(PLAYER_SKILL_EXT_RECORD_V3) : sizeof(PLAYER_SKILL_EXT_RECORD);
-	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 4) ||
+	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 5) ||
 		Header.SkillCount != pRole->nFightSkillCount || Header.SkillCount >= MAX_NPCSKILL || Header.BuffCount > 16 ||
 		dwLength != sizeof(Header) + Header.SkillCount * dwRecordSize +
 		Header.BuffCount * sizeof(PLAYER_SKILL_BUFF) +
 		(Header.Version >= 2 ? sizeof(PLAYER_PET_DATA) : 0) +
-		(Header.Version >= 4 ? sizeof(PLAYER_MORPH_DATA) : 0))
+		(Header.Version >= 4 ? sizeof(PLAYER_MORPH_DATA) : 0) +
+		(Header.Version >= 5 ? sizeof(PLAYER_INVENTORY_EXPANSION) : 0))
 		return FALSE;
 	BOOL Seen[MAX_NPCSKILL];
 	PLAYER_SKILL_EXT_RECORD Records[MAX_NPCSKILL];
@@ -169,6 +170,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	if (Header.Version >= 4)
 	{
 		memcpy(&Morph, pData, sizeof(Morph));
+		pData += sizeof(Morph);
 		if (Morph.Type == -1)
 		{
 			if (Morph.CanCast != TRUE || Morph.EndTime != 0)
@@ -189,6 +191,16 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 			}
 		}
 	}
+	PLAYER_INVENTORY_EXPANSION Expansion = {};
+	if (Header.Version >= 5)
+	{
+		memcpy(&Expansion, pData, sizeof(Expansion));
+		if (Expansion.BagRows > 127 || (Expansion.BagRows & (Expansion.BagRows + 1)))
+			return FALSE;
+		for (int i = 0; i < 6; i++)
+			if (Expansion.StoreTime[i] != 0 && Expansion.StoreTime[i] != 31536000)
+				return FALSE;
+	}
 	DWORD PreviousCastTimes[MAX_NPCSKILL];
 	for (int i = 0; i < MAX_NPCSKILL; i++)
 		PreviousCastTimes[i] = List.m_Skills[i].NextCastTime;
@@ -202,6 +214,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 		}
 	}
 	Player.m_Pet = Pet;
+	Player.m_InventoryExpansion = Expansion;
 	Npc[Player.m_nIndex].m_nMorphType = Morph.Type;
 	Npc[Player.m_nIndex].m_bMorphCanCast = Morph.CanCast;
 	Npc[Player.m_nIndex].m_dwMorphEndTime = Morph.EndTime;
@@ -223,7 +236,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	return TRUE;
 }
 
-static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_PET_DATA& Pet, BYTE* pData, DWORD dwCapacity)
+static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_PET_DATA& Pet, const PLAYER_INVENTORY_EXPANSION& Expansion, BYTE* pData, DWORD dwCapacity)
 {
 	DWORD dwNow = (DWORD)time(NULL);
 	DWORD dwBuffCount = 0;
@@ -232,9 +245,9 @@ static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_
 		if (List.m_SkillBuffs[i].BuffId && List.m_SkillBuffs[i].EndTime > dwNow)
 			dwBuffCount++;
 	}
-	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 4, List.GetCount(), dwBuffCount};
+	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 5, List.GetCount(), dwBuffCount};
 	DWORD dwSize = sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD_V3) +
-		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet) + sizeof(PLAYER_MORPH_DATA);
+		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet) + sizeof(PLAYER_MORPH_DATA) + sizeof(Expansion);
 	if (dwSize > dwCapacity)
 		return -1;
 	memcpy(pData, &Header, sizeof(Header));
@@ -271,6 +284,8 @@ static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_
 		Morph.EndTime = Owner.m_dwMorphEndTime;
 	}
 	memcpy(pData, &Morph, sizeof(Morph));
+	pData += sizeof(Morph);
+	memcpy(pData, &Expansion, sizeof(Expansion));
 	return dwSize;
 }
 
@@ -1049,7 +1064,7 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 			g_DebugLog("[Item] Cannot allocate saved item: role=%s, item=%d, class=%d, detail=%d, particular=%d, level=%d", m_PlayerName, i, nItemClass, NewItem.m_CommonAttrib.nDetailType, NewItem.m_CommonAttrib.nParticularType, NewItem.m_CommonAttrib.nLevel);
 			return -1;
 		}
-		if (m_ItemList.Add(nIndex, nLocal, nItemX, nItemY) <= 0)
+		if (m_ItemList.Add(nIndex, nLocal, nItemX, nItemY, TRUE) <= 0)
 		{
 			ItemSet.Remove(nIndex);
 			g_DebugLog("[Item] Cannot restore saved item: role=%s, place=%d, x=%d, y=%d", m_PlayerName, nLocal, nItemX, nItemY);
@@ -1389,6 +1404,9 @@ int	KPlayer::SavePlayerItemList(BYTE * pRoleBuffer)
 		nIdx = m_ItemList.m_UseIdx.GetNext(nIdx);
 		if (nIdx == 0 )
 			break;
+		if (nItemCount >= MAX_PLAYER_ITEM ||
+			(BYTE*)(pItemData + 1) - pRoleBuffer > sizeof(m_SaveBuffer))
+			return -1;
 		int nItemIndex = m_ItemList.m_Items[nIdx].nIdx;
 		
 		sprintf(szSection, "%s%d", SECTION_ITEM, nItemCount + 1);
@@ -1475,7 +1493,7 @@ int KPlayer::SavePlayerFightSkillList(BYTE* pRoleBuffer)
 		return -1;
 	pRoleData->nFightSkillCount = nCount;
 	dwOffset += dwStandardSize;
-	int nSize = SavePlayerSkillExtension(Npc[m_nIndex], List, m_Pet, pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
+	int nSize = SavePlayerSkillExtension(Npc[m_nIndex], List, m_Pet, m_InventoryExpansion, pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
 	if (nSize < 0)
 		return -1;
 	pRoleData->dwLSkillOffset = dwOffset + nSize;

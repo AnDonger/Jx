@@ -1,10 +1,10 @@
 # 当前 Lua 可用函数说明（Lua函数表）
 
-核对日期：2026-11-11。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
+核对日期：2026-11-12。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
 
 ## 阅读方法与范围
 
-- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **263个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **355个不同名字**，均有独立条目。
+- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **268个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **360个不同名字**，均有独立条目。
 - “实现已核对”表示已对照当前注册和函数正文，**不表示全部接口已通过新版客户端实测**。带“旧接口”“待适配”“有缺陷”“不可用”的条目保留用于查错；不能把存在名字当成功能已完整适配。
 - 以服务端 `_SERVER` 分支为准，排除注释中的注册项、客户端专用 `PlaySound` / `PlaySprMovie`、未注册的C++辅助函数。原脚本内 `main`、`OnCompound`、公共库中自定义函数不属于引擎全局API；只能在加载了对应脚本后使用其实际定义。
 - 普通NPC／玩家脚本由 `GameScriptFuns` 注册；全局世界脚本由 `WorldScriptFuns` 注册。标准库在创建Lua状态时打开。脚本可覆盖同名全局，使用时还要核对原脚本及 `Include` 内容。
@@ -40,9 +40,11 @@ Lua不得直接连接、查询或修改数据库，不得编写、拼接或执�
 
 当前窗口请求事务提供 `GetSelectedItems` → `DelSelectedItem` / `Pay` / `AddNormalItem` → `CompleteItemOperation` 的调用链。`CompleteItemOperation(0)`表示**概率失败但操作已完成，提交合法消耗**；未完成或Lua报错则回滚，`CompleteItemOperation(1)`之后报错也会回滚。
 
-已有快照覆盖随身背包、快捷栏、鼠标物品、各房间现金、玩家任务、普通宠物状态和经典／IB技能Buff；`AddOwnExp`在成功后延迟发放；所有脚本UI、`PutMessage` / `Msg2Player`以及`WasteCopperCash`扣铜钱通知在事务成功后延迟发送。`PolyMorph`验证后延迟提交，失败不变身。**不保证任意Lua回调都有事务**：当前所有实际绑定NPC脚本的对白入口与物品窗口入口建立事务。穿戴、仓库、技能学习、阵营、帮会、婚姻、位置、系统文件副作用等未泛化纳入完整快照。`WriteLog`以及某些旧协议通知也不回滚。新业务涉及这些范围时，先补通用事务与存档支持，不能宣称已支持完整回滚。
+已有快照覆盖随身背包两页（第二页仅已解锁行，旧第一页6×10原存档坐标在回滚时完整保留）、快捷栏、鼠标物品、各房间现金、玩家任务、普通宠物状态、背包／仓库永久扩展权限和经典／IB技能Buff；`AddOwnExp`在成功后延迟发放；所有脚本UI、`PutMessage` / `Msg2Player`以及`WasteCopperCash`扣铜钱通知在事务成功后延迟发送。`PolyMorph`验证后延迟提交，失败不变身。**不保证任意Lua回调都有事务**：当前所有实际绑定NPC脚本的对白入口与物品窗口入口，以及服务端绑定的背包／仓库扩展系统脚本与其对白回调建立事务。穿戴、仓库、技能学习、阵营、帮会、婚姻、位置、系统文件副作用等未泛化纳入完整快照。`WriteLog`以及某些旧协议通知也不回滚。新业务涉及这些范围时，先补通用事务与存档支持，不能宣称已支持完整回滚。
 
 物品模板中的脚本入口及其对白回调新增自动事务，但仅开放 `KSortScript.cpp::IsItemTransactionFunction` 中已覆盖快照的接口和只读／纯计算接口；地图类仅开放下述受限延迟接口 `TeleportWithItem`；`NewWorld`、`SetPos`、`SetRevPos`、`UseTownPortal` 等即时接口，以及技能、Buff、外部IO等仍不在该入口的支持范围。每个回调执行前重新检查调用关系，失败不提交本次道具消耗、现金及宠物变更。NPC脚本入口已扩展到所有地图；其物品、现金、任务、Buff和延迟变身在上述范围内回滚，不能据此认为穿戴、仓库等即时副作用已完整覆盖。
+
+背包／仓库永久购买业务见 `Resources/script/背包仓库扩展.lua`；费用来自归档 `00587-29b2371f.bin`，仓库确认流程参考 `00596-2a5f65da.bin`。扩展系统入口有自动事务，权限变化在提交后同步并通过C++保存，Lua不访问数据库；新增的权限快照不表示仓库内物品操作已纳入NPC物品交换快照。
 
 ## 分类索引
 
@@ -498,7 +500,7 @@ HaveNormalItem(genre, detail, particular, level)
 
 - 参数：四项依次为物品大类、子类、具体类别、模板等级；必须正好4个参数。
 - 返回：背包匹配物品的总叠加数量；无匹配／参数不符为0。
-- 限制／说明：只统计 pos_equiproom 随身背包；不含穿戴、仓库、快捷栏或鼠标。不是布尔值，判断必须 count > 0。
+- 限制／说明：统计 Place=3／19 两页随身背包；不含穿戴、仓库、快捷栏或鼠标。不是布尔值，判断必须 count > 0。
 - 实现：[`LuaHaveNormalItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1158)。
 
 用法示例：
@@ -517,7 +519,7 @@ HaveItem2(genre, detail, particular, level)
 
 - 参数：四项依次为物品大类、子类、具体类别、模板等级；必须正好4个参数。
 - 返回：背包匹配物品的总叠加数量；无匹配／参数不符为0。
-- 限制／说明：与 `HaveNormalItem` 同一实现、同一参数和返回值。只统计 pos_equiproom 随身背包；不含穿戴、仓库、快捷栏或鼠标。不是布尔值，判断必须 count > 0。
+- 限制／说明：与 `HaveNormalItem` 同一实现、同一参数和返回值。统计 Place=3／19 两页随身背包；不含穿戴、仓库、快捷栏或鼠标。不是布尔值，判断必须 count > 0。
 - 实现：[`LuaHaveNormalItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1158)。
 
 用法示例：
@@ -536,7 +538,7 @@ IsExistItem(genre, detail, particular, level)
 
 - 参数：四项依次为物品大类、子类、具体类别、模板等级；必须正好4个参数。
 - 返回：背包匹配物品的总叠加数量；无匹配／参数不符为0。
-- 限制／说明：与 `HaveNormalItem` 同一实现、同一参数和返回值。只统计 pos_equiproom 随身背包；不含穿戴、仓库、快捷栏或鼠标。不是布尔值，判断必须 count > 0。
+- 限制／说明：与 `HaveNormalItem` 同一实现、同一参数和返回值。统计 Place=3／19 两页随身背包；不含穿戴、仓库、快捷栏或鼠标。不是布尔值，判断必须 count > 0。
 - 实现：[`LuaHaveNormalItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1158)。
 
 用法示例：
@@ -555,7 +557,7 @@ DelNormalItem(genre, detail, particular, level[, count=1])
 
 - 参数：前四项与 HaveNormalItem 相同；count：正整数，可跨背包内多叠扣取。
 - 返回：成功1，失败0；已有物品事务内失败抛错使事务回滚。
-- 限制／说明：默认仅背包。特定临仙露类消耗前检查互斥及时间上限；不是任意物品服务器索引删除接口。
+- 限制／说明：默认仅两页背包（第二页仅已解锁行）。特定临仙露类消耗前检查互斥及时间上限；不是任意物品服务器索引删除接口。
 - 实现：[`LuaDelNormalItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1347)。
 
 用法示例：
@@ -574,7 +576,7 @@ DelItem2(genre, detail, particular, level[, count=1])
 
 - 参数：前四项与 HaveNormalItem 相同；count：正整数，可跨背包内多叠扣取。
 - 返回：成功1，失败0；已有物品事务内失败抛错使事务回滚。
-- 限制／说明：与 `DelNormalItem` 同一实现、同一参数和返回值。默认仅背包。特定临仙露类消耗前检查互斥及时间上限；不是任意物品服务器索引删除接口。
+- 限制／说明：与 `DelNormalItem` 同一实现、同一参数和返回值。默认仅两页背包（第二页仅已解锁行）。特定临仙露类消耗前检查互斥及时间上限；不是任意物品服务器索引删除接口。
 - 实现：[`LuaDelNormalItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1347)。
 
 用法示例：
@@ -6851,7 +6853,7 @@ PolyMorph(type, canCast, safeguard, speed, seconds)
 - 作用域：NPC脚本；必须5个整数。type为有效NPC资源模板，canCast为0／1；当前仅实现safeguard=0、speed=-1，其他组合明确失败。
 - seconds为1～360000；`PolyMorph(-1,1,0,-1,0)`清除形态。不能以不存在的模板替代外观。
 - 返回成功1、失败0；事务内验证后延迟提交，失败不扣资源也不改形态。canCast=0禁止主动施法。
-- 状态通过当前客户端4B同步，过图／重登继续，按绝对到期时间还原；角色扩展SPG1 v4兼容读取旧1～3版本。
+- 状态通过当前客户端4B同步，过图／重登继续，按绝对到期时间还原；角色扩展SPG1 v5兼容读取旧1～4版本；v5在变身之后追加背包／仓库永久权限。
 - 示例：`assert(PolyMorph(99, 0, 0, -1, 3600) == 1)`。
 
 ### `GetLastSkillIdx`
@@ -6872,3 +6874,61 @@ local learned = IsSkillActivedByIdx(index)
 - 作用域：NPC／玩家脚本。index为内部1起始技能槽号；有效、有技能且学习状态为3时返回1，否则0。
 - 只查询学习权限，不表示技能正在施放、光环打开或冷却结束；不要用于绕过技能冷却。
 - 示例：`if IsSkillActivedByIdx(i) == 1 then local id = GetSkillId(i) end`。当前道具事务白名单未开放。
+
+
+## 背包与仓库永久扩展（2026-11-12）
+
+以下五个函数注册于 `GameScriptFuns`，目前用于服务端绑定的系统Lua和NPC脚本；不是客户端可任意调用的命令。行／页下标均为0起始。只读接口在没有合法玩家时返回未开启状态。
+
+### `GetInventoryPurchase`
+
+```lua
+local kind, index = GetInventoryPurchase()
+```
+
+- 无参数；返回服务端当前购买窗口的类型与下标。kind=1表示背包第二页的行，index=0～6；kind=2表示仓库租购页，index=0～5，对应界面第2～7页。
+- 必须是已进图、存活、未切图／退出／交易的同一地图上下文；仓库购买还必须在有使用许可的箱子附近。无效时返回0、-1。
+- 不消耗、不修改权限。选择值由原生请求建立，不能通过Lua指定其他玩家或任意客户端参数。
+- 示例：`local kind, index = GetInventoryPurchase(); if kind == 0 then return end`。
+
+### `GetBagRowState`
+
+```lua
+local opened = GetBagRowState(row)
+```
+
+- row：整数0～6，只查询背包第二页对应行；已永久开启返回1，否则0；参数错误返回0。
+- 不代表第一页状态。第二页每行5格，跨行物品必须覆盖的所有行都已开启。
+- 示例：`if GetBagRowState(0) == 0 then Talk(1,"no","请先开启第一行。") end`。
+
+### `ExtendBag`
+
+```lua
+assert(ExtendBag(row) == 1)
+```
+
+- row：整数0～6。必须位于通用NPC／扩展系统脚本事务中，且角色可操作物品。
+- 只允许依次开启下一行；重复购买、跳行和非法参数均失败并触发事务回滚。成功返回1，失败返回0或抛出Lua错误。
+- **本函数不扣费**。脚本先检查费用并调用 `WasteCopperCash(cost)`，然后开启；两者处于同一事务。权限在事务成功后发送F8/18，失败同时恢复铜钱和权限。
+- 示例：`assert(WasteCopperCash(10) == 1); assert(ExtendBag(0) == 1)`。10只是原资源第一行费用示例，业务应从对应Lua费用表读取。
+
+### `GetStoreBoxRentTime`
+
+```lua
+local time = GetStoreBoxRentTime(index)
+```
+
+- index：整数0～5，对应仓库界面第2～7页。返回0表示未开启，31536000表示本版客户端识别的永久使用权；不是Unix到期时间，不会随时间递减。
+- 参数错误／无合法玩家返回0。不包含默认开启的第1页。
+- 示例：`if GetStoreBoxRentTime(0) >= 31536000 then Talk(1,"no","该页已永久开启。") end`。
+
+### `RentStoreBox`
+
+```lua
+assert(RentStoreBox(index, 31536000, cost) == 1)
+```
+
+- index：整数0～5；第二参数本次仅支持31536000永久标记；cost：1～2147483647的整数，作为原脚本调用约定的费用描述，**不会在此函数重复扣钱**。
+- 必须位于通用事务中，角色有仓库使用许可、处于对应箱子范围且该页尚未购买。条件／参数错误触发失败回滚；成功1，失败0或Lua错误。
+- Lua应先执行 `assert(WasteCopperCash(cost) == 1)` 再执行本函数；成功后发送93/操作1的单页权限，同步使用C++保存，重登通过完整开箱包恢复六页权限。
+- 示例：`local cost = 10; assert(WasteCopperCash(cost) == 1); assert(RentStoreBox(0,31536000,cost) == 1)`。实际费用由对应Lua读取原资源规则。

@@ -75,7 +75,7 @@ public:
 	int			GetWeaponParticular();							// 取得武器的具体类型，用于计算不同的伤害加强
 	int			GetWeaponSkillType();					// 当前资源的武器技能类别（需求属性44）
 	void		GetWeaponDamage(int* nMin, int* nMax);			// 取得武器的伤害
-	int			Add(int nIdx, int nPlace, int nX, int nY);		// nIdx指游戏世界中道具数组的编号
+	int			Add(int nIdx, int nPlace, int nX, int nY, BOOL bRestoreOriginal = FALSE);		// nIdx指游戏世界中道具数组的编号
 	BOOL		Remove(int nIdx);								// nIdx指游戏世界中道具数组的编号
 	void		RemoveAll();
 	BOOL		CanEquip(int nIdx, int nPlace = -1);			// nIdx指游戏世界中道具数组的编号
@@ -105,7 +105,7 @@ public:
 	void		RecoverTrade();
 	void		StartTrade();
 #ifdef	_SERVER
-	BOOL		AddPickupItem(int nIdx, int nX, int nY);
+	BOOL		AddPickupItem(int nIdx, int nX, int nY, int nPlace = pos_equiproom);
 	BOOL		SellPickupItem(int nIdx, int nMoney);
 	BOOL		BuyWithItemCurrency(KItem* pTemplate, int nCount, int nGenre, int nDetail, int nCost);
 	int			GetBuyBackItems(int* pItems);
@@ -115,6 +115,7 @@ public:
 	void		SyncItem(int nIdx, BOOL bRefresh = FALSE);
 	int		ReforgeItem(int nIdx, int nParticular, int nLevel, int nCostGenre, int nCostDetail, int nCostParticular, int nCostLevel, int nMaterialCount, int nCopperCount);
 	int		GetCopperCashCount();
+	static int InventoryRoomFromPlace(int nPlace);
 	BOOL		SplitItem(ItemPos* pSource, DWORD dwCount);
 	int		CompoundItems(const GAME_COMPOUND_ITEM_POS* pPositions, int nCount);
 	int			CountNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, BOOL bQuick = FALSE);
@@ -129,7 +130,7 @@ public:
 	void		GetTradeRoomItemInfo();				// 交易中把 trade room 中的 item 的 idx width height 信息写入 itemset 中的 m_psItemInfo 中去
 	BOOL		TradeCheckCanPlace();				// 交易中判断买进的物品能不能完全放进自己的物品栏
 	static BOOL InitEquipmentRoomLayout();
-	BOOL		CheckCanPlaceInEquipment(int nWidth, int nHeight, int *pnX, int *pnY);// 判断一定长宽的物品能否放进物品栏
+	BOOL		CheckCanPlaceInEquipment(int nWidth, int nHeight, int *pnX, int *pnY, int *pnPlace = NULL);// 判断一定长宽的物品能否放进物品栏
 	BOOL		EatMecidine(int nPlace, int nX, int nY);		// 吃什么地方的药
 	// 自动把一个药品从room_equipment移动到room_immediacy
 	BOOL		AutoMoveMedicine(int nItemIdx, int nSrcX, int nSrcY, int nDestX, int nDestY);

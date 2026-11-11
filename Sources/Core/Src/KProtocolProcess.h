@@ -136,6 +136,7 @@ public:
 	void	CurrentSplitItemCommand(int nIndex, BYTE* pProtocol);
 	void	CurrentMountCommand(int nIndex, BYTE* pProtocol);
 	void	CurrentRunCommand(int nIndex, BYTE* pProtocol);
+	void InventoryPurchaseCommand(int nIndex, BYTE* pProtocol);
 	void	CurrentExtensionCommand(int nIndex, BYTE* pProtocol);
 	void	NpcSkillCommand(int nIndex, BYTE* pProtocol);
 	void	NpcJumpCommand(int nIndex, BYTE* pProtocol);

@@ -322,7 +322,7 @@ BOOL KBuySell::Repair(int nPlayerIdx, DWORD dwItemID)
 	if (nItem <= 0 || nItem >= MAX_ITEM)
 		return FALSE;
 	int nPlace = Role.m_ItemList.GetItemPlace(nItem);
-	if (nPlace != pos_equip && nPlace != pos_equiproom)
+	if (nPlace != pos_equip && !IsBagItemPlace(nPlace))
 		return FALSE;
 	int nCost = 0;
 	if (!Role.CheckRepairItem(dwItemID, &nCost))
@@ -570,7 +570,7 @@ BOOL KBuySell::Buy(int nPlayerIdx, int nBuy, int nBuyIdx, int nPlace, int nX, in
 		nPlace = pos_equiproom;
 		nX = nY = -1;
 	}
-	if (nPlace != pos_equiproom && nPlace != pos_hand)
+	if (!IsBagItemPlace(nPlace) && nPlace != pos_hand)
 		return FALSE;
 	KPlayer &Role = Player[nPlayerIdx];
 	if (nPlace == pos_hand && (nX != 0 || nY != 0 || Role.m_ItemList.Hand() != 0))
@@ -580,7 +580,7 @@ BOOL KBuySell::Buy(int nPlayerIdx, int nBuy, int nBuyIdx, int nPlace, int nX, in
 		const KBASICPROP_NORMALITEM* pTemplate = ItemGen.GetNormalItemTemplate(pItem->GetGenre(),
 			pItem->GetDetailType(), pItem->GetParticular(), pItem->GetLevel(),
 			pItem->m_GeneratorParam.nVersion);
-		if (!pTemplate || pTemplate->m_nCopperPrice <= 0 || nPlace != pos_equiproom)
+		if (!pTemplate || pTemplate->m_nCopperPrice <= 0 || !IsBagItemPlace(nPlace))
 			return FALSE;
 		int nCost = pTemplate->m_nCopperPrice;
 		BOOL bBought = Role.m_ItemList.BuyWithItemCurrency(pItem, 1, item_task, 47, nCost);
@@ -618,7 +618,7 @@ BOOL KBuySell::Buy(int nPlayerIdx, int nBuy, int nBuyIdx, int nPlace, int nX, in
 	if (nPlace == pos_hand)
 		bAdded = Role.m_ItemList.Add(nItemIdx, pos_hand, 0, 0) != 0;
 	else
-		bAdded = Role.m_ItemList.AddPickupItem(nItemIdx, nX, nY);
+		bAdded = Role.m_ItemList.AddPickupItem(nItemIdx, nX, nY, nPlace);
 	if (!bAdded)
 	{
 		ItemSet.Remove(nItemIdx);
@@ -645,7 +645,7 @@ BOOL KBuySell::Sell(int nPlayerIdx, int nBuy, int nIdx)
 		pEntry = List.GetNextItem();
 	// The duplicate request finds the original item in the buyback container.
 	if (nIdx <= 0 || nIdx >= MAX_ITEM || !pEntry || pEntry->nIdx != nIdx ||
-		(pEntry->nPlace != pos_hand && pEntry->nPlace != pos_equiproom) ||
+		(pEntry->nPlace != pos_hand && !IsBagItemPlace(pEntry->nPlace)) ||
 		Item[nIdx].GetGenre() == item_task || Item[nIdx].GetPrice() <= 0)
 		return FALSE;
 
@@ -699,14 +699,14 @@ BOOL KBuySell::BuyBack(int nPlayerIdx, DWORD dwItemID)
 		ShopMessage(nPlayerIdx, MSG_SHOP_NO_MONEY);
 		return FALSE;
 	}
-	int nX, nY;
-	if (!List.CheckCanPlaceInEquipment(Item[nIdx].GetWidth(), Item[nIdx].GetHeight(), &nX, &nY))
+	int nX, nY, nPlace;
+	if (!List.CheckCanPlaceInEquipment(Item[nIdx].GetWidth(), Item[nIdx].GetHeight(), &nX, &nY, &nPlace))
 	{
 		ShopMessage(nPlayerIdx, MSG_SHOP_NO_ROOM);
 		return FALSE;
 	}
 	// Move the original item without regenerating its ID, attributes, durability or count.
-	if (!List.MoveShopItem(nIdx, pos_equiproom, nX, nY, FALSE))
+	if (!List.MoveShopItem(nIdx, nPlace, nX, nY, FALSE))
 		return FALSE;
 	Player[nPlayerIdx].Pay((int)nPrice);
 	List.SyncItemPosition(nIdx);

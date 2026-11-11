@@ -128,6 +128,10 @@ private:
 public:
 #ifdef _SERVER
 	PLAYER_PET_DATA m_Pet;
+	PLAYER_INVENTORY_EXPANSION m_InventoryExpansion;
+	int m_nInventoryPurchaseKind;
+	int m_nInventoryPurchaseIndex;
+	int m_nInventoryPurchaseWorld;
 	DWORD m_dwPetPickupTime;
 	DWORD			m_dwUseItemScriptID;
 	DWORD			m_dwUseItemID;
@@ -297,6 +301,12 @@ public:
 	void			ExecuteObjectScript(int nObjIndex);
 	BOOL			OpenStoreBox(int nBox);
 	BOOL			CanUseStoreBox();
+	BOOL IsInventoryPurchaseContext();
+	void RequestInventoryPurchase(int nKind, int nIndex);
+	void SyncInventoryExpansion();
+	void SyncStoreBoxPage(int nIndex);
+	BOOL CanChangeInventory();
+	BOOL IsInventoryPosition(int nPlace, int nX, int nY, int nWidth, int nHeight) const;
 	BOOL			OpenItemCompound(BOOL bNewWindow, const char* pszFunction = "OnCompound");
 	BOOL			CanCompoundItems();
 	void			CompoundMessage(const char* pszMessage);

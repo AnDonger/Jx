@@ -807,6 +807,7 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 	case 0x89: return nSize == sizeof(GAME_COMPOUND_COMMAND);
 	case 0x94: return nSize == sizeof(GAME_SPLIT_ITEM_COMMAND);
 	case 0x98: return nSize == 1;
+	case 0xB2: return nSize == 2;
 	case 0xA4:
 		if (nSize < 4 || *(const WORD*)(pChar + 1) + PROTOCOL_MSG_SIZE != nSize)
 			return false;
@@ -832,6 +833,8 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 	{
 		if (nSize < 4 || *(const WORD*)(pChar + 1) + PROTOCOL_MSG_SIZE != nSize)
 			return false;
+		if ((BYTE)pChar[3] == 0x0B)
+			return nSize == 6 && pChar[4] == 0;
 		if ((BYTE)pChar[3] == 5)
 			return nSize == sizeof(GAME_BUY_ITEM_COMMAND);
 		if ((BYTE)pChar[3] == 0x38)
