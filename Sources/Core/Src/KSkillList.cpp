@@ -1101,6 +1101,43 @@ int KSkillList::GetPlayerSkillBuffTime(DWORD dwBuffId)
 	return 0;
 }
 
+// 经典状态的参数来自原脚本；与临仙露倍率规则共用持久化状态容器。
+BOOL KSkillList::IsValidPlayerSkillBuffData(DWORD dwBuffId, int nSkillId, int nValue)
+{
+	if (nSkillId < 0 || nSkillId >= MAX_SKILL || (dwBuffId != 8 && nSkillId != 0))
+		return FALSE;
+	switch (dwBuffId)
+	{
+	case 5: return nValue >= 1 && nValue <= 5;
+	case 12: return nValue >= 1 && nValue <= 1000;
+	case 13:
+	case 14: return nValue >= 1 && nValue <= 32767;
+	case 7:
+	case 8:
+	case 23:
+	case 107:
+	case 271:
+	case 272: return nValue >= 1 && nValue <= 5 && (dwBuffId != 8 || nSkillId > 0);
+	default: return FALSE;
+	}
+}
+
+int KSkillList::GetPlayerBuffValue(DWORD dwBuffId)
+{
+	DWORD dwNow = (DWORD)time(NULL);
+	for (int i = 0; i < 16; i++)
+	{
+		if (m_SkillBuffs[i].BuffId == dwBuffId && m_SkillBuffs[i].EndTime > dwNow)
+			return m_SkillBuffs[i].Value;
+	}
+	return 0;
+}
+
+int KSkillList::GetPlayerExperienceMultiplier()
+{
+	return max(1, GetPlayerBuffValue(5));
+}
+
 int KSkillList::GetSkillExpMultiplier()
 {
 	int nMultiplier = 1;
@@ -1110,17 +1147,19 @@ int KSkillList::GetSkillExpMultiplier()
 		if (pRule && GetPlayerSkillBuffTime(pRule->BuffId) && pRule->Multiplier > nMultiplier)
 			nMultiplier = pRule->Multiplier;
 	}
-	return nMultiplier;
+	// 原太岁状态12的参数为熟练度增幅百分比，而非倍率。
+	int nPercent = GetPlayerBuffValue(12);
+	return nMultiplier * (100 + nPercent) / 100;
 }
 
-BOOL KSkillList::AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, int nValue, BOOL bAddTime)
+BOOL KSkillList::AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, int nValue, BOOL bAddTime, BOOL bSync)
 {
-	if (nSeconds <= 0 || nSeconds > 100 * 3600 || nValue <= 0 || nValue > 5 ||
-		(dwBuffId == 8 && (!nSkillId || !IsPlayerSkillLearned(nSkillId))) ||
-		(dwBuffId != 8 && nSkillId != 0) ||
-		(dwBuffId != 7 && dwBuffId != 8 && dwBuffId != 23 && dwBuffId != 107 && dwBuffId != 271 && dwBuffId != 272))
+	if (nSeconds <= 0 || nSeconds > 100 * 3600 ||
+		!IsValidPlayerSkillBuffData(dwBuffId, nSkillId, nValue) ||
+		(dwBuffId == 8 && !IsPlayerSkillLearned(nSkillId)))
 		return FALSE;
-	ExpirePlayerSkillBuffs();
+	if (bSync)
+		ExpirePlayerSkillBuffs();
 	int nFree = -1;
 	for (int i = 0; i < 16; i++)
 	{
@@ -1129,7 +1168,7 @@ BOOL KSkillList::AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, 
 			nFree = i;
 			break;
 		}
-		if (!m_SkillBuffs[i].BuffId && nFree < 0)
+		if ((!m_SkillBuffs[i].BuffId || m_SkillBuffs[i].EndTime <= (DWORD)time(NULL)) && nFree < 0)
 			nFree = i;
 	}
 	if (nFree < 0)
@@ -1144,8 +1183,11 @@ BOOL KSkillList::AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, 
 	Buff.EndTime = (DWORD)time(NULL) + nLeft + nSeconds;
 	Buff.SkillId = nSkillId;
 	Buff.Value = nValue;
-	RefreshPlayerSkillLevels();
-	SyncPlayerSkillBuffs();
+	if (bSync)
+	{
+		RefreshPlayerSkillLevels();
+		SyncPlayerSkillBuffs();
+	}
 	return TRUE;
 }
 
@@ -1193,8 +1235,8 @@ void KSkillList::SyncPlayerSkillBuffs(BOOL bInitial)
 	// 全量E5不能覆盖已有项；增量先撤销再添加，避免反复叠加客户端技能等级。
 	if (!bInitial)
 	{
-		int Kinds[] = {7, 8, 23};
-		for (int i = 0; i < 3; i++)
+		int Kinds[] = {5, 7, 8, 12, 13, 14, 23};
+		for (int i = 0; i < sizeof(Kinds) / sizeof(Kinds[0]); i++)
 		{
 			GAME_SKILL_BUFF_CHANGE Sync;
 			memset(&Sync, 0, sizeof(Sync));
@@ -1212,7 +1254,7 @@ void KSkillList::SyncPlayerSkillBuffs(BOOL bInitial)
 	{
 		const PLAYER_SKILL_BUFF& Buff = m_SkillBuffs[i];
 		int nLeft = GetPlayerSkillBuffTime(Buff.BuffId);
-		if (!nLeft || (Buff.BuffId != 7 && Buff.BuffId != 8 && Buff.BuffId != 23))
+		if (!nLeft || g_SkillManager.GetPlayerBuffRule(Buff.BuffId))
 			continue;
 		GAME_SKILL_BUFF_DATA& Data = Sync.Buffs[Sync.Count++];
 		Data.RemainingSeconds = nLeft;

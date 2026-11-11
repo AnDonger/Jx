@@ -1,10 +1,10 @@
 # 当前 Lua 可用函数说明（Lua函数表）
 
-核对日期：2026-11-10。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
+核对日期：2026-11-11。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
 
 ## 阅读方法与范围
 
-- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **258个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **350个不同名字**，均有独立条目。
+- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **263个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **355个不同名字**，均有独立条目。
 - “实现已核对”表示已对照当前注册和函数正文，**不表示全部接口已通过新版客户端实测**。带“旧接口”“待适配”“有缺陷”“不可用”的条目保留用于查错；不能把存在名字当成功能已完整适配。
 - 以服务端 `_SERVER` 分支为准，排除注释中的注册项、客户端专用 `PlaySound` / `PlaySprMovie`、未注册的C++辅助函数。原脚本内 `main`、`OnCompound`、公共库中自定义函数不属于引擎全局API；只能在加载了对应脚本后使用其实际定义。
 - 普通NPC／玩家脚本由 `GameScriptFuns` 注册；全局世界脚本由 `WorldScriptFuns` 注册。标准库在创建Lua状态时打开。脚本可覆盖同名全局，使用时还要核对原脚本及 `Include` 内容。
@@ -40,9 +40,9 @@ Lua不得直接连接、查询或修改数据库，不得编写、拼接或执�
 
 当前窗口请求事务提供 `GetSelectedItems` → `DelSelectedItem` / `Pay` / `AddNormalItem` → `CompleteItemOperation` 的调用链。`CompleteItemOperation(0)`表示**概率失败但操作已完成，提交合法消耗**；未完成或Lua报错则回滚，`CompleteItemOperation(1)`之后报错也会回滚。
 
-已有快照覆盖随身背包、快捷栏、鼠标物品、各房间现金、玩家任务和本轮普通宠物状态；`AddOwnExp`在成功后延迟发放；`PutMessage` / `Msg2Player`在事务成功后延迟通知。**不保证任意Lua回调都有事务**：当前普通NPC对话自动事务仍有限定范围，物品窗口入口显式建立事务。穿戴、仓库、技能、Buff、阵营、帮会、婚姻、位置、系统文件副作用等未泛化纳入完整快照。`WriteLog`以及某些旧协议通知也不回滚。新业务涉及这些范围时，先补通用事务与存档支持，不能宣称已支持完整回滚。
+已有快照覆盖随身背包、快捷栏、鼠标物品、各房间现金、玩家任务、普通宠物状态和经典／IB技能Buff；`AddOwnExp`在成功后延迟发放；所有脚本UI、`PutMessage` / `Msg2Player`以及`WasteCopperCash`扣铜钱通知在事务成功后延迟发送。`PolyMorph`验证后延迟提交，失败不变身。**不保证任意Lua回调都有事务**：当前所有实际绑定NPC脚本的对白入口与物品窗口入口建立事务。穿戴、仓库、技能学习、阵营、帮会、婚姻、位置、系统文件副作用等未泛化纳入完整快照。`WriteLog`以及某些旧协议通知也不回滚。新业务涉及这些范围时，先补通用事务与存档支持，不能宣称已支持完整回滚。
 
-物品模板中的脚本入口及其对白回调新增自动事务，但仅开放 `KSortScript.cpp::IsItemTransactionFunction` 中已覆盖快照的接口和只读／纯计算接口；地图类仅开放下述受限延迟接口 `TeleportWithItem`；`NewWorld`、`SetPos`、`SetRevPos`、`UseTownPortal` 等即时接口，以及技能、Buff、外部IO等仍不在该入口的支持范围。每个回调执行前重新检查调用关系，失败不提交本次道具消耗、现金及宠物变更。NPC自动事务仍维持已有作用域，不能据此认为所有地图NPC均已有完整事务。
+物品模板中的脚本入口及其对白回调新增自动事务，但仅开放 `KSortScript.cpp::IsItemTransactionFunction` 中已覆盖快照的接口和只读／纯计算接口；地图类仅开放下述受限延迟接口 `TeleportWithItem`；`NewWorld`、`SetPos`、`SetRevPos`、`UseTownPortal` 等即时接口，以及技能、Buff、外部IO等仍不在该入口的支持范围。每个回调执行前重新检查调用关系，失败不提交本次道具消耗、现金及宠物变更。NPC脚本入口已扩展到所有地图；其物品、现金、任务、Buff和延迟变身在上述范围内回滚，不能据此认为穿戴、仓库等即时副作用已完整覆盖。
 
 ## 分类索引
 
@@ -111,10 +111,12 @@ SayTask("请选择", {{"继续", "OnContinue"}, {"关闭", "OnClose"}})
 Talk(count, callback, line1, ...)
 ```
 
-- 参数：count：对白段数；callback：结束回调名，空字符串表示不回调；line：字符串或数字文本ID，同次调用类型一致。
+- 参数：count：1～255的整数对白段数，超过实际提供的段数时按实际段数；callback：结束回调名，空字符串表示不回调；line：字符串或数字文本ID，同次调用类型一致。
 - 返回：无。
 - 限制／说明：当前实现不支持把对白数组作为第三参数，尽管旧注释提到这种形式。只使用逐项参数。
-- 实现：[`LuaTalkUI`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1875)。
+- 容量：整次正文缓冲区300字节，每段都包含一个尾部`|`，另留一个NUL；单段字面量最多298个GBK字节。安全保留能够完整放入的连续段落，其后超出容量的段落不发送并记录服务端警告；一段都放不下则不发送。数字文本ID也逐段计入分隔符。较长说明必须由Lua拆成`Talk(1, "next_page", text)`的回调续页，不能依赖截断或修改协议容量。
+- 空／无效的正文类型、非整数或越界的文本ID不发送；count非法时不发送。
+- 实现：[`LuaTalkUI`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2222)。
 
 用法示例：
 
@@ -936,7 +938,7 @@ AddRepute(delta)
 
 - 参数：delta：声望增量整数，可负。
 - 返回：无。
-- 限制／说明：直接加到保存任务值；没有防负数／溢出的充分校验，调用者先校验。源码中声望提示发送被注释。
+- 限制／说明：加到保存任务值；结果小于0或超过INT_MAX时拒绝，事务中报错回滚。原有接口无返回值，提示由脚本Msg2Player处理。
 - 实现：[`LuaModifyRepute`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:542)。
 
 用法示例：
@@ -2415,21 +2417,24 @@ local seconds = GetIBBuffLeftTimes(107)
 
 ### `AddBuff`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+状态：实现已核对，太岁新增状态待客户端实测。作用域：游戏／NPC脚本；道具事务白名单未开放。
 
 ```lua
 AddBuff(buffId, seconds, firstValue, secondValue, reserved)
 ```
 
-- 参数：buffId：当前仅7、8、23；seconds：持续秒数；buff7/23时firstValue为效果数值；buff8时firstValue为已学技能ID、secondValue为效果数值；reserved必须占第5参数但当前不读取。
-- 返回：成功1，失败0。
-- 限制／说明：必须正好5参数。效果数值1～5，秒数>0且<=100小时，并受原规则上限限制；非累计时间添加，同ID按原逻辑替换。buff7/23的secondValue不使用。不能添加任意ID状态。
-- 实现：[`LuaAddBuff`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:996)。
-
-用法示例：
+- 参数：必须5项；seconds为1～360000秒。reserved保留第5位置，当前不读取。时间按同种状态替换，不累计。
+- buff5：firstValue为打怪经验倍率1～5；不会倍增`AddOwnExp`直接奖励。
+- buff12：firstValue为技能熟练增幅百分比1～1000，原太岁传100，即翻倍；与临仙露目前乘算，组合规则尚无正式服样本。
+- buff13／14：firstValue为自然恢复周期附加内力／生命点数1～32767；不修改基础属性，避免穿脱装备或刷新状态重复累加。
+- buff7／23：firstValue为全技能加级值1～5；buff8：firstValue为已学技能ID、secondValue为加级值1～5。当前技能等级增益总和仍封顶+2。
+- 返回：成功1、失败0；事务中失败会报错中止并回滚。事务中的状态先变更服务器记录，提交后刷新属性及E5/F7，失败恢复原记录。
+- 保存：经典状态按绝对到期时间，退出期间仍计时；临仙露保持原配置的在线计时规则。
+- 实现：`Sources/Core/Src/ScriptFuns.cpp::LuaAddBuff`、`KSkillList.cpp`。
 
 ```lua
-local ok = AddBuff(8, 3600, skillId, 1, 0)
+assert(AddBuff(5, 3600, 2, 0, 1) == 1)
+assert(AddBuff(8, 3600, skillId, 1, 0) == 1)
 ```
 
 ### `AddIBBuff`
@@ -6802,3 +6807,68 @@ end
 ```
 
 - 实现：`Sources/Core/Src/ScriptFuns.cpp::LuaRepairItem`、`KPlayer.cpp::CheckRepairItem/RepairItem`。
+
+## 2026-11-11新增通用转盘与形态接口
+
+### `Roulette`
+
+```lua
+Roulette(result)
+```
+
+- 作用域：NPC脚本。result为服务端确定的0～11整数，对应原客户端12格；不能由客户端提交中奖值。
+- 返回：成功排入UI事务队列1，参数或当前脚本的`Finished`回调不可用时0；事务内失败报错回滚。
+- 发送当前客户端0x79／UI13窗口。第二WORD固定15，已通过正式服封包及GUI IDA确认供转盘Tips配置选择，不是等待15秒。
+- 客户端91字节0x67完成请求必须带匹配的当前会话token及Action=4；服务端只调用原绑定脚本`Finished()`，会话一次消费。普通对话仍走B8/45。
+- 不自动扣材料、记次数或发奖，这些必须由NPC原Lua决定；断线恢复由原Lua任务值记录待领奖结果并重新打开窗口。
+
+```lua
+SetTask(resultTask, result)
+SetTask(pendingTask, 1)
+assert(Roulette(result) == 1)
+function Finished()
+    if GetTask(pendingTask) ~= 1 then return end
+    SetTask(pendingTask, 0)
+    Earn(10000)
+end
+```
+
+### `GetMorphType`
+
+```lua
+local shape = GetMorphType()
+```
+
+- 作用域：NPC／玩家脚本；无参数。返回有效变身模板ID，无有效形态时-1。该接口只读，不改变到期时间。
+- 示例：`if GetMorphType() == -1 then ... end`。当前道具事务白名单未开放。
+
+### `PolyMorph`
+
+```lua
+PolyMorph(type, canCast, safeguard, speed, seconds)
+```
+
+- 作用域：NPC脚本；必须5个整数。type为有效NPC资源模板，canCast为0／1；当前仅实现safeguard=0、speed=-1，其他组合明确失败。
+- seconds为1～360000；`PolyMorph(-1,1,0,-1,0)`清除形态。不能以不存在的模板替代外观。
+- 返回成功1、失败0；事务内验证后延迟提交，失败不扣资源也不改形态。canCast=0禁止主动施法。
+- 状态通过当前客户端4B同步，过图／重登继续，按绝对到期时间还原；角色扩展SPG1 v4兼容读取旧1～3版本。
+- 示例：`assert(PolyMorph(99, 0, 0, -1, 3600) == 1)`。
+
+### `GetLastSkillIdx`
+
+```lua
+local last = GetLastSkillIdx()
+```
+
+- 作用域：NPC／玩家脚本；无参数。返回最后一个非空技能槽下标；无技能时0。是内部槽号，不是技能ID，也不等于已学技能总数。
+- 示例：从1到last循环，配合`IsSkillActivedByIdx`及`GetSkillId`挑选已学技能；当前道具事务白名单未开放。
+
+### `IsSkillActivedByIdx`
+
+```lua
+local learned = IsSkillActivedByIdx(index)
+```
+
+- 作用域：NPC／玩家脚本。index为内部1起始技能槽号；有效、有技能且学习状态为3时返回1，否则0。
+- 只查询学习权限，不表示技能正在施放、光环打开或冷却结束；不要用于绕过技能冷却。
+- 示例：`if IsSkillActivedByIdx(i) == 1 then local id = GetSkillId(i) end`。当前道具事务白名单未开放。

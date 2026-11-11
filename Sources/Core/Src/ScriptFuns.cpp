@@ -171,6 +171,7 @@ struct KNpcScriptNotice
 {
 	PLAYER_SCRIPTACTION_SYNC Action;
 	std::string Chat;
+	std::vector<BYTE> Raw;
 	BOOL IsChat;
 	KNpcScriptNotice()
 	{
@@ -195,6 +196,11 @@ struct KNpcScriptExchange
 {
 	KPlayerTask Task;
 	PLAYER_PET_DATA Pet;
+	PLAYER_SKILL_BUFF Buffs[16];
+	BOOL HasMorph;
+	int MorphType;
+	BOOL MorphCanCast;
+	int MorphSeconds;
 	std::vector<KNpcScriptItem> Items;
 	std::vector<KNpcScriptNotice> Notices;
 	int Money[room_num];
@@ -213,6 +219,17 @@ struct KNpcScriptExchange
 
 static KNpcScriptExchange *g_NpcScriptExchange[MAX_PLAYER] = {NULL};
 
+BOOL g_QueueNpcScriptAction(int nPlayer, const PLAYER_SCRIPTACTION_SYNC& Action)
+{
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || !g_NpcScriptExchange[nPlayer])
+		return FALSE;
+	KNpcScriptNotice Notice;
+	Notice.Action = Action;
+	g_NpcScriptExchange[nPlayer]->Notices.push_back(Notice);
+	return TRUE;
+}
+
+
 KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
 {
 	m_nPlayer = nPlayer > 0 && nPlayer < MAX_PLAYER ? nPlayer : 0;
@@ -228,6 +245,8 @@ KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
 	pState = new KNpcScriptExchange;
 	pState->Task = Player[m_nPlayer].m_cTask;
 	pState->Pet = Player[m_nPlayer].m_Pet;
+	memcpy(pState->Buffs, Npc[Player[m_nPlayer].m_nIndex].m_SkillList.m_SkillBuffs, sizeof(pState->Buffs));
+	pState->HasMorph = FALSE;
 	pState->Depth = 1;
 	pState->Experience = 0;
 	pState->Failed = FALSE;
@@ -330,8 +349,18 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 			}
 		}
 	}
+	if (!pState->Failed && pState->HasMorph &&
+		!Npc[Role.m_nIndex].PolyMorph(pState->MorphType, pState->MorphCanCast, 0, -1, pState->MorphSeconds))
+		pState->Failed = TRUE;
 	if (pState->Failed)
 	{
+		KSkillList& Skills = Npc[Role.m_nIndex].m_SkillList;
+		if (memcmp(Skills.m_SkillBuffs, pState->Buffs, sizeof(pState->Buffs)))
+		{
+			memcpy(Skills.m_SkillBuffs, pState->Buffs, sizeof(pState->Buffs));
+			Skills.RefreshPlayerSkillLevels();
+			Skills.SyncPlayerSkillBuffs();
+		}
 		KItemList& List = Role.m_ItemList;
 		std::vector<int> Indices;
 		for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
@@ -386,12 +415,20 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 	{
 		if (memcmp(&pState->Pet, &Role.m_Pet, sizeof(Role.m_Pet)) != 0)
 			Role.SyncPetState();
+		KSkillList& Skills = Npc[Role.m_nIndex].m_SkillList;
+		if (memcmp(Skills.m_SkillBuffs, pState->Buffs, sizeof(pState->Buffs)))
+		{
+			Skills.RefreshPlayerSkillLevels();
+			Skills.SyncPlayerSkillBuffs();
+		}
 		if (pState->Experience > 0)
 			Role.DirectAddExp(pState->Experience);
 		for (size_t i = 0; i < pState->Notices.size(); i++)
 		{
 			KNpcScriptNotice& Notice = pState->Notices[i];
-			if (Notice.IsChat)
+			if (!Notice.Raw.empty())
+				g_pServer->PackDataToClient(Role.m_nNetConnectIdx, &Notice.Raw[0], Notice.Raw.size());
+			else if (Notice.IsChat)
 				KPlayerChat::SendSystemInfo(1, m_nPlayer, MESSAGE_SYSTEM_ANNOUCE_HEAD,
 					(char*)Notice.Chat.c_str(), (int)Notice.Chat.size());
 			else
@@ -747,7 +784,13 @@ int LuaModifyRepute(Lua_State *L)
 		return 0;
 	int nValue = (int)Lua_ValueToNumber(L,1);
 	
-	Player[nPlayerIndex].m_cTask.SetSaveVal(TASKVALUE_REPUTE, Player[nPlayerIndex].m_cTask.GetSaveVal(TASKVALUE_REPUTE) + nValue);
+	int nOld = Player[nPlayerIndex].m_cTask.GetSaveVal(TASKVALUE_REPUTE);
+	if ((__int64)nOld + nValue < 0 || (__int64)nOld + nValue > 0x7fffffff)
+	{
+		RejectNpcScriptItem(L, nPlayerIndex);
+		return 0;
+	}
+	Player[nPlayerIndex].m_cTask.SetSaveVal(TASKVALUE_REPUTE, nOld + nValue);
 	if (nValue < 0)
 	{
 		char szMsg[100];
@@ -1192,6 +1235,100 @@ int LuaRemoveBuff(Lua_State* L)
 	return 1;
 }
 
+int LuaGetMorphType(Lua_State* L)
+{
+	int nPlayer = GetPlayerIndex(L);
+	Lua_PushNumber(L, nPlayer > 0 ? Npc[Player[nPlayer].m_nIndex].GetMorphType() : -1);
+	return 1;
+}
+
+int LuaPolyMorph(Lua_State* L)
+{
+	int nCount = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nCount);
+	int Args[5] = {0};
+	BOOL bValid = nPlayer > 0 && nCount == 5;
+	for (int i = 0; i < 5 && bValid; i++)
+	{
+		double Value = Lua_ValueToNumber(L, i + 1);
+		bValid = Lua_IsNumber(L, i + 1) && Value >= -1 && Value <= 0x7fffffff && Value == (int)Value;
+		Args[i] = (int)Value;
+	}
+	if (!bValid || !Npc[Player[nPlayer].m_nIndex].CanPolyMorph(Args[0], Args[1], Args[2], Args[3], Args[4]))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	KNpcScriptExchange* pState = g_NpcScriptExchange[nPlayer];
+	if (pState)
+	{
+		if (pState->HasMorph || pState->HasTeleport)
+			RejectNpcScriptItem(L, nPlayer);
+		pState->HasMorph = TRUE;
+		pState->MorphType = Args[0];
+		pState->MorphCanCast = Args[1];
+		pState->MorphSeconds = Args[4];
+		Lua_PushNumber(L, 1);
+	}
+	else
+		Lua_PushNumber(L, Npc[Player[nPlayer].m_nIndex].PolyMorph(Args[0], Args[1], Args[2], Args[3], Args[4]) ? 1 : 0);
+	return 1;
+}
+
+int LuaGetLastSkillIdx(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nLast = 0;
+	for (int i = 1; pSkills && i < MAX_NPCSKILL; i++)
+	{
+		if (pSkills->m_Skills[i].SkillId)
+			nLast = i;
+	}
+	Lua_PushNumber(L, nLast);
+	return 1;
+}
+
+int LuaIsSkillActivedByIdx(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nIndex = (int)Lua_ValueToNumber(L, 1);
+	Lua_PushNumber(L, pSkills && nIndex > 0 && nIndex < MAX_NPCSKILL &&
+		pSkills->m_Skills[nIndex].SkillId && pSkills->m_Skills[nIndex].SkillStatus == 3 ? 1 : 0);
+	return 1;
+}
+
+int LuaRoulette(Lua_State* L)
+{
+	int nCount = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nCount);
+	int nResult = (int)Lua_ValueToNumber(L, 1);
+	DWORD dwScript = nPlayer > 0 ? Npc[Player[nPlayer].m_nIndex].m_ActionScriptID : 0;
+	char Missing[128];
+	if (nCount != 1 || !Lua_IsNumber(L, 1) || Lua_ValueToNumber(L, 1) != nResult ||
+		nResult < 0 || nResult >= 12 || !dwScript ||
+		!g_CheckNpcScriptFunction(dwScript, "Finished", Missing, sizeof(Missing), 0))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	PLAYER_SCRIPTACTION_SYNC Info;
+	ZeroMemory(&Info, sizeof(Info));
+	Info.m_bUIId = UI_ROULETTE;
+	Info.m_bParam2 = 1;
+	Info.m_nBufferLen = 4;
+	WORD Content[2] = {(WORD)nResult, 15}; // 第二WORD选择客户端原转盘Tips配置15，来自正式服包。
+	memcpy(Info.m_pContent, Content, sizeof(Content));
+	Player[nPlayer].m_bWaitingPlayerFeedBack = false;
+	Player[nPlayer].m_nAvailableAnswerNum = 0;
+	Player[nPlayer].DoScriptAction(&Info);
+	Lua_PushNumber(L, 1);
+	return 1;
+}
+
 int LuaAddBuff(Lua_State* L)
 {
 	KSkillList* pSkills = GetPlayerScriptSkills(L);
@@ -1205,10 +1342,14 @@ int LuaAddBuff(Lua_State* L)
 	int nFirst = (int)Lua_ValueToNumber(L, 3);
 	int nSecond = (int)Lua_ValueToNumber(L, 4);
 	BOOL bAdded = FALSE;
-	if (nBuff == 7 || nBuff == 23)
-		bAdded = pSkills->AddPlayerSkillBuff(nBuff, nTime, 0, nFirst, FALSE);
+	int nPlayer = pSkills ? Npc[pSkills->m_nNpcIndex].GetPlayerIdx() : 0;
+	BOOL bSync = !nPlayer || !g_NpcScriptExchange[nPlayer];
+	if (nBuff == 5 || nBuff == 7 || nBuff == 12 || nBuff == 13 || nBuff == 14 || nBuff == 23)
+		bAdded = pSkills->AddPlayerSkillBuff(nBuff, nTime, 0, nFirst, FALSE, bSync);
 	else if (nBuff == 8)
-		bAdded = pSkills->AddPlayerSkillBuff(nBuff, nTime, nFirst, nSecond, FALSE);
+		bAdded = pSkills->AddPlayerSkillBuff(nBuff, nTime, nFirst, nSecond, FALSE, bSync);
+	if (!bAdded)
+		RejectNpcScriptItem(L, nPlayer);
 	Lua_PushNumber(L, bAdded ? 1 : 0);
 	return 1;
 }
@@ -1434,7 +1575,14 @@ int LuaWasteCopperCash(Lua_State *L)
 	Notice.ProtocolType = 0xCC;
 	Notice.Currency = 1;
 	Notice.Amount = (int)nAmount;
-	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Notice, sizeof(Notice));
+	if (g_NpcScriptExchange[nPlayer])
+	{
+		KNpcScriptNotice Pending;
+		Pending.Raw.assign((BYTE*)&Notice, (BYTE*)&Notice + sizeof(Notice));
+		g_NpcScriptExchange[nPlayer]->Notices.push_back(Pending);
+	}
+	else
+		g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Notice, sizeof(Notice));
 	Lua_PushNumber(L, 1);
 	return 1;
 }
@@ -2088,7 +2236,10 @@ int LuaTalkUI(Lua_State * L)
 	
 	if (Lua_IsNumber(L,1))
 	{
-		nOptionNum = (int)Lua_ValueToNumber(L,1);
+		double nRequested = Lua_ValueToNumber(L, 1);
+		if (!(nRequested >= 1 && nRequested <= 255) || nRequested != (int)nRequested)
+			return 0;
+		nOptionNum = (int)nRequested;
 	}
 	else 
 	{
@@ -2125,28 +2276,41 @@ int LuaTalkUI(Lua_State * L)
 	pContent = UiInfo.m_pContent;
 	pContent[0] = 0;
 	size_t nContentLen = 0;
-	for (int i  = 0; i < nOptionNum; i ++)
-	{	
-		const char * pString = NULL;
-		if (!nDataType)//StringInfo
-		{
+	for (int i = 0; i < nOptionNum; i++)
+	{
+		char szNumber[32];
+		const char* pString = NULL;
+		if (!nDataType)
 			pString = Lua_ValueToString(L, i + 3);
-			if (nContentLen  + strlen(pString) >= MAX_SCIRPTACTION_BUFFERNUM)
-			{
-				nOptionNum = i;
-				UiInfo.m_bOptionNum = nOptionNum;
-				break;
-			}
-			nContentLen += strlen(pString);
-			sprintf(pContent, "%s%s|", pContent, pString);
-		}
 		else
 		{
-			int j = (int)Lua_ValueToNumber(L, i + 3);
-			sprintf(pContent, "%s%d|", pContent, j);
+			double nValue = Lua_ValueToNumber(L, i + 3);
+			if (!Lua_IsNumber(L, i + 3) || !(nValue >= 0 && nValue <= 0x7fffffff) ||
+				nValue != (int)nValue)
+				return 0;
+			sprintf(szNumber, "%d", (int)nValue);
+			pString = szNumber;
 		}
+		if (!pString)
+			return 0;
+		size_t nLength = strlen(pString);
+		// 每段的分隔符和末尾NUL也占空间，禁止重叠sprintf及越界写入。
+		if (nLength + 2 > sizeof(UiInfo.m_pContent) - nContentLen)
+		{
+			g_DebugLog("[ScriptUI] Talk content exceeds %u bytes; player=%d sentences=%d kept=%d",
+				(unsigned int)sizeof(UiInfo.m_pContent), nPlayerIndex, nOptionNum, i);
+			nOptionNum = i;
+			break;
+		}
+		memcpy(pContent + nContentLen, pString, nLength);
+		nContentLen += nLength;
+		pContent[nContentLen++] = '|';
+		pContent[nContentLen] = 0;
 	}
-	UiInfo.m_nBufferLen  = strlen(pContent);
+	if (nOptionNum <= 0)
+		return 0;
+	UiInfo.m_bOptionNum = (BYTE)nOptionNum;
+	UiInfo.m_nBufferLen = (int)nContentLen;
 	
 	if (!pCallBackFun || strlen(pCallBackFun) <= 0)
 	{
@@ -4931,7 +5095,8 @@ int LuaPlayerEarnMoney (Lua_State  *L)
 	{
         int nMoney = (int)Lua_ValueToNumber(L, 1);
         if (nMoney <= 0) return 0;
-        Player[nPlayerIndex].Earn(nMoney);
+        if (!Player[nPlayerIndex].Earn(nMoney))
+			RejectNpcScriptItem(L, nPlayerIndex);
 	}
 	return 0;	
 }
@@ -6873,6 +7038,11 @@ TLua_Funcs GameScriptFuns[] =
 	{"GetPetFuncActive", LuaGetPetFuncActive},
 	{"GetPetSettings", LuaGetPetSettings},
 	{"GetGameVersion", LuaGetGameVersion},
+	{"Roulette", LuaRoulette},
+	{"GetMorphType", LuaGetMorphType},
+	{"PolyMorph", LuaPolyMorph},
+	{"GetLastSkillIdx", LuaGetLastSkillIdx},
+	{"IsSkillActivedByIdx", LuaIsSkillActivedByIdx},
 	{"GetSelectedItems", LuaGetSelectedItems},
 	{"DelSelectedItem", LuaDelSelectedItem},
 	{"CompleteItemOperation", LuaCompleteItemOperation},

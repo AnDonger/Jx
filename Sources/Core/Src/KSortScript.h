@@ -86,3 +86,7 @@ public:
 #endif
 extern unsigned long  ReLoadAllScript();
 #endif
+
+#ifdef _SERVER
+BOOL g_QueueNpcScriptAction(int nPlayer, const PLAYER_SCRIPTACTION_SYNC& Action);
+#endif

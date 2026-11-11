@@ -50,6 +50,15 @@ struct PLAYER_SKILL_EXT_RECORD_V3
 
 static_assert(sizeof(PLAYER_SKILL_EXT_RECORD_V3) == 20, "SPG1 v3 skill record");
 
+// SPG1版本4在原宠物数据后追加限时变身；绝对UTC到期，离线不冻结。
+struct PLAYER_MORPH_DATA
+{
+	int Type;
+	BOOL CanCast;
+	DWORD EndTime;
+};
+static_assert(sizeof(PLAYER_MORPH_DATA) == 12, "SPG1 v4 morph record");
+
 static const DWORD PLAYER_SKILL_EXT_MAGIC = 0x31475053; // SPG1
 
 static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, KPlayer& Player)
@@ -65,12 +74,13 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	const BYTE* pData = (const BYTE*)pRole + dwOffset;
 	PLAYER_SKILL_EXT_HEADER Header;
 	memcpy(&Header, pData, sizeof(Header));
-	DWORD dwRecordSize = Header.Version == 3 ? sizeof(PLAYER_SKILL_EXT_RECORD_V3) : sizeof(PLAYER_SKILL_EXT_RECORD);
-	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 3) ||
+	DWORD dwRecordSize = Header.Version >= 3 ? sizeof(PLAYER_SKILL_EXT_RECORD_V3) : sizeof(PLAYER_SKILL_EXT_RECORD);
+	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 4) ||
 		Header.SkillCount != pRole->nFightSkillCount || Header.SkillCount >= MAX_NPCSKILL || Header.BuffCount > 16 ||
 		dwLength != sizeof(Header) + Header.SkillCount * dwRecordSize +
 		Header.BuffCount * sizeof(PLAYER_SKILL_BUFF) +
-		(Header.Version >= 2 ? sizeof(PLAYER_PET_DATA) : 0))
+		(Header.Version >= 2 ? sizeof(PLAYER_PET_DATA) : 0) +
+		(Header.Version >= 4 ? sizeof(PLAYER_MORPH_DATA) : 0))
 		return FALSE;
 	BOOL Seen[MAX_NPCSKILL];
 	PLAYER_SKILL_EXT_RECORD Records[MAX_NPCSKILL];
@@ -87,7 +97,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 		int nIndex = List.FindSame(Record.SkillId);
 		if (!nIndex || Seen[nIndex] || Record.SkillStatus < 1 || Record.SkillStatus > 4)
 			return FALSE;
-		if (Header.Version == 3)
+		if (Header.Version >= 3)
 		{
 			PLAYER_SKILL_EXT_RECORD_V3 RecordV3;
 			memcpy(&RecordV3, pData, sizeof(RecordV3));
@@ -114,10 +124,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 				return FALSE;
 			Buff.EndTime += dwNow;
 		}
-		if ((Buff.BuffId != 7 && Buff.BuffId != 8 && Buff.BuffId != 23 &&
-			Buff.BuffId != 107 && Buff.BuffId != 271 && Buff.BuffId != 272) ||
-			Buff.Value <= 0 || Buff.Value > 5 || Buff.SkillId < 0 || Buff.SkillId >= MAX_SKILL ||
-			(Buff.BuffId != 8 && Buff.SkillId != 0) ||
+		if (!KSkillList::IsValidPlayerSkillBuffData(Buff.BuffId, Buff.SkillId, Buff.Value) ||
 			(pRule && Buff.Value != pRule->Multiplier) ||
 			(Buff.EndTime > dwNow && Buff.EndTime - dwNow > 100 * 3600))
 			return FALSE;
@@ -142,6 +149,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	if (Header.Version >= 2)
 	{
 		memcpy(&Pet, pData, sizeof(Pet));
+		pData += sizeof(Pet);
 		if (Pet.Type)
 		{
 			if (!Player.IsValidPetType(Pet.Type) || Pet.Honor > 100 || Pet.Released > 1 ||
@@ -157,6 +165,30 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 				return FALSE;
 		}
 	}
+	PLAYER_MORPH_DATA Morph = {-1, TRUE, 0};
+	if (Header.Version >= 4)
+	{
+		memcpy(&Morph, pData, sizeof(Morph));
+		if (Morph.Type == -1)
+		{
+			if (Morph.CanCast != TRUE || Morph.EndTime != 0)
+				return FALSE;
+		}
+		else
+		{
+			if (Morph.Type < 0 || Morph.Type >= 0x7FFF ||
+				(Morph.CanCast != FALSE && Morph.CanCast != TRUE) ||
+				(Morph.EndTime > dwNow && Morph.EndTime - dwNow > 100 * 3600) ||
+				!Npc[Player.m_nIndex].CanPolyMorph(Morph.Type, Morph.CanCast, 0, -1, 1))
+				return FALSE;
+			if (Morph.EndTime <= dwNow)
+			{
+				Morph.Type = -1;
+				Morph.CanCast = TRUE;
+				Morph.EndTime = 0;
+			}
+		}
+	}
 	DWORD PreviousCastTimes[MAX_NPCSKILL];
 	for (int i = 0; i < MAX_NPCSKILL; i++)
 		PreviousCastTimes[i] = List.m_Skills[i].NextCastTime;
@@ -170,6 +202,9 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 		}
 	}
 	Player.m_Pet = Pet;
+	Npc[Player.m_nIndex].m_nMorphType = Morph.Type;
+	Npc[Player.m_nIndex].m_bMorphCanCast = Morph.CanCast;
+	Npc[Player.m_nIndex].m_dwMorphEndTime = Morph.EndTime;
 	// 完整验证后再恢复状态，损坏的扩展不能写入一半技能或BUFF。
 	for (int i = 1; i < MAX_NPCSKILL; i++)
 	{
@@ -188,7 +223,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	return TRUE;
 }
 
-static int SavePlayerSkillExtension(KSkillList& List, const PLAYER_PET_DATA& Pet, BYTE* pData, DWORD dwCapacity)
+static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_PET_DATA& Pet, BYTE* pData, DWORD dwCapacity)
 {
 	DWORD dwNow = (DWORD)time(NULL);
 	DWORD dwBuffCount = 0;
@@ -197,9 +232,9 @@ static int SavePlayerSkillExtension(KSkillList& List, const PLAYER_PET_DATA& Pet
 		if (List.m_SkillBuffs[i].BuffId && List.m_SkillBuffs[i].EndTime > dwNow)
 			dwBuffCount++;
 	}
-	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 3, List.GetCount(), dwBuffCount};
+	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 4, List.GetCount(), dwBuffCount};
 	DWORD dwSize = sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD_V3) +
-		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet);
+		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet) + sizeof(PLAYER_MORPH_DATA);
 	if (dwSize > dwCapacity)
 		return -1;
 	memcpy(pData, &Header, sizeof(Header));
@@ -227,6 +262,15 @@ static int SavePlayerSkillExtension(KSkillList& List, const PLAYER_PET_DATA& Pet
 		pData += sizeof(Buff);
 	}
 	memcpy(pData, &Pet, sizeof(Pet));
+	pData += sizeof(Pet);
+	PLAYER_MORPH_DATA Morph = {-1, TRUE, 0};
+	if (Owner.GetMorphType() >= 0)
+	{
+		Morph.Type = Owner.m_nMorphType;
+		Morph.CanCast = Owner.m_bMorphCanCast;
+		Morph.EndTime = Owner.m_dwMorphEndTime;
+	}
+	memcpy(pData, &Morph, sizeof(Morph));
 	return dwSize;
 }
 
@@ -1431,7 +1475,7 @@ int KPlayer::SavePlayerFightSkillList(BYTE* pRoleBuffer)
 		return -1;
 	pRoleData->nFightSkillCount = nCount;
 	dwOffset += dwStandardSize;
-	int nSize = SavePlayerSkillExtension(List, m_Pet, pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
+	int nSize = SavePlayerSkillExtension(Npc[m_nIndex], List, m_Pet, pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
 	if (nSize < 0)
 		return -1;
 	pRoleData->dwLSkillOffset = dwOffset + nSize;

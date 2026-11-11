@@ -2,6 +2,7 @@
 //	Sword3 KNpc.cpp
 //-----------------------------------------------------------------------
 #include "KCore.h"
+#include <time.h>
 //#include <crtdbg.h>
 #include "KNpcAI.h"
 #include "KSkills.h"
@@ -119,6 +120,9 @@ void KNpc::Init()
 	m_dwID = 0;
 	m_Index = 0;
 	m_nPlayerIdx = 0;
+	m_nMorphType = -1;
+	m_bMorphCanCast = TRUE;
+	m_dwMorphEndTime = 0;
 	m_ProcessAI = 1;
 	m_Kind = kind_normal;
 	m_Series = series_metal;
@@ -400,6 +404,11 @@ void KNpc::Activate()
 	}
 //	m_bActivateFlag = TRUE;
 
+#ifdef _SERVER
+	if (m_nMorphType >= 0 && m_dwMorphEndTime <= (DWORD)time(NULL))
+		PolyMorph(-1, TRUE, 0, -1, 0);
+#endif
+
 	m_LoopFrames++;
 
 	// Process npc special state, such as curse, etc.
@@ -667,10 +676,10 @@ BOOL KNpc::ProcessState()
 		if (!(m_LoopFrames % GAME_REPLENISH_TIME) && m_CurrentLife > 0 &&
 			m_Doing != do_death && m_Doing != do_revive)
 		{
-			m_CurrentLife += m_CurrentLifeReplenish;
+			m_CurrentLife += m_CurrentLifeReplenish + (IsPlayer() ? m_SkillList.GetPlayerBuffValue(14) : 0);
 			if (m_CurrentLife > m_CurrentLifeMax)
 				m_CurrentLife = m_CurrentLifeMax;
-			m_CurrentMana += m_CurrentManaReplenish;
+			m_CurrentMana += m_CurrentManaReplenish + (IsPlayer() ? m_SkillList.GetPlayerBuffValue(13) : 0);
 			if (m_CurrentMana > m_CurrentManaMax)
 				m_CurrentMana = m_CurrentManaMax;
 		}
@@ -1676,7 +1685,11 @@ void KNpc::DoSkill(int nX, int nY)
 	// 非战斗状态不能发技能
 	if (IsPlayer())
 	{
-		if (!m_FightMode)
+		if (!m_FightMode
+#ifdef _SERVER
+			|| (GetMorphType() >= 0 && !m_bMorphCanCast)
+#endif
+			)
 			return;
 	}
 
@@ -3617,6 +3630,69 @@ BOOL KNpc::SetPlayerIdx(int nIdx)
 }
 
 #ifdef _SERVER
+// 只开放已实现的通用参数组合；护身和独立移速尚无可靠协议时明确拒绝。
+BOOL KNpc::CanPolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds)
+{
+	if (!IsPlayer() || nSafeGuard != 0 || nSpeed != -1 || (bCanCast != 0 && bCanCast != 1))
+		return FALSE;
+	if (nType == -1)
+		return nSeconds == 0;
+	if (nType < 0 || nType >= 0x7FFF || nSeconds <= 0 || nSeconds > 100 * 3600 ||
+		nType + 2 > g_NpcSetting.GetHeight())
+		return FALSE;
+	char szResource[128];
+	g_NpcSetting.GetString(nType + 2, "NpcResType", "", szResource, sizeof(szResource));
+	return szResource[0] != 0;
+}
+
+int KNpc::GetMorphType() const
+{
+	return m_nMorphType >= 0 && m_dwMorphEndTime > (DWORD)time(NULL) ? m_nMorphType : -1;
+}
+
+BOOL KNpc::PolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds)
+{
+	if (!CanPolyMorph(nType, bCanCast, nSafeGuard, nSpeed, nSeconds))
+		return FALSE;
+	m_nMorphType = nType;
+	m_bMorphCanCast = nType >= 0 ? bCanCast : TRUE;
+	m_dwMorphEndTime = nType >= 0 ? (DWORD)time(NULL) + nSeconds : 0;
+	// 当前客户端4B尾部flags=08、WORD=99由正式服太阳变身记录确认。
+	if (m_RegionIndex >= 0 && m_SubWorldIndex >= 0)
+	{
+		NormalSync();
+		if (m_nPlayerIdx > 0 && m_nPlayerIdx < MAX_PLAYER)
+			SendMorphSync(Player[m_nPlayerIdx].m_nNetConnectIdx);
+	}
+	return TRUE;
+}
+
+BOOL KNpc::SendMorphSync(int nClient)
+{
+	if (!IsPlayer() || !g_pServer || nClient < 0)
+		return FALSE;
+	GAME_PLAYER_NORMAL_SYNC Sync;
+	memset(&Sync, 0, sizeof(Sync));
+	Sync.ProtocolType = s2c_syncplayermin;
+	Sync.ID = m_dwID;
+	Sync.RunSpeed = (BYTE)m_CurrentRunSpeed;
+	Sync.AttackSpeed = (SHORT)m_CurrentAttackSpeed;
+	Sync.CastSpeed = (SHORT)m_CurrentCastSpeed;
+	Sync.HelmType = (BYTE)((m_HelmType & 31) << 3);
+	Sync.ArmorType = (BYTE)((m_ArmorType & 31) << 3);
+	Sync.WeaponType = (WORD)((m_WeaponType & 1023) << 6);
+	Sync.HorseType = (BYTE)((m_HorseType & 31) << 3);
+	Sync.RankID = (BYTE)m_btRankId;
+	Sync.m_btSomeFlag = (BYTE)(Player[m_nPlayerIdx].m_cPK.GetNormalPKState() & 3);
+	if (m_FightMode) Sync.m_btSomeFlag |= 0x04;
+	if (Player[m_nPlayerIdx].m_bSleepMode) Sync.m_btSomeFlag |= 0x08;
+	if (Player[m_nPlayerIdx].m_cTong.GetOpenFlag()) Sync.m_btSomeFlag |= 0x10;
+	if (m_bRideHorse) Sync.m_btSomeFlag |= 0x20;
+	Sync.AppearanceFlags = 0x08;
+	Sync.AppearanceType = (WORD)(GetMorphType() >= 0 ? GetMorphType() : 0x7FFF);
+	return SUCCEEDED(g_pServer->PackDataToClient(nClient, &Sync, sizeof(Sync)));
+}
+
 BOOL KNpc::SendPositionSync(int nClient)
 {
 	if (m_SubWorldIndex < 0 || m_RegionIndex < 0)
@@ -3728,6 +3804,8 @@ BOOL KNpc::SendSyncData(int nClient)
 			printf("Packing player sync data failed...\n");
 			return FALSE;
 		}
+		if (GetMorphType() >= 0)
+			SendMorphSync(nClient);
 		// 人物外观初始化会重置附属状态，宠物必须排在4C、4A之后。
 		// 初次登录等44和装备等初始化完成，在STEP_SYNC_END统一创建。
 		if (nClient != Player[m_nPlayerIdx].m_nNetConnectIdx || Player[m_nPlayerIdx].m_bFinishLoading)
@@ -3819,7 +3897,7 @@ void KNpc::NormalSync()
 		// 当前客户端将 0x7FFF 解释为 -1，恢复角色本身形象。
 		// 不能使用零值占位，否则会选中 NPC 资源的第 0 号形象。
 		PlayerSync.AppearanceFlags = 0x08;
-		PlayerSync.AppearanceType = 0x7FFF;
+		PlayerSync.AppearanceType = (WORD)(GetMorphType() >= 0 ? GetMorphType() : 0x7FFF);
 
 		int nMaxCount = MAX_PLAYER;//MAX_BROADCAST_COUNT;
 		CURREGION.BroadCast(&PlayerSync, sizeof(GAME_PLAYER_NORMAL_SYNC), nMaxCount, m_MapX, m_MapY);

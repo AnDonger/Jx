@@ -87,3 +87,31 @@ Resources/settings/ibshop.txt
 !Resources/settings/item/001/jadependant.txt
 !Resources/settings/item/001/signet.txt
 !Resources/settings/item/001/instrument.txt
+
+# Tai Sui original Lua and its two native NPC bindings required by this implementation.
+!Resources/script/彩票/
+/Resources/script/彩票/*
+!Resources/script/彩票/太岁.lua
+!Resources/script/item/
+/Resources/script/item/*
+!Resources/script/item/纸人包裹.lua
+!Resources/maps/
+/Resources/maps/*
+!Resources/maps/西岐/
+/Resources/maps/西岐/*
+!Resources/maps/西岐/v_095/
+/Resources/maps/西岐/v_095/*
+!Resources/maps/西岐/v_095/089_npc_s.dat
+!Resources/maps/朝歌/
+/Resources/maps/朝歌/*
+!Resources/maps/朝歌/v_094/
+/Resources/maps/朝歌/v_094/*
+!Resources/maps/朝歌/v_094/107_npc_s.dat
+
+# Original Pipa Lua and native Chaoge NPC binding.
+!Resources/script/朝歌/
+/Resources/script/朝歌/*
+!Resources/script/朝歌/琵琶.lua
+!Resources/maps/朝歌/v_089/
+/Resources/maps/朝歌/v_089/*
+!Resources/maps/朝歌/v_089/111_npc_s.dat

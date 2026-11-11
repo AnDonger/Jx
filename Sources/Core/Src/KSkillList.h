@@ -154,12 +154,15 @@ public:
 	BOOL SyncPlayerSkillCooldowns(int nSkillID = 0);
 	void	SyncPlayerSkill(int nIndex);
 	void	RefreshPlayerSkillLevels();
-	BOOL	AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, int nValue, BOOL bAddTime);
+	BOOL	AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, int nValue, BOOL bAddTime, BOOL bSync = TRUE);
 	BOOL	RemovePlayerSkillBuff(DWORD dwBuffId);
 	int		GetPlayerSkillBuffTime(DWORD dwBuffId);
 	void	ExpirePlayerSkillBuffs();
 	void	SyncPlayerSkillBuffs(BOOL bInitial = FALSE);
 	int		GetSkillExpMultiplier();
+	int GetPlayerBuffValue(DWORD dwBuffId);
+	int GetPlayerExperienceMultiplier();
+	static BOOL IsValidPlayerSkillBuffData(DWORD dwBuffId, int nSkillId, int nValue);
 	void			ApplyPlayerPassiveSkills();
 	BOOL	LoadPlayerInitialSkills(int nSeries);
 	void	SetNpcSkill(int nSkillNo, int nSkillId, int nSkillLevel);//sometime , npc's AI SkillList may have same skills.IT ONLY BE USED FOR NPC(NO PLAYER)

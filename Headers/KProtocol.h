@@ -1519,6 +1519,18 @@ typedef struct
 } GAME_SCRIPT_ACTION_SYNC;
 
 // 新客户端 0x93，正式服仓库打开记录共 38 字节；未知域保留原宽度。
+// 当前客户端0x67脚本窗口完成：20261111两份正式服转太岁记录，完整91字节。
+struct GAME_SCRIPT_UI_COMMAND
+{
+	BYTE ProtocolType;
+	WORD Length;
+	DWORD SourceToken;
+	DWORD unknown_1;
+	DWORD Action; // 转盘结束=4；不是中奖编号。
+	BYTE unknown_2[76];
+};
+static_assert(sizeof(GAME_SCRIPT_UI_COMMAND) == 91, "script UI completion layout");
+
 typedef struct
 {
 	BYTE	ProtocolType;

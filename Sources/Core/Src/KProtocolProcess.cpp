@@ -3878,7 +3878,7 @@ void KProtocolProcess::PlayerDropItem(int nIndex, BYTE* pProtocol)
 
 void KProtocolProcess::PlayerSelUI(int nIndex, BYTE* pProtocol)
 {
-	Player[nIndex].ProcessPlayerSelectFromUI(pProtocol);
+	Player[nIndex].ProcessScriptUICompletion((const GAME_SCRIPT_UI_COMMAND*)pProtocol);
 }
 
 void KProtocolProcess::ChatSetChannel(int nIndex, BYTE* pProtocol)

@@ -41,6 +41,7 @@ enum	UIInfo //脚本通知显示的界面类型
 	UI_OPENTONGUI,
 	UI_CLOSEDIALOG,
 	UI_COMPOUND,
+	UI_ROULETTE,
 };
 
 // 重生点位置信息
@@ -234,6 +235,9 @@ public:
 	DWORD			m_dwScriptDialogScriptID;
 	DWORD			m_dwScriptDialogNpcID;
 	int				m_nScriptDialogWorld;
+	DWORD			m_dwRouletteToken;
+	DWORD			m_dwRouletteScriptID;
+	int				m_nRouletteWorld;
 	DWORD			m_dwCompoundNpcID;
 	DWORD			m_dwCompoundScriptID;
 	int				m_nCompoundWorld;
@@ -549,6 +553,7 @@ public:
 	void			SetNpcDamageAttrib();
 	void			DoScriptAction(PLAYER_SCRIPTACTION_SYNC * pUIInfo); //通知该客户端显示某个UI界面
 	void			ProcessPlayerSelectFromUI(BYTE* pProtocol);			// 处理当玩家从选择菜单选择某项时的操作
+	void ProcessScriptUICompletion(const GAME_SCRIPT_UI_COMMAND* pCommand);
 #ifndef _SERVER
 	void			DialogNpc(int nIndex);
 	void			OnSelectFromUI(PLAYER_SELECTUI_COMMAND * pSelectUI, UIInfo eUIInfo);//当玩家从选择框中选择某项后，将向服务器发送			

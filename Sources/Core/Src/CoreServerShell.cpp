@@ -797,6 +797,8 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 	case 0x62: return nSize == sizeof(GAME_PICKUP_COMMAND);
 	case 0x64: return nSize == sizeof(PLAYER_SELL_ITEM_COMMAND);
 	case 0x65: return nSize == sizeof(PLAYER_BUY_ITEM_COMMAND);
+	case 0x67: return nSize == sizeof(GAME_SCRIPT_UI_COMMAND) &&
+		*(const WORD*)(pChar + 1) == sizeof(GAME_SCRIPT_UI_COMMAND) - 1;
 	case 0xAC: return nSize == sizeof(GAME_SHOP_ITEM_RESULT);
 	case 0x76: return nSize == sizeof(GAME_DIALOG_NPC_COMMAND) || nSize == sizeof(PLAYER_DIALOG_NPC_COMMAND);
 	case 0x78: return nSize == sizeof(GAME_AURA_COMMAND);

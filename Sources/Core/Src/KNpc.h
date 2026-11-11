@@ -342,6 +342,11 @@ public:
 	int					m_HorseType;				// Npc的骑马类型
 	BOOL				m_bRideHorse;				// Npc是否骑马
 
+	// 限时变身独立保存，不改角色种族、装备和原始模板。
+	int m_nMorphType;
+	BOOL m_bMorphCanCast;
+	DWORD m_dwMorphEndTime;
+
 	char				Name[32];				// Npc的名称
 	int					m_nSex;					// Npc的性别0为男，1为女
 	int					m_NpcSettingIdx;		// Npc的设定文件索引
@@ -630,6 +635,11 @@ public:
 	void				ExecuteRevive(){DoRevive();};
 	BOOL				SendSyncData(int nClient);						// 向一个客户端发完整同步数据
 	BOOL				SendPositionSync(int nClient);
+	BOOL CanPolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds);
+	BOOL PolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds);
+	int GetMorphType() const;
+	BOOL SendMorphSync(int nClient);
+
 	void				NormalSync();									// 广播小同步
 	void				BroadCastState();								// 广播角色的状态信息,光环，头带等等效果
 	void				BroadCastRevive(int nType);

@@ -154,6 +154,9 @@ void	KPlayer::Release()
 	m_bWaitingPlayerFeedBack = false;
 	m_dwScriptDialogItemID = 0;
 	m_dwScriptDialogToken = 0;
+	m_dwRouletteToken = 0;
+	m_dwRouletteScriptID = 0;
+	m_nRouletteWorld = -1;
 	m_dwScriptDialogScriptID = 0;
 	m_nScriptDialogWorld = -1;
 	m_dwScriptDialogNpcID = 0;
@@ -2283,6 +2286,11 @@ void	KPlayer::AddSelfExp(int nExp, int nTarLevel)
 	if (nGetExp <= 0)
 		nGetExp = 1;
 	
+	int nExperienceMultiplier = Npc[m_nIndex].m_SkillList.GetPlayerExperienceMultiplier();
+	__int64 nAward = (__int64)nGetExp * nExperienceMultiplier;
+	if (nAward > (__int64)0x7fffffff - m_nExp)
+		nAward = (__int64)0x7fffffff - m_nExp;
+	nGetExp = (int)nAward;
 	Npc[m_nIndex].m_SkillList.AddMonsterSkillExp(nGetExp);
 	m_nExp += nGetExp;
 	g_DebugLog("[数值]%s实际增加经验%d点", Npc[m_nIndex].Name, nGetExp);
@@ -4752,12 +4760,12 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId)) &&
 		!CheckNpcScriptFunction(dwScriptId, szFunName, m_dwUseItemScriptID == dwScriptId))
 		return FALSE;
-	// 瑶池原脚本包含多材料、多奖励交换，异常时不能保留半次操作。
+	// 所有NPC物品、现金与任务交换使用同一事务，异常时恢复本次变更。
 	KNpcScriptTransaction Exchange((m_dwUseItemScriptID == dwScriptId ||
 		(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
-		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 52)) ? m_nPlayerIndex : 0);
+		Npc[m_nPeapleIdx].m_Kind == kind_dialoger)) ? m_nPlayerIndex : 0);
 /*	bool	bCanExecuteScript = true;
 
   //当前脚本未置空
@@ -4838,12 +4846,12 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId, char * szFunName, char *  szParams
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId)) &&
 		!CheckNpcScriptFunction(dwScriptId, szFunName, m_dwUseItemScriptID == dwScriptId))
 		return FALSE;
-	// 瑶池原脚本包含多材料、多奖励交换，异常时不能保留半次操作。
+	// 所有NPC物品、现金与任务交换使用同一事务，异常时恢复本次变更。
 	KNpcScriptTransaction Exchange((m_dwUseItemScriptID == dwScriptId ||
 		(m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC &&
 		Npc[m_nPeapleIdx].m_ActionScriptID == dwScriptId &&
 		Npc[m_nPeapleIdx].m_SubWorldIndex >= 0 &&
-		SubWorld[Npc[m_nPeapleIdx].m_SubWorldIndex].m_SubWorldID == 52)) ? m_nPlayerIndex : 0);
+		Npc[m_nPeapleIdx].m_Kind == kind_dialoger)) ? m_nPlayerIndex : 0);
 /*bool	bCanExecuteScript = true;
 
   //当前脚本未置空
@@ -4970,6 +4978,10 @@ BOOL	KPlayer::DoScript(char * ScriptCommand)
 void	KPlayer::DoScriptAction(PLAYER_SCRIPTACTION_SYNC * pUIInfo) //要求显示某个UI界面
 {
 	if (!pUIInfo) return;
+#ifdef _SERVER
+	if (g_QueueNpcScriptAction(m_nPlayerIndex, *pUIInfo))
+		return;
+#endif
 	
 	//服务器端脚本时
 	if (pUIInfo->m_bParam2 == 1)
@@ -5001,11 +5013,13 @@ void	KPlayer::DoScriptAction(PLAYER_SCRIPTACTION_SYNC * pUIInfo) //要求显示某个U
 		case UI_OPENTONGUI: Info.UIAction = 7; break;
 		case UI_CLOSEDIALOG: Info.UIAction = 15; break;
 		case UI_COMPOUND: Info.UIAction = 8; break;
+		case UI_ROULETTE: Info.UIAction = 13; break;
 		default:
 			g_DebugLog("[ScriptUI] Unsupported UI %u for player=%d", pUIInfo->m_bUIId, m_nPlayerIndex);
 			return;
 		}
-		if (pUIInfo->m_bUIId == UI_SELECTDIALOG || pUIInfo->m_bUIId == UI_TALKDIALOG)
+		if (pUIInfo->m_bUIId == UI_SELECTDIALOG || pUIInfo->m_bUIId == UI_TALKDIALOG ||
+			pUIInfo->m_bUIId == UI_ROULETTE)
 		{
 			// 客户端原样回传 token，用于匹配当前菜单，拒绝旧菜单的重复反馈。
 			static DWORD dwNextDialogToken = 0;
@@ -5018,6 +5032,13 @@ void	KPlayer::DoScriptAction(PLAYER_SCRIPTACTION_SYNC * pUIInfo) //要求显示某个U
 			m_dwScriptDialogNpcID = m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC ?
 				Npc[m_nPeapleIdx].m_dwID : 0;
 			Info.SourceToken = m_dwScriptDialogToken;
+			if (pUIInfo->m_bUIId == UI_ROULETTE)
+			{
+				m_dwRouletteToken = Info.SourceToken;
+				m_dwRouletteScriptID = Npc[m_nIndex].m_ActionScriptID;
+				m_nRouletteWorld = Npc[m_nIndex].m_SubWorldIndex;
+			}
+
 		}
 		g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&Info, Info.Length + 1);
 #else
@@ -5028,6 +5049,29 @@ void	KPlayer::DoScriptAction(PLAYER_SCRIPTACTION_SYNC * pUIInfo) //要求显示某个U
 #endif
 	}
 	
+}
+
+// 完成包只承认当前服务端生成的转盘会话，中奖结果始终由Lua保存的任务决定。
+void KPlayer::ProcessScriptUICompletion(const GAME_SCRIPT_UI_COMMAND* pCommand)
+{
+	if (!pCommand || pCommand->Length != sizeof(*pCommand) - 1 ||
+		pCommand->Action != 4 || !m_dwRouletteToken ||
+		pCommand->SourceToken != m_dwRouletteToken || !m_dwRouletteScriptID ||
+		m_nIndex <= 0 || m_nIndex >= MAX_NPC || !m_bFinishLoading ||
+		m_bExchangeServer || Npc[m_nIndex].m_bExchangeServer ||
+		Npc[m_nIndex].m_SubWorldIndex != m_nRouletteWorld ||
+		Npc[m_nIndex].m_CurrentLife <= 0 || Npc[m_nIndex].m_Doing == do_death)
+		return;
+	DWORD dwScript = m_dwRouletteScriptID;
+	m_dwRouletteToken = 0;
+	m_dwRouletteScriptID = 0;
+	m_bWaitingPlayerFeedBack = false;
+	m_nAvailableAnswerNum = 0;
+	m_dwScriptDialogScriptID = 0;
+	// 会话保留脚本身份；不接收客户端函数名或中奖值。
+	KNpcScriptTransaction Exchange(m_nPlayerIndex);
+	if (ExecuteScript(dwScript, "Finished", 0))
+		Exchange.Commit();
 }
 
 //服务器端获知玩家选择了某项后，处理~~
