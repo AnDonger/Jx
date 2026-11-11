@@ -38,6 +38,31 @@ KSkillManager::~KSkillManager()
 
 BOOL KSkillManager::Init()
 {
+	ZeroMemory(m_EquipmentSkillSeries, sizeof(m_EquipmentSkillSeries));
+	KTabFile SeriesTable;
+	if (SeriesTable.Load("\\settings\\npc\\player\\skillseries.txt"))
+	{
+		for (int nRow = 2; nRow <= SeriesTable.GetHeight(); nRow++)
+		{
+			int nSeries = -1;
+			char szSkills[2048] = {};
+			SeriesTable.GetInteger(nRow, 1, -1, &nSeries);
+			SeriesTable.GetString(nRow, 3, "", szSkills, sizeof(szSkills));
+			if (nSeries < 0 || nSeries >= 8)
+				continue;
+			char* pSkill = szSkills;
+			while (pSkill && *pSkill)
+			{
+				int nSkill = atoi(pSkill);
+				if (nSkill > 0 && nSkill < MAX_SKILL)
+					m_EquipmentSkillSeries[nSeries][nSkill] = TRUE;
+				pSkill = strchr(pSkill, '|');
+				if (pSkill)
+					pSkill++;
+			}
+		}
+	}
+
     int i = 0;
     int j = 0;
     for (i = 0; i < MAX_SKILL; i++)
@@ -310,4 +335,15 @@ const PLAYER_SKILL_BUFF_RULE* KSkillManager::GetPlayerBuffRule(int nBuffId) cons
 			return &m_PlayerBuffRules[i];
 	}
 	return NULL;
+}
+
+int KSkillManager::GetEquipmentSeriesBonus(int nSkillId, const int* pAttrib) const
+{
+	if (!pAttrib || nSkillId <= 0 || nSkillId >= MAX_SKILL)
+		return 0;
+	int nBonus = 0;
+	for (int i = 0; i < 8; i++)
+		if (m_EquipmentSkillSeries[i][nSkillId])
+			nBonus += pAttrib[252 + i];
+	return nBonus;
 }

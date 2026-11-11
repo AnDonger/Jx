@@ -7,6 +7,7 @@
 *******************************************************************************/
 
 #include "KCore.h"
+#include <vector>
 #include "KMissle.h"
 #include "KSubWorld.h"
 #include "KSubWorldSet.h"
@@ -1261,6 +1262,14 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 	int	nRegion = nRegionId;
 	int	nRet = 0;
 	int	nRMx, nRMy, nSearchRegion;
+#ifdef _SERVER
+	struct CollisionTarget
+	{
+		int nIndex;
+		DWORD dwID;
+	};
+	std::vector<CollisionTarget> Targets;
+#endif
 
 	// 检查范围内的格子里的NPC
 	for (int i = -nRangeX; i <= nRangeX; i++)
@@ -1276,12 +1285,31 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 
 			_ASSERT(nSearchRegion >= 0);
 
+#ifdef _SERVER
+			// 范围伤害须收集同格全部目标，不能沿用只返回第一个NPC的碰撞探测。
+			// 先记录实体ID再结算，避免死亡、击退或脚本修改列表造成漏算或重复命中。
+			KIndexNode* pNode = (KIndexNode*)SubWorld[nSubWorld].m_Region[nSearchRegion].m_NpcList.GetHead();
+			while (pNode)
+			{
+				int nIndex = pNode->m_nIndex;
+				if (nIndex > 0 && nIndex < MAX_NPC && Npc[nIndex].m_MapX == nRMx &&
+					Npc[nIndex].m_MapY == nRMy && (NpcSet.GetRelation(nLauncherIdx, nIndex) & eRelation))
+				{
+					CollisionTarget Target;
+					Target.nIndex = nIndex;
+					Target.dwID = Npc[nIndex].m_dwID;
+					Targets.push_back(Target);
+					if (nRange == 1)
+						break;
+				}
+				pNode = (KIndexNode*)pNode->GetNext();
+			}
+#else
 			// 从REGION的NPC列表中查找满足条件的NPC		
 			int nNpcIdx = SubWorld[nSubWorld].m_Region[nSearchRegion].FindNpc(nRMx, nRMy, nLauncherIdx, eRelation);
 			if (nNpcIdx > 0)	
 			{
 				nRet++;
-#ifndef _SERVER
 				int nSrcX = 0;
 				int nSrcY = 0;
 				SubWorld[0].Map2Mps(nSearchRegion, Npc[nNpcIdx].m_MapX,Npc[nNpcIdx].m_MapY, Npc[nNpcIdx].m_OffX, Npc[nNpcIdx].m_OffY,  &nSrcX, &nSrcY);
@@ -1290,12 +1318,22 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 					CreateSpecialEffect(MS_DoCollision, nSrcX, nSrcY, m_nCurrentMapZ, nNpcIdx);
 				else 
 					CreateSpecialEffect(MS_DoCollision, nSrcX, nSrcY, m_nCurrentMapZ);
-#else
-				ProcessDamage(nNpcIdx);						
-#endif
 			}
+#endif
 		}
 	}
+#ifdef _SERVER
+	for (size_t n = 0; n < Targets.size(); n++)
+	{
+		int nIndex = Targets[n].nIndex;
+		if (Npc[nIndex].IsMatch(Targets[n].dwID) && Npc[nIndex].m_SubWorldIndex == nSubWorld &&
+			Npc[nIndex].m_RegionIndex >= 0 && (NpcSet.GetRelation(nLauncherIdx, nIndex) & eRelation))
+		{
+			ProcessDamage(nIndex);
+			nRet++;
+		}
+	}
+#endif
 	return nRet;
 }
 

@@ -2503,198 +2503,236 @@ BOOL KSkill::CastPassivitySkill(int nLauncher, int nParam1, int nParam2, int nWa
 // Comments		:
 // Author		: RomanDou
 *****************************************************************************/
-BOOL	KSkill::ParseString2MagicAttrib(unsigned long ulLevel, char * szMagicAttribName, char * szValue)  
+BOOL	KSkill::ParseString2MagicAttrib(unsigned long ulLevel, char * szMagicAttribName, char * szValue)
 {
 	int nValue1 = 0;
 	int nValue2 = 0;
 	int nValue3 = 0;
-    const char *pcszTemp = NULL;
-	if ((!szMagicAttribName) || (!szMagicAttribName[0])) return FALSE;
+	const char *pcszTemp = NULL;
+	if (!szMagicAttribName || !szMagicAttribName[0] || !szValue)
+		return FALSE;
 	//nValue2 当值为-1时为永久性状态，0为非状态，其它值为有时效性状态魔法效果
 	//需要将状态数据与非状态数据分离出来，放入相应的数组内，并记录总数量
-	
-	for (int i  = 0 ; i <= magic_normal_end; i ++)
+
+	int i = g_String2MagicID(szMagicAttribName);
+	if (i == INVALID_ATTRIB)
 	{
-		if (!strcmp(szMagicAttribName, MagicAttrib2String(i)))
+		g_DebugLog("[Skill] Unsupported attribute: skill=%d, name=%s", m_nId, szMagicAttribName);
+		return FALSE;
+	}
+	pcszTemp = szValue;
+	nValue1 = KSG_StringGetInt(&pcszTemp, 0);
+	// Lua 可返回3.5等小数；取整后直接找逗号，不能把小数点当成第二参数。
+	pcszTemp = strchr(szValue, ',');
+	if (pcszTemp)
+	{
+		const char* pcszSecond = ++pcszTemp;
+		nValue2 = KSG_StringGetInt(&pcszTemp, 0);
+		pcszTemp = strchr(pcszSecond, ',');
+		if (pcszTemp)
 		{
-            pcszTemp = szValue;
-            nValue1 = KSG_StringGetInt(&pcszTemp, 0);
-            // Lua 可返回3.5等小数；取整后直接找逗号，不能把小数点当成第二参数。
-            pcszTemp = strchr(szValue, ',');
-            if (pcszTemp)
-            {
-                const char* pcszSecond = ++pcszTemp;
-                nValue2 = KSG_StringGetInt(&pcszTemp, 0);
-                pcszTemp = strchr(pcszSecond, ',');
-                if (pcszTemp)
-                {
-                    ++pcszTemp;
-                    nValue3 = KSG_StringGetInt(&pcszTemp, 0);
-                }
-            }
-			//sscanf(szValue, "%d,%d,%d", &nValue1, &nValue2, &nValue3);
-
-
-			// 土系为当前资源新增的独立伤害，不占用旧毒伤或无属性伤害槽。
-			if (i == magic_earthdamage_v)
-			{
-				m_DamageAttribs[8].nAttribType = i;
-				m_DamageAttribs[8].nValue[0] = nValue1;
-				m_DamageAttribs[8].nValue[1] = nValue2;
-				m_DamageAttribs[8].nValue[2] = nValue3;
-				m_nDamageAttribsNum++;
-				return TRUE;
-			}
-			if (i > magic_missle_begin && i < magic_missle_end)
-			{
-				m_MissleAttribs[m_nMissleAttribsNum].nAttribType = i;
-				m_MissleAttribs[m_nMissleAttribsNum].nValue[0] = nValue1;
-				m_MissleAttribs[m_nMissleAttribsNum].nValue[1] = nValue2;
-				m_MissleAttribs[m_nMissleAttribsNum].nValue[2] = nValue3;
-				m_nMissleAttribsNum ++;
-				return TRUE;
-			}
-			if (i > magic_skill_begin && i < magic_skill_end)
-			{
-				switch(i)
-				{
-				case magic_skill_cost_v:				// 消耗MANA
-					{
-						m_nCost = nValue1;
-					}
-					break;
-					
-				case magic_skill_costtype_v:
-					{
-						m_nSkillCostType = (NPCATTRIB)nValue1;
-					}break;
-					
-				case magic_skill_mintimepercast_v: 		// 每次发魔法的间隔时间
-					{
-						m_nMinTimePerCast = nValue1;
-					}break;
-					
-				case magic_skill_misslenum_v:
-					{
-						m_nChildSkillNum = nValue1;
-					}break;
-					
-				case magic_skill_misslesform_v:
-					{
-						m_eMisslesForm = (eMisslesForm) nValue1;
-					}break;
-				case magic_skill_param1_v:
-					{
-						m_nValue1 = nValue1;
-					}
-					break;
-				case magic_skill_param2_v:	
-					{
-						m_nValue2 = nValue2;
-					}break;
-				case magic_skill_eventskilllevel:
-					{
-						m_nEventSkillLevel = nValue1;
-					}
-				}
-				return TRUE;
-			}
-			
-			if (i > magic_damage_begin && i < magic_damage_end)
-			{
-				switch(i)
-				{
-				case magic_attackrating_v:
-				case magic_attackrating_p:
-					m_DamageAttribs[0].nAttribType = i;
-					m_DamageAttribs[0].nValue[0] = nValue1;
-					m_DamageAttribs[0].nValue[1] = nValue2;
-					m_DamageAttribs[0].nValue[2] = nValue3;
-					m_nDamageAttribsNum ++;
-					break;
-				case magic_ignoredefense_p:
-					m_DamageAttribs[1].nAttribType = i;
-					m_DamageAttribs[1].nValue[0] = nValue1;
-					m_DamageAttribs[1].nValue[1] = nValue2;
-					m_DamageAttribs[1].nValue[2] = nValue3;
-					m_nDamageAttribsNum ++;
-					break;
-				case magic_physicsdamage_v:
-				case magic_physicsenhance_p:
-					m_DamageAttribs[2].nAttribType = i;
-					m_DamageAttribs[2].nValue[0] = nValue1;
-					m_DamageAttribs[2].nValue[1] = nValue2;
-					m_DamageAttribs[2].nValue[2] = nValue3;
-					m_nDamageAttribsNum ++;
-					break;
-				case magic_colddamage_v:
-				case magic_coldenhance_p:
-					m_DamageAttribs[3].nAttribType = i;
-					m_DamageAttribs[3].nValue[0] = nValue1;
-					m_DamageAttribs[3].nValue[1] = nValue2;
-					m_DamageAttribs[3].nValue[2] = nValue3;
-					m_nDamageAttribsNum ++;
-					break;
-				case magic_firedamage_v:
-				case magic_fireenhance_p:
-					m_DamageAttribs[4].nAttribType = i;
-					m_DamageAttribs[4].nValue[0] = nValue1;
-					m_DamageAttribs[4].nValue[1] = nValue2;
-					m_DamageAttribs[4].nValue[2] = nValue3;
-					m_nDamageAttribsNum ++;
-					break;
-				case magic_lightingdamage_v:
-				case magic_lightingenhance_p:
-					m_DamageAttribs[5].nAttribType = i;
-					m_DamageAttribs[5].nValue[0] = nValue1;
-					m_DamageAttribs[5].nValue[1] = nValue2;
-					m_DamageAttribs[5].nValue[2] = nValue3;
-					m_nDamageAttribsNum ++;
-					break;
-				case magic_poisondamage_v:
-				case magic_poisonenhance_p:
-					m_DamageAttribs[6].nAttribType = i;
-					m_DamageAttribs[6].nValue[0] = nValue1;
-					m_DamageAttribs[6].nValue[1] = nValue2;
-					m_DamageAttribs[6].nValue[2] = nValue3;
-					m_nDamageAttribsNum ++;
-					break;
-				case magic_magicdamage_v:
-				case magic_magicenhance_p:
-					m_DamageAttribs[7].nAttribType = i;
-					m_DamageAttribs[7].nValue[0] = nValue1;
-					m_DamageAttribs[7].nValue[1] = nValue2;
-					m_DamageAttribs[7].nValue[2] = nValue3;
-					m_nDamageAttribsNum ++;
-					break;
-				}
-				return TRUE;
-			}
-			
-			//剩下的为数据计算时的数据参数
-			//根据nValue2值决定状态参数还是非状态参数
-			if (nValue2 == 0) 
-			{
-				m_ImmediateAttribs[m_nImmediateAttribsNum].nAttribType = i;
-				m_ImmediateAttribs[m_nImmediateAttribsNum].nValue[0] = nValue1;
-				m_ImmediateAttribs[m_nImmediateAttribsNum].nValue[1] = nValue2;
-				m_ImmediateAttribs[m_nImmediateAttribsNum].nValue[2] = nValue3;
-				m_nImmediateAttribsNum ++;
-				return TRUE;
-				
-			}
-			else
-			{
-				m_StateAttribs[m_nStateAttribsNum].nAttribType = i;
-				m_StateAttribs[m_nStateAttribsNum].nValue[0] = nValue1;
-				m_StateAttribs[m_nStateAttribsNum].nValue[1] = nValue2;
-				m_StateAttribs[m_nStateAttribsNum].nValue[2] = nValue3;
-				m_nStateAttribsNum ++;
-				return TRUE;
-			}
-			
+			++pcszTemp;
+			nValue3 = KSG_StringGetInt(&pcszTemp, 0);
 		}
 	}
+	//sscanf(szValue, "%d,%d,%d", &nValue1, &nValue2, &nValue3);
+
+
+	if (i == magic_steallife_p || i == magic_stealmana_p || i == magic_stealstamina_p ||
+		i == magic_deadlystrike_p || i == magic_fatallystrike_p || i == magic_stun_p || i == magic_knockback_p)
+	{
+		if (nValue2 && (m_eSkillStyle == SKILL_SS_InitiativeNpcState ||
+			m_eSkillStyle == SKILL_SS_PassivityNpcState || m_bTargetSelf))
+		{
+			if (m_nStateAttribsNum >= MAX_SKILL_STATE)
+				return FALSE;
+			KMagicAttrib& Attrib = m_StateAttribs[m_nStateAttribsNum++];
+			Attrib.nAttribType = i;
+			Attrib.nValue[0] = nValue1;
+			Attrib.nValue[1] = nValue2;
+			Attrib.nValue[2] = nValue3;
+			return TRUE;
+		}
+		int nSlot = DAMAGE_ATTRIB_STEAL_LIFE;
+		switch (i)
+		{
+		case magic_stealmana_p: nSlot = DAMAGE_ATTRIB_STEAL_MANA; break;
+		case magic_stealstamina_p: nSlot = DAMAGE_ATTRIB_STEAL_STAMINA; break;
+		case magic_deadlystrike_p: nSlot = DAMAGE_ATTRIB_CRITICAL; break;
+		case magic_fatallystrike_p: nSlot = DAMAGE_ATTRIB_FATAL; break;
+		case magic_stun_p: nSlot = DAMAGE_ATTRIB_STUN; break;
+		case magic_knockback_p: nSlot = DAMAGE_ATTRIB_KNOCKBACK; break;
+		}
+		m_DamageAttribs[nSlot].nAttribType = i;
+		m_DamageAttribs[nSlot].nValue[0] = nValue1;
+		m_DamageAttribs[nSlot].nValue[1] = nValue2;
+		m_DamageAttribs[nSlot].nValue[2] = nValue3;
+		m_nDamageAttribsNum++;
+		return TRUE;
+	}
+
+	// 土系为当前资源新增的独立伤害，不占用旧毒伤或无属性伤害槽。
+	if (i == magic_earthdamage_v)
+	{
+		m_DamageAttribs[8].nAttribType = i;
+		m_DamageAttribs[8].nValue[0] = nValue1;
+		m_DamageAttribs[8].nValue[1] = nValue2;
+		m_DamageAttribs[8].nValue[2] = nValue3;
+		m_nDamageAttribsNum++;
+		return TRUE;
+	}
+	if (i > magic_missle_begin && i < magic_missle_end)
+	{
+		m_MissleAttribs[m_nMissleAttribsNum].nAttribType = i;
+		m_MissleAttribs[m_nMissleAttribsNum].nValue[0] = nValue1;
+		m_MissleAttribs[m_nMissleAttribsNum].nValue[1] = nValue2;
+		m_MissleAttribs[m_nMissleAttribsNum].nValue[2] = nValue3;
+		m_nMissleAttribsNum ++;
+		return TRUE;
+	}
+	if (i > magic_skill_begin && i < magic_skill_end)
+	{
+		switch(i)
+		{
+		case magic_skill_cost_v:				// 消耗MANA
+			{
+				m_nCost = nValue1;
+			}
+			break;
+
+		case magic_skill_costtype_v:
+			{
+				m_nSkillCostType = (NPCATTRIB)nValue1;
+			}break;
+
+		case magic_skill_mintimepercast_v: 		// 每次发魔法的间隔时间
+			{
+				m_nMinTimePerCast = nValue1;
+			}break;
+
+		case magic_skill_misslenum_v:
+			{
+				m_nChildSkillNum = nValue1;
+			}break;
+
+		case magic_skill_misslesform_v:
+			{
+				m_eMisslesForm = (eMisslesForm) nValue1;
+			}break;
+		case magic_skill_param1_v:
+			{
+				m_nValue1 = nValue1;
+			}
+			break;
+		case magic_skill_param2_v:
+			{
+				m_nValue2 = nValue2;
+			}break;
+		case magic_skill_eventskilllevel:
+			{
+				m_nEventSkillLevel = nValue1;
+			}
+		}
+		return TRUE;
+	}
+
+	if (i > magic_damage_begin && i < magic_damage_end)
+	{
+		switch(i)
+		{
+		case magic_attackrating_v:
+		case magic_attackrating_p:
+			m_DamageAttribs[0].nAttribType = i;
+			m_DamageAttribs[0].nValue[0] = nValue1;
+			m_DamageAttribs[0].nValue[1] = nValue2;
+			m_DamageAttribs[0].nValue[2] = nValue3;
+			m_nDamageAttribsNum ++;
+			break;
+		case magic_ignoredefense_p:
+			m_DamageAttribs[1].nAttribType = i;
+			m_DamageAttribs[1].nValue[0] = nValue1;
+			m_DamageAttribs[1].nValue[1] = nValue2;
+			m_DamageAttribs[1].nValue[2] = nValue3;
+			m_nDamageAttribsNum ++;
+			break;
+		case magic_physicsdamage_v:
+		case magic_physicsenhance_p:
+			m_DamageAttribs[2].nAttribType = i;
+			m_DamageAttribs[2].nValue[0] = nValue1;
+			m_DamageAttribs[2].nValue[1] = nValue2;
+			m_DamageAttribs[2].nValue[2] = nValue3;
+			m_nDamageAttribsNum ++;
+			break;
+		case magic_colddamage_v:
+		case magic_coldenhance_p:
+			m_DamageAttribs[3].nAttribType = i;
+			m_DamageAttribs[3].nValue[0] = nValue1;
+			m_DamageAttribs[3].nValue[1] = nValue2;
+			m_DamageAttribs[3].nValue[2] = nValue3;
+			m_nDamageAttribsNum ++;
+			break;
+		case magic_firedamage_v:
+		case magic_fireenhance_p:
+			m_DamageAttribs[4].nAttribType = i;
+			m_DamageAttribs[4].nValue[0] = nValue1;
+			m_DamageAttribs[4].nValue[1] = nValue2;
+			m_DamageAttribs[4].nValue[2] = nValue3;
+			m_nDamageAttribsNum ++;
+			break;
+		case magic_lightingdamage_v:
+		case magic_lightingenhance_p:
+			m_DamageAttribs[5].nAttribType = i;
+			m_DamageAttribs[5].nValue[0] = nValue1;
+			m_DamageAttribs[5].nValue[1] = nValue2;
+			m_DamageAttribs[5].nValue[2] = nValue3;
+			m_nDamageAttribsNum ++;
+			break;
+		case magic_poisondamage_v:
+		case magic_poisonenhance_p:
+			m_DamageAttribs[6].nAttribType = i;
+			m_DamageAttribs[6].nValue[0] = nValue1;
+			m_DamageAttribs[6].nValue[1] = nValue2;
+			m_DamageAttribs[6].nValue[2] = nValue3;
+			m_nDamageAttribsNum ++;
+			break;
+		case magic_magicdamage_v:
+		case magic_magicenhance_p:
+			m_DamageAttribs[7].nAttribType = i;
+			m_DamageAttribs[7].nValue[0] = nValue1;
+			m_DamageAttribs[7].nValue[1] = nValue2;
+			m_DamageAttribs[7].nValue[2] = nValue3;
+			m_nDamageAttribsNum ++;
+			break;
+		}
+		return TRUE;
+	}
+
+	//剩下的为数据计算时的数据参数
+	//根据nValue2值决定状态参数还是非状态参数
+	if (nValue2 == 0)
+	{
+		if (m_nImmediateAttribsNum >= MAX_SKILL_STATE)
+			return FALSE;
+		m_ImmediateAttribs[m_nImmediateAttribsNum].nAttribType = i;
+		m_ImmediateAttribs[m_nImmediateAttribsNum].nValue[0] = nValue1;
+		m_ImmediateAttribs[m_nImmediateAttribsNum].nValue[1] = nValue2;
+		m_ImmediateAttribs[m_nImmediateAttribsNum].nValue[2] = nValue3;
+		m_nImmediateAttribsNum ++;
+		return TRUE;
+
+	}
+	else
+	{
+		if (m_nStateAttribsNum >= MAX_SKILL_STATE)
+			return FALSE;
+		m_StateAttribs[m_nStateAttribsNum].nAttribType = i;
+		m_StateAttribs[m_nStateAttribsNum].nValue[0] = nValue1;
+		m_StateAttribs[m_nStateAttribsNum].nValue[1] = nValue2;
+		m_StateAttribs[m_nStateAttribsNum].nValue[2] = nValue3;
+		m_nStateAttribsNum ++;
+		return TRUE;
+	}
+
 	return FALSE;
 }
 

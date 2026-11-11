@@ -195,6 +195,7 @@ public:
 	BYTE	GetGenerationFlags() const { return m_btGenerationFlags; };
 	DWORD	GetUpgradeData() const { return m_dwUpgradeData; };
 	int		GetRepairPrice();
+	int		GetRepairMagicAttribCount() const;
 	void	Remove();
 	BOOL	SetBaseAttrib(IN const KItemNormalAttrib*);
 	BOOL	SetRequireAttrib(IN const KItemNormalAttrib*);

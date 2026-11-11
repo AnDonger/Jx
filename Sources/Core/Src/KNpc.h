@@ -255,6 +255,7 @@ public:
 	int					m_CurrentStaminaGain;	// Npc的当前体力回复速度
 	int					m_CurrentStaminaLoss;	// Npc的当前体力下降速度
 	KMagicAttrib		m_PhysicsDamage;		// Npc的当前伤害(由力量敏捷与武器伤害决定，不考虑直接加伤害的魔法属性)
+	int					m_CurrentAdditionalAttrib[CURRENT_MAGIC_ATTRIB_COUNT]; // 当前资源扩展属性，重算时清零
 	KMagicAttrib		m_CurrentFireDamage;	// Npc的当前火伤害
 	KMagicAttrib		m_CurrentColdDamage;	// Npc的当前冰伤害
 	KMagicAttrib		m_CurrentLightDamage;	// Npc的当前电伤害
@@ -635,7 +636,7 @@ public:
 	int					GetPlayerIdx();
 	int					GetSyncLifeRatio() const;
 	void				SyncDamage(int nDamage, BYTE bFlags);
-	void				CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL bIsMelee, BOOL bDoHurt = TRUE, BOOL bReturn = FALSE);
+	int					CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL bIsMelee, BOOL bDoHurt = TRUE, BOOL bReturn = FALSE, BOOL bCritical = FALSE);
 	BOOL				ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR, BOOL bDoHurt);
 
 	// mode == 0 npc 导致 == 1 player 导致，不掉东西 == 2 player 导致，掉东西

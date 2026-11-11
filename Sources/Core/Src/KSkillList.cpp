@@ -259,7 +259,25 @@ int KSkillList::GetCurrentLevel(int nSkillID)
 
 	if (i)
 	{
-		return m_Skills[i].CurrentSkillLevel;
+		int nLevel = m_Skills[i].CurrentSkillLevel;
+		if (nLevel > 0 && m_Skills[i].SkillStatus == 3 && m_nNpcIndex > 0 &&
+			m_nNpcIndex < MAX_NPC && Npc[m_nNpcIndex].IsPlayer())
+		{
+			const int* pAttrib = Npc[m_nNpcIndex].m_CurrentAdditionalAttrib;
+			int nBonus = pAttrib[139];
+			static const int SpecificSkills[58] =
+			{
+				27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,
+				3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,
+				0,43,0,44,0,45,0,46,0,47,0,48,0,49,0,50,0,51
+			};
+			for (int j = 0; j < 58; j++)
+				if (SpecificSkills[j] == nSkillID)
+					nBonus += pAttrib[194 + j];
+			nBonus += g_SkillManager.GetEquipmentSeriesBonus(nSkillID, pAttrib);
+			nLevel = max(1, min(MAX_SKILLLEVEL - 1, nLevel + nBonus));
+		}
+		return nLevel;
 	}
 
 	return 0;
@@ -708,7 +726,7 @@ void KSkillList::ApplyPlayerPassiveSkills()
 		if (m_Skills[i].SkillId <= 0)
 			continue;
 		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId,
-			max(1, m_Skills[i].CurrentSkillLevel));
+			max(1, GetCurrentLevel(m_Skills[i].SkillId)));
 		if (!pSkill || pSkill->GetSkillStyle() != SKILL_SS_PassivityNpcState)
 			continue;
 		// 状态3表示已启用；装备门槛变化后同步撤销旧的永久状态。
@@ -985,7 +1003,7 @@ void KSkillList::AddMonsterSkillExp(int nExp)
 	{
 		if (!IsPlayerSkillLearned(m_Skills[i].SkillId))
 			continue;
-		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId, m_Skills[i].CurrentSkillLevel);
+		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId, GetCurrentLevel(m_Skills[i].SkillId));
 		if (pSkill && !pSkill->IsTargetEnemy() && !pSkill->IsAura() &&
 			!pSkill->IsElementalMastery() && !pSkill->IsWeaponMastery())
 			IncreasePlayerSkillExp(m_Skills[i].SkillId, dwExp);
@@ -1004,7 +1022,7 @@ void KSkillList::AddHitSkillExp(int nSkillID)
 	{
 		if (!IsPlayerSkillLearned(m_Skills[i].SkillId))
 			continue;
-		KSkill* pPassive = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId, m_Skills[i].CurrentSkillLevel);
+		KSkill* pPassive = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId, GetCurrentLevel(m_Skills[i].SkillId));
 		if (pPassive && pPassive->EnhancesSkillDamage(pAttack, m_nNpcIndex))
 			IncreasePlayerSkillExp(m_Skills[i].SkillId, dwExp);
 	}

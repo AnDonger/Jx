@@ -3479,8 +3479,8 @@ void KProtocolProcess::CurrentRunCommand(int nIndex, BYTE* pProtocol)
 		nIndex, pCommand->SimulationFrame, pCommand->ElapsedMovementFrames, nTargetX, nTargetY);
 }
 
-// B8/45 使用 MessagePack 八元素数组，整数按网络字节序编码。
-// 只接收当前菜单实际使用的反馈字段，所有读取均受本包长度约束。
+// B8/45 菜单反馈与 B8/46 单件修理共用 MessagePack 整数读取。
+// 多字节整数按网络字节序编码，所有读取均受本包长度约束。
 static BOOL ReadScriptFeedbackInteger(const BYTE *&pData, const BYTE *pEnd, __int64 &nValue)
 {
 	if (pData >= pEnd)
@@ -3594,6 +3594,22 @@ void KProtocolProcess::CurrentExtensionCommand(int nIndex, BYTE* pProtocol)
 			// unknown_1 is retained in the request journal; it never supplies a price or item template.
 			BuySell.BuyMall(nIndex, pBuy->GoodsID, pBuy->Count, pBuy->Currency);
 		}
+		return;
+	}
+	if (pProtocol[3] == 0x46)
+	{
+		// 正式服单件修理为 MessagePack [[物品网络ID]]，不是本地物品下标。
+		const BYTE *pData = pProtocol + 4;
+		const BYTE *pEnd = pProtocol + wLength + 1;
+		__int64 nItemID = 0;
+		if (wLength < 6 || wLength > 10 || *pData++ != 0x91 || *pData++ != 0x91 ||
+			!ReadScriptFeedbackInteger(pData, pEnd, nItemID) ||
+			nItemID <= 0 || nItemID > 0xFFFFFFFFLL || pData != pEnd)
+		{
+			g_DebugLog("[Repair] Invalid B8/46 request: player=%d length=%u", nIndex, wLength);
+			return;
+		}
+		BuySell.Repair(nIndex, (DWORD)nItemID);
 		return;
 	}
 	if (pProtocol[3] == 0x45)
@@ -4201,7 +4217,7 @@ void KProtocolProcess::ItemRepair(int nIndex, BYTE* pProtocol)
 	ITEM_REPAIR	*pIR = (ITEM_REPAIR *)pProtocol;
 	if (nIndex > 0 && nIndex < MAX_PLAYER)
 	{
-		Player[nIndex].RepairItem(pIR->dwItemID);
+		BuySell.Repair(nIndex, pIR->dwItemID);
 	}
 }
 #endif

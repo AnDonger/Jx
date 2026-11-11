@@ -164,7 +164,8 @@ void KNpc::Init()
 	m_CurrentVisionRadius = 40;	// Npc的当前视野范围
 	m_CurrentAttackRadius = 30;	// Npc的当前攻击范围
 	m_CurrentHitRecover = 0;	// Npc的当前受击回复速度
-	m_CurrentAddPhysicsDamage = 0;	// Npc的当前物理伤害直接加的点数
+	m_CurrentAddPhysicsDamage = 0;
+	ZeroMemory(m_CurrentAdditionalAttrib, sizeof(m_CurrentAdditionalAttrib));
 	
 	m_Dir = 0;					// Npc的方向
 	m_JumpStep = 0;
@@ -861,7 +862,8 @@ BOOL KNpc::ProcessState()
 	if (m_LifeState.nTime > 0)
 	{
 		m_LifeState.nTime--;
-		if (!(m_LifeState.nTime % GAME_UPDATE_TIME))
+		// 连续用药会合并并延长药效，恢复节拍不能跟着剩余时间重置。
+		if (!(m_LoopFrames % GAME_UPDATE_TIME))
 		{
 			m_CurrentLife += m_LifeState.nValue[0];
 			if (m_CurrentLife > m_CurrentLifeMax)
@@ -874,7 +876,8 @@ BOOL KNpc::ProcessState()
 	if (m_ManaState.nTime > 0)
 	{
 		m_ManaState.nTime--;
-		if (!(m_ManaState.nTime % GAME_UPDATE_TIME))
+		// 与生命药使用同一独立帧节拍，避免密集用药一直推迟恢复。
+		if (!(m_LoopFrames % GAME_UPDATE_TIME))
 		{
 			m_CurrentMana += m_ManaState.nValue[0];
 			if (m_CurrentMana > m_CurrentManaMax)
@@ -1884,7 +1887,7 @@ int KNpc::DoOrdinSkill(KSkill * pSkill, int nX, int nY)
 		if (ClientDoing == cdo_none) 
 			m_Frames.nTotalFrame = 0;
 		else
-			m_Frames.nTotalFrame = m_AttackFrame * 100 / (100 + m_CurrentAttackSpeed);
+			m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / (100 + max(-99, m_CurrentAttackSpeed)));
 		
 #ifndef _SERVER
 		if (g_Random(3))
@@ -1927,7 +1930,7 @@ void KNpc::DoAttack()
 #endif
 
 	m_ProcessAI = 0;
-	m_Frames.nTotalFrame = m_AttackFrame * 100 / (100 + m_CurrentAttackSpeed);
+	m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / (100 + max(-99, m_CurrentAttackSpeed)));
 	m_Frames.nCurrentFrame = 0;
 	m_Doing = do_attack;
 }
@@ -2013,7 +2016,7 @@ BOOL KNpc::DoBlurAttack()// DoSpecail1
 		m_DataRes.SetBlur(TRUE);
 #endif
 
-	m_Frames.nTotalFrame = m_AttackFrame * 100 / (100 + m_CurrentAttackSpeed);
+	m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / (100 + max(-99, m_CurrentAttackSpeed)));
 	m_Frames.nCurrentFrame = 0;
 	m_Doing = do_special1;
 	return TRUE;
@@ -2288,13 +2291,14 @@ void KNpc::SyncDamage(int nDamage, BYTE bFlags)
 	}
 }
 
-void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL bIsMelee, BOOL bDoHurt /* TRUE */, BOOL bReturn /* = FALSE */)
+int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL bIsMelee, BOOL bDoHurt /* TRUE */, BOOL bReturn /* = FALSE */, BOOL bCritical /* = FALSE */)
 {
-	if (m_Doing == do_death || m_RegionIndex < 0)
-		return;
+	if (m_Doing == do_death || m_Doing == do_revive || m_RegionIndex < 0 ||
+		nAttacker <= 0 || nAttacker >= MAX_NPC || !Npc[nAttacker].m_Index)
+		return 0;
 
 	if (nMin + nMax <= 0)
-		return;
+		return 0;
 
 	int	nRes = 0;
 	int nDamageRange = nMax - nMin;
@@ -2305,6 +2309,25 @@ void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL
 	}
 	else
 		nDamage = nMin + g_Random(nMax - nMin);
+	KNpc& Attacker = Npc[nAttacker];
+	if (bCritical)
+	{
+		int nEnhance = Attacker.m_CurrentAdditionalAttrib[nType == damage_physics ? 284 : 285];
+		int nReduce = m_CurrentAdditionalAttrib[nType == damage_physics ? 314 : 315];
+		nDamage = (int)((__int64)nDamage * max(100, 200 + nEnhance) / 100);
+		nDamage = (int)((__int64)nDamage * (100 - min(100, max(0, nReduce))) / 100);
+	}
+	int nFlatReduceId = 0;
+	switch (nType)
+	{
+	case damage_physics: nFlatReduceId = 293; break;
+	case damage_fire: nFlatReduceId = 294; break;
+	case damage_light: nFlatReduceId = 295; break;
+	case damage_cold: nFlatReduceId = 296; break;
+	case damage_earth: nFlatReduceId = 297; break;
+	}
+	if (nFlatReduceId)
+		nDamage = max(0, nDamage - max(0, m_CurrentAdditionalAttrib[nFlatReduceId]));
 	// 第一步，统计抗性，并计算吸收伤害
 	switch(nType)
 	{
@@ -2312,7 +2335,7 @@ void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL
 		// 装备防御与敏捷闪避分开，原始资源规定两点防御抵消一点伤害。
 		if (m_CurrentExDefend > 0)
 		{
-			nDamage -= m_CurrentExDefend / PlayerSet.m_cLevelAdd.GetHurtPerDefense();
+			nDamage -= max(0, m_CurrentExDefend - max(0, Attacker.m_CurrentAdditionalAttrib[281])) / PlayerSet.m_cLevelAdd.GetHurtPerDefense();
 			if (nDamage < 0)
 				nDamage = 0;
 		}
@@ -2467,28 +2490,46 @@ void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL
 		nRes = 0;
 		break;
 	}
-	if (!nDamage)
-		return;
+	int nIgnoreRes = 0;
+	switch (nType)
+	{
+	case damage_physics: nIgnoreRes = Attacker.m_CurrentAdditionalAttrib[275]; break;
+	case damage_fire: nIgnoreRes = Attacker.m_CurrentAdditionalAttrib[277] + Attacker.m_CurrentAdditionalAttrib[276]; break;
+	case damage_light: nIgnoreRes = Attacker.m_CurrentAdditionalAttrib[278] + Attacker.m_CurrentAdditionalAttrib[276]; break;
+	case damage_cold: nIgnoreRes = Attacker.m_CurrentAdditionalAttrib[279] + Attacker.m_CurrentAdditionalAttrib[276]; break;
+	case damage_earth: nIgnoreRes = Attacker.m_CurrentAdditionalAttrib[280] + Attacker.m_CurrentAdditionalAttrib[276]; break;
+	}
+	nRes -= max(0, nIgnoreRes);
+	if (nType == damage_poison)
+		nDamage = (int)((__int64)nDamage * (100 - min(100, max(0, m_CurrentAdditionalAttrib[109]))) / 100);
+	if (nDamage <= 0)
+		return 0;
 	// 第二步判断是否有魔法盾存在
 	g_DebugLog("[数值]%s魔法盾吸收比例：%d", Name, m_ManaShield.nValue[0]);
 
-	if (m_ManaShield.nValue[0])
+	int nShieldPercent = min(100, max(0, m_ManaShield.nValue[0] + m_CurrentAdditionalAttrib[260]));
+	if (nShieldPercent > 0)
 	{
-		int nManaDamage = nDamage * m_ManaShield.nValue[0] / 100;
-		m_CurrentMana -= nManaDamage;
-		if (m_CurrentMana < 0)
+		int nWanted = (int)((__int64)nDamage * nShieldPercent / 100);
+		int nAbsorb = min(max(0, m_CurrentMana), nWanted);
+		m_CurrentMana -= nAbsorb;
+		nDamage -= nAbsorb;
+		if (nAbsorb < nWanted)
 		{
-			nDamage -= m_CurrentMana;
-			m_CurrentMana = 0;
 			m_ManaShield.nValue[0] = 0;
 			m_ManaShield.nTime = 0;
 		}
-		else
-		{
-			nDamage -= nManaDamage;
-		}
 	}
-	nDamage = nDamage * (100 - nRes) / 100;
+	nDamage = (int)((__int64)nDamage * (100 - min(100, nRes)) / 100);
+	int nReduce = m_CurrentAdditionalAttrib[nType == damage_physics ? 339 : 340];
+	if (Attacker.IsPlayer() && IsPlayer())
+	{
+		nDamage = (int)((__int64)nDamage * (100 + max(0, Attacker.m_CurrentAdditionalAttrib[342])) / 100);
+		nReduce += m_CurrentAdditionalAttrib[282];
+	}
+	nDamage = (int)((__int64)nDamage * (100 - min(100, max(0, nReduce))) / 100);
+	if (nDamage <= 0)
+		return 0;
 	g_DebugLog("[数值]%s实际伤害：%d", Name, nDamage);
 
 	// 反弹伤害
@@ -2497,13 +2538,15 @@ void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL
 		if (bIsMelee)
 		{
 			nMin = m_CurrentMeleeDmgRet;
-			nMin += nDamage * nMax / 100;
+			nMin += nDamage * m_CurrentMeleeDmgRetPercent / 100;
+			nMin = nMin * (100 - min(100, max(0, Attacker.m_CurrentAdditionalAttrib[313]))) / 100;
 			Npc[nAttacker].CalcDamage(m_Index, nMin, nMin, damage_magic, FALSE, FALSE, TRUE);
 		}
 		else
 		{
 			nMin = m_CurrentRangeDmgRet;
-			nMin += nDamage * nMax / 100;
+			nMin += nDamage * m_CurrentRangeDmgRetPercent / 100;
+			nMin = nMin * (100 - min(100, max(0, Attacker.m_CurrentAdditionalAttrib[312]))) / 100;
 			Npc[nAttacker].CalcDamage(m_Index, nMin, nMin, damage_magic, FALSE, FALSE, TRUE);
 		}
 		g_DebugLog("[数值]%s返回伤害%d", Name, nMin);
@@ -2515,14 +2558,17 @@ void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL
 	m_nLastDamageIdx = nAttacker;
 	if (m_Kind != kind_player && Npc[nAttacker].m_Kind == kind_player && Npc[nAttacker].m_nPlayerIdx > 0)
 		m_cDeathCalcExp.AddDamage(Npc[nAttacker].m_nPlayerIdx, (m_CurrentLife - nDamage > 0 ? nDamage : m_CurrentLife));
+	int nActualDamage = min(max(0, m_CurrentLife), nDamage);
 	m_CurrentLife -= nDamage;
 	if (m_CurrentLife < 0)
 		m_CurrentLife = 0;
-	SyncDamage(nDamage, 0);
+	// 当前EA低位：物理0、火1、冰2、雷3、毒4、未命中5、土6。
+	// 旧枚举的无属性值5与未命中冲突，未确认新编号前保持原普通伤害提示。
+	SyncDamage(nDamage, nType == damage_magic ? 0 : (BYTE)nType);
 
 	if (nDamage > 0)
 	{
-		m_CurrentMana += m_CurrentDamage2Mana * nDamage / 100;
+		m_CurrentMana += (int)((__int64)m_CurrentDamage2Mana * nActualDamage / 100);
 		if (m_CurrentMana > m_CurrentManaMax)
 		{
 			m_CurrentMana = m_CurrentManaMax;
@@ -2539,6 +2585,7 @@ void KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL
 		if (m_Kind == kind_player)
 			Player[m_nPlayerIdx].m_cPK.CloseAll();
 	}
+	return nActualDamage;
 }
 #endif
 
@@ -2549,7 +2596,7 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 		return FALSE;
 
 	// 发技能的NPC不存在了，不用算了。
-	if (!Npc[nLauncher].m_Index)
+	if (nLauncher <= 0 || nLauncher >= MAX_NPC || !Npc[nLauncher].m_Index)
 		return FALSE;
 
 	if (!pData)
@@ -2566,7 +2613,8 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 	
 	if (bUseAR)
 	{
-		if (!CheckHitTarget(nAr, m_CurrentDefend, nIgnoreAr))
+		if (!g_RandPercent(Npc[nLauncher].m_CurrentAdditionalAttrib[338]) &&
+			!CheckHitTarget(nAr, m_CurrentDefend, nIgnoreAr))
 		{
 			SyncDamage(0, 5);
 			g_DebugLog("[数值]%s闪过攻击", Name);
@@ -2577,47 +2625,85 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 	if (m_Doing != do_death)
 		DoHurt(m_HurtFrame);//Question ?*/
 	int nLife = m_CurrentLife;
-	// 磨损
-	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_physics, bIsMelee, bDoHurt);
-	pTemp++;
-	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_cold, bIsMelee, bDoHurt);
-	if (m_FreezeState.nTime <= 0)
+	KNpc& Launcher = Npc[nLauncher];
+	KMagicAttrib* pDamage = (KMagicAttrib*)pData;
+	BOOL bCritical = g_RandPercent(min(100, max(0, pDamage[DAMAGE_ATTRIB_CRITICAL].nValue[0] -
+		m_CurrentAdditionalAttrib[191] - m_CurrentAdditionalAttrib[269])));
+	int nPhysicalDamage = CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_physics, bIsMelee, bDoHurt, FALSE, bCritical);
+	if (nPhysicalDamage > 0 && Launcher.m_CurrentLife > 0 && Launcher.m_Doing != do_death)
 	{
-		m_FreezeState.nTime = pTemp->nValue[1] * (100 - m_CurrentFreezeTimeReducePercent) / 100;
+		int nLifeSteal = min(100, max(0, pDamage[DAMAGE_ATTRIB_STEAL_LIFE].nValue[0]));
+		int nManaSteal = min(100, max(0, pDamage[DAMAGE_ATTRIB_STEAL_MANA].nValue[0]));
+		int nStaminaSteal = min(100, max(0, pDamage[DAMAGE_ATTRIB_STEAL_STAMINA].nValue[0]));
+		Launcher.m_CurrentLife = min(Launcher.m_CurrentLifeMax, Launcher.m_CurrentLife + (int)((__int64)nPhysicalDamage * nLifeSteal / 100));
+		Launcher.m_CurrentMana = min(Launcher.m_CurrentManaMax, Launcher.m_CurrentMana + (int)((__int64)nPhysicalDamage * nManaSteal / 100));
+		Launcher.m_CurrentStamina = min(Launcher.m_CurrentStaminaMax, Launcher.m_CurrentStamina + (int)((__int64)nPhysicalDamage * nStaminaSteal / 100));
 	}
 	pTemp++;
-	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_fire, bIsMelee, bDoHurt);
-	pTemp++;
-	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_light, bIsMelee, bDoHurt);
-	pTemp++;
-	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[0], damage_poison, bIsMelee, bDoHurt);
-	if (m_PoisonState.nTime == 0)
+	int nColdDamage = CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_cold, bIsMelee, bDoHurt, FALSE,
+		g_RandPercent(min(100, max(0, Launcher.m_CurrentAdditionalAttrib[263] + Launcher.m_CurrentAdditionalAttrib[266] -
+		m_CurrentAdditionalAttrib[270] - m_CurrentAdditionalAttrib[273]))));
+	if (nColdDamage > 0 && m_CurrentLife > 0 && m_Doing != do_death && m_FreezeState.nTime <= 0 && !m_CurrentAdditionalAttrib[319])
 	{
-		m_PoisonState.nTime = pTemp->nValue[1];
-		m_PoisonState.nValue[0] = pTemp->nValue[0];
-		m_PoisonState.nValue[1] = pTemp->nValue[2];
+		m_FreezeState.nTime = max(0, pTemp->nValue[1] * (100 - min(100, max(0, m_CurrentFreezeTimeReducePercent))) / 100 - max(0, m_CurrentAdditionalAttrib[148]) * 18);
 	}
-	else
+	pTemp++;
+	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_fire, bIsMelee, bDoHurt, FALSE,
+		g_RandPercent(min(100, max(0, Launcher.m_CurrentAdditionalAttrib[263] + Launcher.m_CurrentAdditionalAttrib[264] -
+		m_CurrentAdditionalAttrib[270] - m_CurrentAdditionalAttrib[271]))));
+	pTemp++;
+	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_light, bIsMelee, bDoHurt, FALSE,
+		g_RandPercent(min(100, max(0, Launcher.m_CurrentAdditionalAttrib[263] + Launcher.m_CurrentAdditionalAttrib[265] -
+		m_CurrentAdditionalAttrib[270] - m_CurrentAdditionalAttrib[272]))));
+	pTemp++;
+	int nPoisonDamage = CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[0], damage_poison, bIsMelee, bDoHurt);
+	if (nPoisonDamage > 0 && m_CurrentLife > 0 && m_Doing != do_death)
 	{
-		int d1, d2, t1, t2, c1, c2;
-		d1 = m_PoisonState.nValue[0];
-		d2 = pTemp->nValue[0];
-		t1 = m_PoisonState.nTime;
-		t2 = pTemp->nValue[1];
-		c1 = m_PoisonState.nValue[1];
-		c2 = pTemp->nValue[2];
-		if (c1 > 0 && c2 > 0 && d1 > 0 && d2 > 0) 
+		int nPoisonTime = max(0, pTemp->nValue[1] * (100 - min(100, max(0, m_CurrentPoisonTimeReducePercent))) / 100 - max(0, m_CurrentAdditionalAttrib[148]) * 18);
+		if (m_PoisonState.nTime == 0)
 		{
-			m_PoisonState.nValue[0] = ((c1 + c2) * d1 / c1 + (c1 + c2) * d2 / c2) / 2;
-			m_PoisonState.nTime = (t1 * d1 * c2 + t2 *d2 * c1) /(d1 * c2 + d2 * c1);
-			m_PoisonState.nValue[1] = (c1 + c2) / 2;
+			m_PoisonState.nTime = nPoisonTime;
+			m_PoisonState.nValue[0] = pTemp->nValue[0];
+			m_PoisonState.nValue[1] = pTemp->nValue[2];
+		}
+		else
+		{
+			int d1, d2, t1, t2, c1, c2;
+			d1 = m_PoisonState.nValue[0];
+			d2 = pTemp->nValue[0];
+			t1 = m_PoisonState.nTime;
+			t2 = nPoisonTime;
+			c1 = m_PoisonState.nValue[1];
+			c2 = pTemp->nValue[2];
+			if (c1 > 0 && c2 > 0 && d1 > 0 && d2 > 0)
+			{
+				m_PoisonState.nValue[0] = ((c1 + c2) * d1 / c1 + (c1 + c2) * d2 / c2) / 2;
+				m_PoisonState.nTime = (t1 * d1 * c2 + t2 *d2 * c1) /(d1 * c2 + d2 * c1);
+				m_PoisonState.nValue[1] = (c1 + c2) / 2;
+			}
 		}
 	}
-	m_PoisonState.nTime = m_PoisonState.nTime * (100 - m_CurrentPoisonTimeReducePercent) / 100;
 	pTemp++;
-	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_magic, bIsMelee, bDoHurt);
+	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_magic, bIsMelee, bDoHurt, FALSE,
+		g_RandPercent(min(100, max(0, Launcher.m_CurrentAdditionalAttrib[263] - m_CurrentAdditionalAttrib[270]))));
 	pTemp++;
-	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_earth, bIsMelee, bDoHurt);
+	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_earth, bIsMelee, bDoHurt, FALSE,
+		g_RandPercent(min(100, max(0, Launcher.m_CurrentAdditionalAttrib[263] + Launcher.m_CurrentAdditionalAttrib[267] -
+		m_CurrentAdditionalAttrib[270] - m_CurrentAdditionalAttrib[274]))));
+	if (m_CurrentLife > 0 && m_Doing != do_death &&
+		g_RandPercent(min(100, max(0, pDamage[DAMAGE_ATTRIB_FATAL].nValue[0] - m_CurrentAdditionalAttrib[192]))))
+	{
+		// 有效技能表“万骨全枯”明确为当前生命的四分之一。
+		int nFatalDamage = m_CurrentLife / 4;
+		CalcDamage(nLauncher, nFatalDamage, nFatalDamage, damage_magic, bIsMelee, bDoHurt);
+	}
+	if (m_CurrentLife > 0 && m_Doing != do_death && m_StunState.nTime <= 0 &&
+		pDamage[DAMAGE_ATTRIB_STUN].nValue[1] > 0 && !m_CurrentAdditionalAttrib[318] && !m_CurrentAdditionalAttrib[319] &&
+		g_RandPercent(min(100, max(0, pDamage[DAMAGE_ATTRIB_STUN].nValue[0]))))
+	{
+		m_StunState.nTime = max(0, pDamage[DAMAGE_ATTRIB_STUN].nValue[1] *
+			(100 - min(100, max(0, m_CurrentStunTimeReducePercent))) / 100 - max(0, m_CurrentAdditionalAttrib[148]) * 18);
+	}
 	m_nPeopleIdx = nLauncher;
 
 	if (IsPlayer() && (m_CurrentLife - nLife < 0))
@@ -2663,6 +2749,8 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 	{
 		pDes->nAttribType = magic_attackrating_v;
 		pDes->nValue[0] = m_CurrentAttackRating;
+		if (pTemp->nAttribType == magic_attackrating_v)
+			pDes->nValue[0] += pTemp->nValue[0];
 	}
 	pTemp++;
 	pDes++;
@@ -2671,6 +2759,7 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 		pDes->nAttribType = magic_ignoredefense_p;
 		pDes->nValue[0] = pTemp->nValue[0];
 	}
+	pDes->nValue[0] += m_CurrentAdditionalAttrib[58];
 	pTemp++;
 	pDes++;
 	if (pTemp->nAttribType == magic_physicsenhance_p)
@@ -2771,7 +2860,45 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 		pDes->nValue[0] = pTemp->nValue[0];
 		pDes->nValue[2] = pTemp->nValue[2] * (100 + m_CurrentEarthEnhance) / 100;
 	}
+	// 固定伤害槽与装备附伤分别叠加；不把火系武器误判为火系技能。
+	KMagicAttrib* pSource = (KMagicAttrib*)pSrcData;
+	KMagicAttrib* pDamage = (KMagicAttrib*)pDesData;
+	if (bIsPhysical)
+	{
+		pDamage[8].nAttribType = magic_earthdamage_v;
+		pDamage[8].nValue[0] += m_CurrentAdditionalAttrib[177];
+		pDamage[8].nValue[2] += m_CurrentAdditionalAttrib[177];
+	}
+	const int nMagicSlots[] = {2, 3, 4, 5, 6, 8};
+	const int nMagicIds[] = {168, 169, 170, 171, 172, 175};
+	for (int i = 0; i < 6; i++)
+	{
+		int nSlot = nMagicSlots[i];
+		if (!bIsPhysical && (pSource[nSlot].nValue[0] > 0 || pSource[nSlot].nValue[2] > 0))
+		{
+			pDamage[nSlot].nValue[0] += m_CurrentAdditionalAttrib[nMagicIds[i]];
+			pDamage[nSlot].nValue[2] += m_CurrentAdditionalAttrib[nMagicIds[i]];
+		}
+	}
+	if (pDamage[7].nValue[0] > 0 || pDamage[7].nValue[2] > 0)
+	{
+		pDamage[7].nValue[0] += pDamage[7].nValue[0] * m_CurrentAdditionalAttrib[165] / 100;
+		pDamage[7].nValue[2] += pDamage[7].nValue[2] * m_CurrentAdditionalAttrib[165] / 100;
+	}
+	for (int i = DAMAGE_ATTRIB_STEAL_LIFE; i < MAX_MISSLE_DAMAGEATTRIB; i++)
+		pDamage[i] = pSource[i];
+	if (bIsPhysical)
+	{
+		pDamage[DAMAGE_ATTRIB_STEAL_LIFE].nValue[0] += m_CurrentLifeStolen;
+		pDamage[DAMAGE_ATTRIB_STEAL_MANA].nValue[0] += m_CurrentManaStolen;
+		pDamage[DAMAGE_ATTRIB_STEAL_STAMINA].nValue[0] += m_CurrentStaminaStolen;
+		pDamage[DAMAGE_ATTRIB_CRITICAL].nValue[0] += m_CurrentDeadlyStrike;
+		pDamage[DAMAGE_ATTRIB_STUN].nValue[0] += m_CurrentAdditionalAttrib[72] + m_CurrentAdditionalAttrib[147];
+		pDamage[DAMAGE_ATTRIB_KNOCKBACK].nValue[0] += m_CurrentKnockBack;
+	}
+	pDamage[DAMAGE_ATTRIB_FATAL].nValue[0] += m_CurrentAdditionalAttrib[71] + m_CurrentAdditionalAttrib[152];
 }
+
 
 void KNpc::ServeMove(int MoveSpeed)
 {
@@ -4589,7 +4716,7 @@ BOOL	KNpc::DoRunAttack()
 		}
 		m_Dir = g_GetDirIndex(x, y, tx, ty);
 #endif
-		m_Frames.nTotalFrame = m_AttackFrame * 100 / (100 + m_CurrentAttackSpeed);
+		m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / (100 + max(-99, m_CurrentAttackSpeed)));
 		m_Frames.nCurrentFrame = 0;
 		m_Doing = do_runattack;
 		break;
@@ -4711,7 +4838,7 @@ BOOL KNpc::DoJumpAttack()
 		}
 		m_Dir = g_GetDirIndex(x, y, tx, ty);
 #endif
-		m_Frames.nTotalFrame = m_AttackFrame * 100 / (100 + m_CurrentAttackSpeed);
+		m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / (100 + max(-99, m_CurrentAttackSpeed)));
 		m_Frames.nCurrentFrame = 0;
 		m_Doing = do_jumpattack;
 		break;
@@ -5706,6 +5833,7 @@ void	KNpc::RestoreNpcBaseInfo()
 	ZeroMemory(m_CurrentMeleeEnhance, sizeof(m_CurrentMeleeEnhance));
 	ClearStateSkillEffect();
 	ClearNormalState();
+	ZeroMemory(m_CurrentAdditionalAttrib, sizeof(m_CurrentAdditionalAttrib));
 
 }
 

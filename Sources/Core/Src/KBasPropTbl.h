@@ -528,6 +528,8 @@ public:
 
 // 以下是核心成员变量
 protected:
+	// 原 greenaddon.txt 中十条套装附加属性的有效条数，按资源版本分别保存。
+	int					m_nGreenMagicCount[100];
 	KBPT_Medicine			m_BPTMedicine;
 	KBPT_MedMaterial		m_BPTMedMaterial;
 	KBPT_NormalItem		m_BPTMagicScript;
@@ -561,6 +563,7 @@ protected:
 // 以下是对外接口
 public:
 	BOOL Init(int nVersion = -1);
+	int GetGreenMagicAttribCount(int nGreenId) const;
 
 	const KMAGICATTRIB_TABFILE* GetMARecord(IN int) const;
 	const int					GetMARecordNumber() const;

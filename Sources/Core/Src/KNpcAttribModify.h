@@ -9,6 +9,8 @@ public:
 	KNpcAttribModify();
 	~KNpcAttribModify();
 	void	ModifyAttrib(KNpc* pNpc, void* pData);
+	void	ModifyEquipmentAttrib(KNpc* pNpc, const KMagicAttrib* pData);
+	void	CurrentAttrib(KNpc* pNpc, void* pData);
 	void	MixPoisonDamage(KMagicAttrib* pDes, KMagicAttrib* pSrc);
 private:
 	void	(KNpcAttribModify::*ProcessFunc[magic_normal_end])(KNpc* pNpc, void* pData);	

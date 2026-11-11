@@ -186,6 +186,35 @@ BOOL KLibOfBPT::Init(int nVersion)
 		}
 	}
 
+	// 客户端按版本读取套装附加表；修理计数包括未激活的套装附加条目。
+	ZeroMemory(m_nGreenMagicCount, sizeof(m_nGreenMagicCount));
+	char szGreenPath[128];
+	sprintf(szGreenPath, "\\settings\\item\\%03d\\greenaddon.txt", nVersion);
+	KTabFile GreenTable;
+	if (GreenTable.Load(szGreenPath))
+	{
+		for (int nRow = 2; nRow <= GreenTable.GetHeight(); nRow++)
+		{
+			int nGreenId = 0;
+			GreenTable.GetInteger(nRow, 2, 0, &nGreenId);
+			if (nGreenId < 1 || nGreenId > 100)
+				continue;
+			int nCount = 0;
+			for (int i = 0; i < 10; i++)
+			{
+				int nType = -1;
+				GreenTable.GetInteger(nRow, 3 + i * 2, -1, &nType);
+				if (nType >= 28 && nType <= 342)
+					nCount++;
+			}
+			m_nGreenMagicCount[nGreenId - 1] = nCount;
+		}
+	}
+	else
+	{
+		g_DebugLog("[Item] Optional original green addon table unavailable: %s", szGreenPath);
+	}
+
 	// 构造魔法属性表
 	if (m_BPTMagicAttrib.NumOfEntries() > 0)
 		InitMALib();
@@ -326,6 +355,11 @@ BOOL KLibOfBPT::InitMAIT()
 	出口:	原始的魔法属性表被分类, 分类后的数据存入m_CMAT数组中
 			m_CMAT[i]中给出了适用于第i种装备的全部魔法属性
 ******************************************************************************/
+int KLibOfBPT::GetGreenMagicAttribCount(int nGreenId) const
+{
+	return nGreenId >= 1 && nGreenId <= 100 ? m_nGreenMagicCount[nGreenId - 1] : 0;
+}
+
 BOOL KLibOfBPT::InitMALib()
 {
 	BOOL bEC = FALSE;

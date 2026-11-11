@@ -2529,8 +2529,16 @@ void	KPlayer::UpdataCurData()
 	m_nCurEngergy						= m_nEngergy;
 	m_nCurLucky							= m_nLucky;
 	
+	ZeroMemory(Npc[m_nIndex].m_CurrentAdditionalAttrib, sizeof(Npc[m_nIndex].m_CurrentAdditionalAttrib));
+	Npc[m_nIndex].m_CurrentFreezeTimeReducePercent = 0;
+	Npc[m_nIndex].m_CurrentPoisonTimeReducePercent = 0;
+	Npc[m_nIndex].m_CurrentStunTimeReducePercent = 0;
 	ReCalcEquip();
 	ReCalcState();
+#ifdef _SERVER
+	// 装备变更也会改变被动技能有效等级，替换旧状态时先撤销其完整数值。
+	Npc[m_nIndex].m_SkillList.ApplyPlayerPassiveSkills();
+#endif
 }
 
 void KPlayer::ReCalcEquip()
@@ -3769,12 +3777,16 @@ void	KPlayer::EatItem(BYTE* pProtocol)
 {
 	const GAME_USE_ITEM_COMMAND *pEat = (const GAME_USE_ITEM_COMMAND*)pProtocol;
 	
-	if (pEat->UseMode != 1 || (pEat->Place != pos_equiproom && pEat->Place != pos_immediacy) ||
+	if ((pEat->UseMode != 1 && pEat->UseMode != 2) ||
+		(pEat->Place != pos_equiproom && pEat->Place != pos_immediacy) ||
 		Npc[m_nIndex].m_Doing == do_death || Npc[m_nIndex].m_Doing == do_revive || CheckTrading())
 		return;
 	int nRoom = pEat->Place == pos_equiproom ? room_equipment : room_immediacy;
 	int nItem = m_ItemList.m_Room[nRoom].FindItem(pEat->X, pEat->Y);
 	if (nItem <= 0 || nItem >= MAX_ITEM)
+		return;
+	// 当前客户端模式1为手动使用，模式2为自动回复；自动请求仅允许药品。
+	if (pEat->UseMode == 2 && Item[nItem].GetGenre() != item_medicine)
 		return;
 	if (Item[nItem].GetGenre() == item_skillbook)
 	{

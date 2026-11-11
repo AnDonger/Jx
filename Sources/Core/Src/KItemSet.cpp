@@ -76,6 +76,8 @@ void KItemSet::Init()
 //	Î¬ÐÞ¼Û¸ñ
 	IniFile.GetInteger("Repair", "ItemPriceScale", 100, &m_sRepairParam.nPriceScale);
 	IniFile.GetInteger("Repair", "MagicPriceScale", 10, &m_sRepairParam.nMagicScale);
+	IniFile.GetFloat("Repair", "UpLevelBaseNum", 1.2f, &m_sRepairParam.fUpLevelBaseNum);
+	IniFile.GetFloat("Repair", "RequirLevelDivisor", 20.0f, &m_sRepairParam.fRequireLevelDivisor);
 //	¹¥»÷Ä¥Ëð
 	IniFile.GetInteger("Attack", "Weapon", 256, &m_nItemAbradeRate[enumAbradeAttack][itempart_weapon]);
 	IniFile.GetInteger("Attack", "Head", 0, &m_nItemAbradeRate[enumAbradeAttack][itempart_head]);

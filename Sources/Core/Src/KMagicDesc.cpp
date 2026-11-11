@@ -450,8 +450,138 @@ const char* KMagicDesc::GetGemDesc(const KMagicAttrib& Attrib)
 	return m_szDesc[0] ? m_szDesc : NULL;
 }
 
+struct CURRENT_MAGIC_NAME
+{
+	int Id;
+	const char* Name;
+};
+// 只列已核对编号；不根据magicdesc.ini的行号推算中间缺失的类型。
+static const CURRENT_MAGIC_NAME CurrentMagicNames[] =
+{
+	{168, "addphysicsmagic_v"},
+	{169, "addcoldmagic_v"},
+	{170, "addfiremagic_v"},
+	{171, "addlightingmagic_v"},
+	{172, "addpoisonmagic_v"},
+	{175, "addearthmagic_v"},
+	{177, "addearthdamage_v"},
+	{182, "addallattribute_v"},
+	{191, "magic_deadlystrikeResist_p"},
+	{192, "magic_fatallystrikeResist_p"},
+	{194, "magic_jixuezhan_add"},
+	{195, "magic_lingboweibu_add"},
+	{196, "magic_kaishanzhan_add"},
+	{197, "magic_huifengzhan_add"},
+	{198, "magic_dianguangzhan_add"},
+	{199, "magic_hengkongzhan_add"},
+	{200, "magic_jing_duan_add"},
+	{201, "magic_jing_chang_add"},
+	{202, "magic_santouliubi_add"},
+	{203, "magic_xuanbingzhan_add"},
+	{204, "magic_huoguangzhan_add"},
+	{205, "magic_lianhuanzhan_add"},
+	{206, "magic_luodizhan_add"},
+	{207, "magic_chunyanhuti_add"},
+	{208, "magic_qianjunzhan_add"},
+	{209, "magic_qingchengyiji_add"},
+	{210, "magic_zhangxinlei_add"},
+	{211, "magic_liuxingshi_add"},
+	{212, "magic_bingxuedan_add"},
+	{213, "magic_pilihuo_add"},
+	{214, "magic_jing_lei_add"},
+	{215, "magic_tianfengdiren_add"},
+	{216, "magic_bingjixuegu_add"},
+	{217, "magic_fenglinhuoshan_add"},
+	{218, "magic_handilei_add"},
+	{219, "magic_jing_tu_add"},
+	{220, "magic_tiemabingge_add"},
+	{221, "magic_jing_huo_add"},
+	{222, "magic_fengyunleidong_add"},
+	{223, "magic_wuyuechaozhong_add"},
+	{224, "magic_jing_bing_add"},
+	{225, "magic_shifangliehuo_add"},
+	{226, "magic_leifengjia_add"},
+	{227, "magic_tianbengdilie_add"},
+	{228, "magic_bingfengbao_add"},
+	{229, "magic_zhurongzhenqi_add"},
+	{230, "magic_leidongjiutian_add"},
+	{231, "magic_xuannvbutian_add"},
+	{232, "magic_bingfengwanli_add"},
+	{233, "magic_sanmeizhenhuo_add"},
+	{234, "magic_lishiji_add"},
+	{235, "magic_jingangzhou_add"},
+	{236, "magic_changgongji_add"},
+	{237, "magic_cuishenzhou_add"},
+	{238, "magic_tianyuji_add"},
+	{239, "magic_buxinzhou_add"},
+	{240, "magic_lianluji_add"},
+	{241, "magic_qianggongzhou_add"},
+	{242, "magic_huoleiji_add"},
+	{243, "magic_pojiazhou_add"},
+	{244, "magic_suiguji_add"},
+	{245, "magic_putizhou_add"},
+	{246, "magic_liuxingji_add"},
+	{247, "magic_zhanxinzhou_add"},
+	{248, "magic_zhuihunji_add"},
+	{249, "magic_jifengzhou_add"},
+	{250, "magic_fengjuancanyun_add"},
+	{251, "magic_wangguquanku_add"},
+	{252, "magic_skillseries_jiashi_changbing_v"},
+	{253, "magic_skillseries_jiashi_duanbing_v"},
+	{254, "magic_skillseries_daoshi_fire_v"},
+	{255, "magic_skillseries_daoshi_light_v"},
+	{256, "magic_skillseries_daoshi_freeze_v"},
+	{257, "magic_skillseries_daoshi_earth_v"},
+	{258, "magic_skillseries_yiren_summon_v"},
+	{259, "magic_skillseries_yiren_curse_v"},
+	{260, "fixmanashield_p"},
+	{263, "allmagicdeadlystirke"},
+	{264, "firedeadlystirke"},
+	{265, "lightdeadlystirke"},
+	{266, "colddeadlystirke"},
+	{267, "earthdeadlystirke"},
+	{269, "reducephysicsdeadlystirke"},
+	{270, "reducemagicdeadlystirke"},
+	{271, "reducefiredeadlystirke"},
+	{272, "reducelightdeadlystirke"},
+	{273, "reducecolddeadlystirke"},
+	{274, "reduceearthdeadlystirke"},
+	{275, "ignorephysicsresist"},
+	{276, "ignoremaigcresist"},
+	{277, "ignorefireresist"},
+	{278, "ignorelightresist"},
+	{279, "ignorecoldresist"},
+	{280, "ignoreearthresist"},
+	{281, "ignoreexdefence"},
+	{282, "modify_pkrate"},
+	{284, "physic_deadly_strike_damage_p"},
+	{285, "magic_deadly_strike_damage_p"},
+	{293, "magic_absorb_physics_damage"},
+	{294, "magic_absorb_fire_damage"},
+	{295, "magic_absorb_light_damage"},
+	{296, "magic_absorb_cold_damage"},
+	{297, "magic_absorb_earth_damage"},
+	{312, "reduce_range_damage_return"},
+	{313, "reduce_melee_damage_return"},
+	{314, "reduce_physics_deadly_strike"},
+	{315, "reduce_allmagic_deadly_strike"},
+	{318, "magic_immune_stun"},
+	{319, "magic_immune_control_state"},
+	{338, "magic_no_miss_v"},
+	{339, "magic_modify_PhysicsDamageRes_p"},
+	{340, "magic_modify_AttribDamageRes_p"},
+	{342, "magic_add_pkrate"},
+};
+
 const char * g_MagicID2String(int nAttrib)
 {
+	if (nAttrib >= CURRENT_MAGIC_ATTRIB_TAG)
+	{
+		for (int i = 0; i < sizeof(CurrentMagicNames) / sizeof(CurrentMagicNames[0]); i++)
+			if (nAttrib == CURRENT_MAGIC_ATTRIB_TAG + CurrentMagicNames[i].Id)
+				return CurrentMagicNames[i].Name;
+		return "";
+	}
 	if ((nAttrib < 0) || nAttrib >= magic_normal_end) return MAGIC_ATTRIB_STRING[magic_normal_end];
 	return 	MAGIC_ATTRIB_STRING[nAttrib];
 }
@@ -468,13 +598,17 @@ int	g_String2MagicID(char * szMagicAttribName)
 		if (!strcmp(szMagicAttribName, g_MagicID2String(i)))
 			return i;
 	}
+	for (int i = 0; i < sizeof(CurrentMagicNames) / sizeof(CurrentMagicNames[0]); i++)
+		if (!strcmp(szMagicAttribName, CurrentMagicNames[i].Name))
+			return CURRENT_MAGIC_ATTRIB_TAG + CurrentMagicNames[i].Id;
 	return -1;
 }
-
 
 // 当前资源属性编号与旧内部枚举不同，未确认编号不外发。
 int GetCurrentMagicAttribId(int nAttrib)
 {
+	if (nAttrib >= CURRENT_MAGIC_ATTRIB_TAG && nAttrib < CURRENT_MAGIC_ATTRIB_TAG + CURRENT_MAGIC_ATTRIB_COUNT)
+		return nAttrib - CURRENT_MAGIC_ATTRIB_TAG;
 	switch (nAttrib)
 	{
 	case magic_skill_begin: return 0;
@@ -572,6 +706,8 @@ int GetCurrentMagicAttribId(int nAttrib)
 	case magic_staminareplenish_v: return 96;
 	case magic_strength_v: return 97;
 	case magic_dexterity_v: return 98;
+	case magic_vitality_v: return 99;
+	case magic_energy_v: return 100;
 	case magic_poisonres_p: return 101;
 	case magic_fireres_p: return 102;
 	case magic_lightingres_p: return 103;
@@ -646,4 +782,20 @@ int GetCurrentMagicAttribId(int nAttrib)
 	case magic_earthresmax_p: return 178;
 	default: return -1;
 	}
+}
+
+int GetInternalMagicAttribId(int nCurrentAttrib)
+{
+	// 原生装备45是固定防御；旧枚举该位置仍叫reserve2。
+	if (nCurrentAttrib == 45)
+		return magic_addexdefense_v;
+	if (nCurrentAttrib == 58 || nCurrentAttrib == 139)
+		return CURRENT_MAGIC_ATTRIB_TAG + nCurrentAttrib;
+	for (int i = 0; i < magic_normal_end; i++)
+		if (GetCurrentMagicAttribId(i) == nCurrentAttrib)
+			return i;
+	for (int i = 0; i < sizeof(CurrentMagicNames) / sizeof(CurrentMagicNames[0]); i++)
+		if (CurrentMagicNames[i].Id == nCurrentAttrib)
+			return CURRENT_MAGIC_ATTRIB_TAG + nCurrentAttrib;
+	return INVALID_ATTRIB;
 }

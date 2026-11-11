@@ -75,6 +75,12 @@ KLibOfBPT* KItemGenerator::GetVersionLibrary(int nVersion)
 	return pLibrary;
 }
 
+int KItemGenerator::GetGreenMagicAttribCount(int nGreenId, int nVersion)
+{
+	KLibOfBPT* pLibrary = GetVersionLibrary(nVersion);
+	return pLibrary ? pLibrary->GetGreenMagicAttribCount(nGreenId) : 0;
+}
+
 BOOL KItemGenerator::Init()
 {
 	KIniFile itemVersion;

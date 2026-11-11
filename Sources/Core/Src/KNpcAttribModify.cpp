@@ -32,7 +32,7 @@ KNpcAttribModify::KNpcAttribModify()
 	ProcessFunc[magic_earthres_p] = &KNpcAttribModify::EarthResP;
 	ProcessFunc[magic_earthresmax_p] = &KNpcAttribModify::EarthResMaxP;
 	ProcessFunc[magic_coldenhance_p] = &KNpcAttribModify::ColdEnhanceP;
-	ProcessFunc[magic_armordefense_v] = &KNpcAttribModify::ExDefenseV;
+	ProcessFunc[magic_armordefense_v] = &KNpcAttribModify::ArmorDefenseV;
 	ProcessFunc[magic_addexdefense_v] = &KNpcAttribModify::ExDefenseV;
 	ProcessFunc[magic_lifemax_v] = &KNpcAttribModify::LifeMaxV;
 	ProcessFunc[magic_lifemax_p] = &KNpcAttribModify::LifeMaxP;
@@ -90,7 +90,6 @@ KNpcAttribModify::KNpcAttribModify()
 	ProcessFunc[magic_stealstaminaenhance_p] = &KNpcAttribModify::StealStaminaP;
 	ProcessFunc[magic_stealmana_p] = &KNpcAttribModify::StealManaP;
 	ProcessFunc[magic_stealmanaenhance_p] = &KNpcAttribModify::StealManaP;
-	ProcessFunc[magic_allskill_v] = &KNpcAttribModify::AllSkillV;
 	ProcessFunc[magic_metalskill_v] = &KNpcAttribModify::MetalSkillV;
 	ProcessFunc[magic_woodskill_v] = &KNpcAttribModify::WoodSkillV;
 	ProcessFunc[magic_waterskill_v] = &KNpcAttribModify::WaterSkillV;
@@ -100,7 +99,15 @@ KNpcAttribModify::KNpcAttribModify()
 	ProcessFunc[magic_knockbackenhance_p] = &KNpcAttribModify::KnockBackP;
 	ProcessFunc[magic_deadlystrike_p] = &KNpcAttribModify::DeadlyStrikeP;
 	ProcessFunc[magic_deadlystrikeenhance_p] = &KNpcAttribModify::DeadlyStrikeP;
-	ProcessFunc[magic_badstatustimereduce_v] = &KNpcAttribModify::FatallyStrikeP;
+	ProcessFunc[magic_badstatustimereduce_v] = &KNpcAttribModify::CurrentAttrib;
+	ProcessFunc[magic_fatallystrike_p] = &KNpcAttribModify::CurrentAttrib;
+	ProcessFunc[magic_fatallystrikeenhance_p] = &KNpcAttribModify::CurrentAttrib;
+	ProcessFunc[magic_stun_p] = &KNpcAttribModify::CurrentAttrib;
+	ProcessFunc[magic_stunenhance_p] = &KNpcAttribModify::CurrentAttrib;
+	ProcessFunc[magic_adddefense_p] = &KNpcAttribModify::CurrentAttrib;
+	ProcessFunc[magic_ignoredefense_p] = &KNpcAttribModify::CurrentAttrib;
+	ProcessFunc[magic_magicenhance_p] = &KNpcAttribModify::CurrentAttrib;
+	ProcessFunc[magic_allskill_v] = &KNpcAttribModify::CurrentAttrib;
 	ProcessFunc[magic_manashield_p] = &KNpcAttribModify::ManaShieldP;
 }
 
@@ -115,6 +122,12 @@ void KNpcAttribModify::ModifyAttrib(KNpc* pNpc, void* pData)
 
 	KMagicAttrib* pMagic = (KMagicAttrib *)pData;
 
+	if (pMagic->nAttribType >= CURRENT_MAGIC_ATTRIB_TAG &&
+		pMagic->nAttribType < CURRENT_MAGIC_ATTRIB_TAG + CURRENT_MAGIC_ATTRIB_COUNT)
+	{
+		CurrentAttrib(pNpc, pData);
+		return;
+	}
 	if (pMagic->nAttribType < 0 || pMagic->nAttribType >= magic_normal_end || NULL == ProcessFunc[pMagic->nAttribType])
 		return;
 	
@@ -606,13 +619,7 @@ void KNpcAttribModify::PoisonArmorV(KNpc* pNpc, void* pData)
 
 void KNpcAttribModify::PoisonDamageReduceV(KNpc* pNpc, void* pData)
 {
-	KMagicAttrib* pMagic = (KMagicAttrib *)pData;
-	pNpc->m_PoisonState.nValue[0] -= pMagic->nValue[0];
-	if (pNpc->m_PoisonState.nValue[0] <= 0)
-	{
-		pNpc->m_PoisonState.nTime = 0;
-	}
-	g_DebugLog("[数值]%s中毒伤害减少%d", pNpc->Name, pMagic->nValue[0]);
+	pNpc->m_CurrentAdditionalAttrib[109] += ((KMagicAttrib*)pData)->nValue[0];
 }
 
 void KNpcAttribModify::PoisonresP(KNpc* pNpc, void* pData)
@@ -944,4 +951,44 @@ void KNpcAttribModify::ExDefenseV(KNpc* pNpc, void* pData)
 {
 	const KMagicAttrib* pMagic = (const KMagicAttrib*)pData;
 	pNpc->m_CurrentExDefend += pMagic->nValue[0];
+}
+
+// 装备/存档保留当前资源编号，只在应用数值时转换，技能内部编号保持兼容。
+void KNpcAttribModify::ModifyEquipmentAttrib(KNpc* pNpc, const KMagicAttrib* pData)
+{
+	if (!pNpc || !pData || pData->nAttribType <= 0)
+		return;
+	KMagicAttrib Attrib = *pData;
+	Attrib.nAttribType = GetInternalMagicAttribId(pData->nAttribType);
+	if (Attrib.nAttribType != INVALID_ATTRIB)
+		ModifyAttrib(pNpc, &Attrib);
+	else if (pData->nValue[0] || pData->nValue[1] || pData->nValue[2])
+	{
+		static BOOL Reported[CURRENT_MAGIC_ATTRIB_COUNT] = {};
+		int nType = pData->nAttribType;
+		if (nType > 0 && nType < CURRENT_MAGIC_ATTRIB_COUNT && !Reported[nType])
+		{
+			Reported[nType] = TRUE;
+			g_DebugLog("[Attrib] Unsupported current equipment attribute: %d (not applied)", nType);
+		}
+	}
+}
+
+void KNpcAttribModify::CurrentAttrib(KNpc* pNpc, void* pData)
+{
+	const KMagicAttrib* pMagic = (const KMagicAttrib*)pData;
+	int nType = GetCurrentMagicAttribId(pMagic->nAttribType);
+	if (nType <= 0 || nType >= CURRENT_MAGIC_ATTRIB_COUNT)
+		return;
+	int nValue = pMagic->nValue[0];
+	pNpc->m_CurrentAdditionalAttrib[nType] += nValue;
+	if (nType == 151)
+		pNpc->m_CurrentDefend += pNpc->m_Defend * nValue / 100;
+	else if (nType == 182)
+	{
+		StrengthV(pNpc, pData);
+		DexterityV(pNpc, pData);
+		VitalityV(pNpc, pData);
+		EnergyV(pNpc, pData);
+	}
 }

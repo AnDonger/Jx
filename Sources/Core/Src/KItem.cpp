@@ -2,10 +2,13 @@
 #include "MyAssert.H"
 #include "KTabFile.h"
 #include "KNpc.h"
+#include "KNpcAttribModify.h"
 #include "KItem.h"
 #include "KItemSet.h"
 #include "KItemGenerator.h"
 #include "KMagicDesc.h"
+#include <float.h>
+#include <limits.h>
 #ifndef _STANDALONE
 #include "../../../lib/S3DBInterface.h"
 #else
@@ -75,7 +78,7 @@ void KItem::ApplyMagicAttribToNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 */) 
 		pAttrib = &(m_aryBaseAttrib[i]);
 		if (INVALID_ATTRIB != pAttrib->nAttribType)
 		{
-			pNPC->ModifyAttrib(pNPC->m_Index, (void *)pAttrib);
+			g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, pAttrib);
 		}
 	}
 	// 魔法属性调整NPC
@@ -90,13 +93,13 @@ void KItem::ApplyMagicAttribToNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 */) 
 			{
 				if (nCount > 0)
 				{
-					pNPC->ModifyAttrib(pNPC->m_Index, (void *)pAttrib);
+					g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, pAttrib);
 					nCount--;
 				}
 			}
 			else
 			{
-				pNPC->ModifyAttrib(pNPC->m_Index, (void *)pAttrib);
+				g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, pAttrib);
 			}
 		}
 	}
@@ -129,7 +132,7 @@ void KItem::RemoveMagicAttribFromNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 *
 			RemoveAttrib.nValue[0] = -pAttrib->nValue[0];
 			RemoveAttrib.nValue[1] = -pAttrib->nValue[1];
 			RemoveAttrib.nValue[2] = -pAttrib->nValue[2];
-			pNPC->ModifyAttrib(pNPC->m_Index, (void *)&RemoveAttrib);
+			g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, &RemoveAttrib);
 		}
 	}
 
@@ -149,7 +152,7 @@ void KItem::RemoveMagicAttribFromNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 *
 					RemoveAttrib.nValue[0] = -pAttrib->nValue[0];
 					RemoveAttrib.nValue[1] = -pAttrib->nValue[1];
 					RemoveAttrib.nValue[2] = -pAttrib->nValue[2];
-					pNPC->ModifyAttrib(pNPC->m_Index, (void *)&RemoveAttrib);
+					g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, &RemoveAttrib);
 					nCount--;
 				}
 			}
@@ -159,7 +162,7 @@ void KItem::RemoveMagicAttribFromNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 *
 				RemoveAttrib.nValue[0] = -pAttrib->nValue[0];
 				RemoveAttrib.nValue[1] = -pAttrib->nValue[1];
 				RemoveAttrib.nValue[2] = -pAttrib->nValue[2];
-				pNPC->ModifyAttrib(pNPC->m_Index, (void *)&RemoveAttrib);
+				g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, &RemoveAttrib);
 			}
 		}
 	}
@@ -182,7 +185,7 @@ void KItem::ApplyHiddenMagicAttribToNPC(IN KNpc* pNPC, IN int nMagicActive) cons
 	pAttrib = &(m_aryMagicAttrib[(nMagicActive << 1) - 1]);	// 后缀为隐藏属性所以乘2减一
 	if (-1 != pAttrib->nAttribType)
 	{
-		pNPC->ModifyAttrib(pNPC->m_Index, (void *)pAttrib);
+		g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, pAttrib);
 	}
 }
 
@@ -208,7 +211,7 @@ void KItem::RemoveHiddenMagicAttribFromNPC(IN KNpc* pNPC, IN int nMagicActive) c
 		RemoveAttrib.nValue[0] = -pAttrib->nValue[0];
 		RemoveAttrib.nValue[1] = -pAttrib->nValue[1];
 		RemoveAttrib.nValue[2] = -pAttrib->nValue[2];
-		pNPC->ModifyAttrib(pNPC->m_Index, (void *)&RemoveAttrib);
+		g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, &RemoveAttrib);
 	}
 }
 
@@ -322,7 +325,7 @@ BOOL KItem::SetAttrib_MA(IN const KMACP* pMA)
 		const KMACP* pSrc;
 		KItemNormalAttrib* pDst;
 		pSrc = &(pMA[i]);
-		pDst = &(m_aryRequireAttrib[i]);
+		pDst = &(m_aryMagicAttrib[i]);
 
 		pDst->nAttribType = pSrc->nPropKind;
 		pDst->nValue[0] =  ::GetRandomNumber(pSrc->aryRange[0].nMin, pSrc->aryRange[0].nMax);
@@ -968,25 +971,82 @@ int KItem::GetRequireLevel() const
 	return nLevel;
 }
 
+// 计费条数与普通清理筛选用 GetMagicAttribCount 分开，避免改变宠物清理规则。
+int KItem::GetRepairMagicAttribCount() const
+{
+	int nCount = 0;
+	for (int i = 0; i < 6; i++)
+	{
+		int nType = m_aryMagicAttrib[i].nAttribType;
+		if (nType >= 28 && nType <= 342)
+			nCount++;
+	}
+	const KBASICPROP_EQUIPMENT* pTemplate = ItemGen.GetEquipmentTemplate(
+		GetDetailType(), m_CommonAttrib.nParticularType, m_CommonAttrib.nLevel, m_GeneratorParam.nVersion);
+	if (pTemplate && pTemplate->m_nSeries != 0)
+	{
+		// 当前服务端把模板五条固定魔法属性保存在 Base[5..9]。
+		for (int i = 5; i < 10; i++)
+		{
+			int nType = m_aryBaseAttrib[i].nAttribType;
+			if (nType >= 28 && nType <= 342)
+				nCount++;
+		}
+		nCount += ItemGen.GetGreenMagicAttribCount(pTemplate->m_nSeries, m_GeneratorParam.nVersion);
+	}
+	return nCount;
+}
+
 int KItem::GetRepairPrice()
 {
-	if (ItemSet.m_sRepairParam.nMagicScale == 0)
-		return 0;
-
-	if (GetGenre() != item_equip)
-		return 0;
-
-	if (m_nCurrentDur == -1)
+	const REPAIR_ITEM_PARAM& Param = ItemSet.m_sRepairParam;
+	if (GetGenre() != item_equip || m_nCurrentDur < 0 ||
+		Param.nMagicScale <= 0 || Param.nPriceScale < 0 || m_CommonAttrib.nPrice < 0)
 		return 0;
 
 	int nMaxDur = GetMaxDurability();
-	int nSumMagic = GetTotalMagicLevel();
-
-	if (nMaxDur <= 0)
+	if (nMaxDur <= 0 || m_nCurrentDur >= nMaxDur)
 		return 0;
 
+	// 全程 double，最终一次截断；不能用旧代码的逐步整数除法或魔法等级之和。
+	double fPrice = (double)m_CommonAttrib.nPrice * (double)Param.nPriceScale / 100.0
+		* (double)(nMaxDur - m_nCurrentDur) / (double)nMaxDur
+		* ((double)Param.nMagicScale + GetRepairMagicAttribCount()) / (double)Param.nMagicScale;
+	if (m_nCurrentDur == 0)
+	{
+		if (!_finite(Param.fUpLevelBaseNum) || !_finite(Param.fRequireLevelDivisor) ||
+			Param.fUpLevelBaseNum <= 0 || Param.fRequireLevelDivisor <= 0)
+			return 0;
+		float fScaledBase = Param.fUpLevelBaseNum * 10000.0f;
+		if (!_finite(fScaledBase) || fScaledBase >= (double)INT_MAX)
+			return 0;
+		double fBase = (double)(int)fScaledBase / 10000.0;
+		double fUpgradeScale = 1.0;
+		int nUpgradeCount = m_dwUpgradeData & 0xff;
+		for (int i = 0; i < nUpgradeCount; i++)
+			fUpgradeScale *= fBase;
 
-	return m_CommonAttrib.nPrice * ItemSet.m_sRepairParam.nPriceScale / 100 * (nMaxDur - m_nCurrentDur) / nMaxDur * (ItemSet.m_sRepairParam.nMagicScale + nSumMagic) / ItemSet.m_sRepairParam.nMagicScale;
+		// 原模板需求不包含改造增加量；避免把改造后的需求再次用于断损系数。
+		int nRequireLevel = GetRequireLevel();
+		const KBASICPROP_EQUIPMENT* pTemplate = ItemGen.GetEquipmentTemplate(
+			GetDetailType(), m_CommonAttrib.nParticularType, m_CommonAttrib.nLevel, m_GeneratorParam.nVersion);
+		if (pTemplate)
+		{
+			nRequireLevel = 0;
+			for (int i = 0; i < 6; i++)
+			{
+				if (pTemplate->m_aryPropReq[i].nType == magic_requirelevel)
+				{
+					nRequireLevel = pTemplate->m_aryPropReq[i].nPara;
+					break;
+				}
+			}
+		}
+		fPrice = fPrice * fUpgradeScale * (double)max(1, nRequireLevel) / Param.fRequireLevelDivisor;
+	}
+	if (!_finite(fPrice) || fPrice > INT_MAX)
+		return 0;
+	return max(1, (int)fPrice);
 }
 
 BOOL KItem::CanBeRepaired()

@@ -36,6 +36,7 @@ KBuySell::KBuySell()
 	m_MallGoods = NULL;
 	m_MallItem = NULL;
 	m_MallCount = 0;
+	m_AutoBuyCurrency = NULL;
 #endif
 }
 
@@ -72,6 +73,8 @@ KBuySell::~KBuySell()
 		m_CashGoods = NULL;
 	}
 #ifdef _SERVER
+	delete [] m_AutoBuyCurrency;
+	m_AutoBuyCurrency = NULL;
 	delete [] m_MallGoods;
 	delete [] m_MallItem;
 	m_MallGoods = NULL;
@@ -204,6 +207,7 @@ BOOL KBuySell::Init()
 #ifdef _SERVER
 	if (!InitMall())
 		return FALSE;
+	InitAutoMedicine();
 #endif
 	return TRUE;
 }
@@ -228,23 +232,105 @@ int KBuySell::GetItemIndex(int nShop, int nIndex)
 }
 
 #ifdef _SERVER
-static BOOL CheckShopPlayer(int nPlayerIdx, int nShop)
+// 自动买药只开放原资源列出的商品；同时核对商店槽位和真实模板，避免旧表错配。
+void KBuySell::InitAutoMedicine()
+{
+	delete [] m_AutoBuyCurrency;
+	m_AutoBuyCurrency = new int[m_Height * m_Width];
+	for (int i = 0; i < m_Height * m_Width; i++)
+		m_AutoBuyCurrency[i] = -1;
+	KTabFile Table;
+	if (!Table.Load("\\settings\\autobuymedicine.txt"))
+	{
+		g_DebugLog("[AutoMedicine] Original resource unavailable; remote purchase disabled.");
+		return;
+	}
+	int nLoaded = 0;
+	// 第一行为字段名，第二行为中文说明，第三行起是实际数据。
+	for (int nRow = 3; nRow <= Table.GetHeight(); nRow++)
+	{
+		int nGenre, nDetail, nParticular, nShop, nSlot, nCurrency;
+		Table.GetInteger(nRow, "general", -1, &nGenre);
+		Table.GetInteger(nRow, "detail", -1, &nDetail);
+		Table.GetInteger(nRow, "particular", -1, &nParticular);
+		Table.GetInteger(nRow, "shopId", -1, &nShop);
+		Table.GetInteger(nRow, "itemBuyIdx", -1, &nSlot);
+		Table.GetInteger(nRow, "cashType", -1, &nCurrency);
+		int nIndex = GetItemIndex(nShop, nSlot);
+		KItem* pItem = GetItem(nIndex);
+		if (!pItem || !m_CashGoods[nIndex] || nCurrency < 0 || nCurrency > 1 ||
+			!pItem->GetName()[0] || pItem->GetWidth() <= 0 || pItem->GetHeight() <= 0 ||
+			pItem->GetGenre() != nGenre || pItem->GetDetailType() != nDetail ||
+			pItem->GetParticular() != nParticular)
+		{
+			g_DebugLog("[AutoMedicine] Ignored unmatched resource row=%d shop=%d slot=%d", nRow, nShop, nSlot);
+			continue;
+		}
+		int& nAllowed = m_AutoBuyCurrency[nShop * m_Width + nSlot];
+		if (nAllowed == -1)
+		{
+			nAllowed = nCurrency;
+			nLoaded++;
+		}
+		else if (nAllowed != nCurrency)
+		{
+			// 不同货币的冲突行保持禁用，不因后续行重新开放。
+			nAllowed = -2;
+			g_DebugLog("[AutoMedicine] Conflicting currency row=%d shop=%d slot=%d", nRow, nShop, nSlot);
+		}
+	}
+	g_DebugLog("[AutoMedicine] Loaded %d verified original resource entries.", nLoaded);
+}
+
+static BOOL CheckBuyPlayer(int nPlayerIdx)
 {
 	if (nPlayerIdx <= 0 || nPlayerIdx >= MAX_PLAYER)
 		return FALSE;
 	KPlayer &Role = Player[nPlayerIdx];
-	if (!Role.m_bFinishLoading || Role.CheckTrading() || nShop < 0 || nShop >= BuySell.GetHeight() ||
-		nShop != Role.m_BuyInfo.m_nBuyIdx || Role.m_nIndex <= 0 || Role.m_nIndex >= MAX_NPC)
+	if (!Role.m_bFinishLoading || Role.CheckTrading() || Role.m_nIndex <= 0 || Role.m_nIndex >= MAX_NPC)
 		return FALSE;
 	KNpc &Hero = Npc[Role.m_nIndex];
-	if (Hero.m_CurrentLife <= 0 || Hero.m_Doing == do_death || Hero.m_RegionIndex < 0 ||
-		Hero.m_bExchangeServer || Hero.m_SubWorldIndex != Role.m_BuyInfo.m_SubWorldID)
+	return Hero.m_CurrentLife > 0 && Hero.m_Doing != do_death && Hero.m_Doing != do_revive &&
+		Hero.m_RegionIndex >= 0 && Hero.m_SubWorldIndex >= 0 && !Hero.m_bExchangeServer;
+}
+
+static BOOL CheckShopPlayer(int nPlayerIdx, int nShop)
+{
+	if (!CheckBuyPlayer(nPlayerIdx))
+		return FALSE;
+	KPlayer &Role = Player[nPlayerIdx];
+	KNpc &Hero = Npc[Role.m_nIndex];
+	if (nShop < 0 || nShop >= BuySell.GetHeight() || nShop != Role.m_BuyInfo.m_nBuyIdx ||
+		Hero.m_SubWorldIndex != Role.m_BuyInfo.m_SubWorldID)
 		return FALSE;
 	int nX, nY;
 	Hero.GetMpsPos(&nX, &nY);
 	__int64 nDX = (__int64)nX - Role.m_BuyInfo.m_nMpsX;
 	__int64 nDY = (__int64)nY - Role.m_BuyInfo.m_nMpsY;
 	return nDX * nDX + nDY * nDY <= 384 * 384;
+}
+
+// 客户端单件修理必须来自当前普通商店；宠物仍使用 KPlayer 的通用修理接口。
+BOOL KBuySell::Repair(int nPlayerIdx, DWORD dwItemID)
+{
+	if (!CheckBuyPlayer(nPlayerIdx))
+		return FALSE;
+	KPlayer &Role = Player[nPlayerIdx];
+	if (Role.m_BuyInfo.m_nCurrency != 0 || !CheckShopPlayer(nPlayerIdx, Role.m_BuyInfo.m_nBuyIdx))
+		return FALSE;
+	int nItem = Role.m_ItemList.SearchID(dwItemID);
+	if (nItem <= 0 || nItem >= MAX_ITEM)
+		return FALSE;
+	int nPlace = Role.m_ItemList.GetItemPlace(nItem);
+	if (nPlace != pos_equip && nPlace != pos_equiproom)
+		return FALSE;
+	int nCost = 0;
+	if (!Role.CheckRepairItem(dwItemID, &nCost))
+		return FALSE;
+	BOOL bResult = Role.RepairItem(dwItemID);
+	g_DebugLog("[Repair] player=%d item=%lu shop=%d cost=%d result=%d",
+		nPlayerIdx, dwItemID, Role.m_BuyInfo.m_nBuyIdx, nCost, bResult);
+	return bResult;
 }
 
 static void ShopMessage(int nPlayerIdx, const char *pszMessage)
@@ -457,8 +543,19 @@ BOOL KBuySell::BuyMall(int nPlayerIdx, int nGoodsID, int nCount, int nCurrency)
 
 BOOL KBuySell::Buy(int nPlayerIdx, int nBuy, int nBuyIdx, int nPlace, int nX, int nY)
 {
-	if (!CheckShopPlayer(nPlayerIdx, nBuy))
+	if (!CheckBuyPlayer(nPlayerIdx))
 		return FALSE;
+	int nCurrency = -1;
+	BOOL bAutoPlace = nPlace == 255 && nX == 255 && nY == 255;
+	if (bAutoPlace && m_AutoBuyCurrency && nBuy >= 0 && nBuy < m_Height &&
+		nBuyIdx >= 0 && nBuyIdx < m_Width)
+		nCurrency = m_AutoBuyCurrency[nBuy * m_Width + nBuyIdx];
+	if (nCurrency < 0)
+	{
+		if (!CheckShopPlayer(nPlayerIdx, nBuy))
+			return FALSE;
+		nCurrency = Player[nPlayerIdx].m_BuyInfo.m_nCurrency;
+	}
 	int nIdx = GetItemIndex(nBuy, nBuyIdx);
 	KItem *pItem = GetItem(nIdx);
 	if (!pItem || !m_CashGoods || !m_CashGoods[nIdx] ||
@@ -478,7 +575,7 @@ BOOL KBuySell::Buy(int nPlayerIdx, int nBuy, int nBuyIdx, int nPlace, int nX, in
 	KPlayer &Role = Player[nPlayerIdx];
 	if (nPlace == pos_hand && (nX != 0 || nY != 0 || Role.m_ItemList.Hand() != 0))
 		return FALSE;
-	if (Role.m_BuyInfo.m_nCurrency == 1)
+	if (nCurrency == 1)
 	{
 		const KBASICPROP_NORMALITEM* pTemplate = ItemGen.GetNormalItemTemplate(pItem->GetGenre(),
 			pItem->GetDetailType(), pItem->GetParticular(), pItem->GetLevel(),

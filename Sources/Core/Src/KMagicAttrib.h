@@ -186,7 +186,13 @@ enum MAGIC_ATTRIB
 	magic_normal_end,
 };
 
+// 当前资源编号与历史内部编号分开，避免168以后的属性串义。
+#define CURRENT_MAGIC_ATTRIB_COUNT 343
+#define CURRENT_MAGIC_ATTRIB_TAG 512
 int GetCurrentMagicAttribId(int nAttrib);
+int GetInternalMagicAttribId(int nCurrentAttrib);
+int g_String2MagicID(char* szMagicAttribName);
+
 
 extern const char MAGIC_ATTRIB_STRING[magic_normal_end + 1][100] ; 
 

@@ -52,6 +52,7 @@ private:
 	PLAYER_SKILL_RULE m_PlayerRules[MAX_SKILL];
 	PLAYER_SKILL_BUFF_RULE m_PlayerBuffRules[3];
 	int m_nHitSkillExpRate;
+	int m_EquipmentSkillSeries[8][MAX_SKILL];
 	int m_nSupportSkillExpRate;
 	//TOrdinSkillCommonData * m_pOrdinSkillCommonData[MAX_SKILL];
 	ISkill*			m_pOrdinSkill[MAX_SKILL][MAX_SKILLLEVEL];// 
@@ -68,6 +69,7 @@ public:
 	BOOL Init();
 	const PLAYER_SKILL_RULE* GetPlayerRule(int nSkill) const;
 	BOOL LoadPlayerRules();
+	int GetEquipmentSeriesBonus(int nSkillId, const int* pAttrib) const;
 	BOOL LoadPlayerBuffRules();
 	const PLAYER_SKILL_BUFF_RULE* GetPlayerBuffRule(int nBuffId) const;
 	int GetHitSkillExpRate() const

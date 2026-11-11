@@ -28,6 +28,8 @@ typedef struct
 {
 	int		nPriceScale;
 	int		nMagicScale;
+	float	fUpLevelBaseNum;
+	float	fRequireLevelDivisor;
 } REPAIR_ITEM_PARAM;
 
 class KItemSet

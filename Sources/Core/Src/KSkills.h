@@ -10,7 +10,14 @@
 #include "KNode.h"
 #include "KMissleMagicAttribsData.h"
 #include "Skill.h"
-#define MAX_MISSLE_DAMAGEATTRIB 9
+#define DAMAGE_ATTRIB_STEAL_LIFE 9
+#define DAMAGE_ATTRIB_STEAL_MANA 10
+#define DAMAGE_ATTRIB_STEAL_STAMINA 11
+#define DAMAGE_ATTRIB_CRITICAL 12
+#define DAMAGE_ATTRIB_FATAL 13
+#define DAMAGE_ATTRIB_STUN 14
+#define DAMAGE_ATTRIB_KNOCKBACK 15
+#define MAX_MISSLE_DAMAGEATTRIB 16
 typedef  KSkill KFightSkill;
 class KMissle;
 class KSkill;
