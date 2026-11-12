@@ -43,8 +43,9 @@ Heaven 在启动时从 EXE 目录的 `../../Resources/ServerConfig/ClientTls` �
 | --- | --- | --- |
 | 2026-10-30 | 32,083,968 | `2F795666BC02B4948B6B7416855272FF703C543CE404523AD44E4727912975BF` |
 | 2026-11-03 | 32,313,344 | `6EF957059B1A8EF28A24BA14038018D8710AFAF524D2FCD68C40761467D05D27` |
+| 2026-11-12 | 32,247,808 | `2755912E00E7CA4EF49BBED520460965A3AC5FAAF789D8EAF8B60AC444712E86` |
 
-两版均为 x86，固定映像基址 `0x400000`，未启用 ASLR。未知构建或已修改构建拒绝处理，不按版本文件名或统一地址增量推测布局。
+上述构建均为 x86，固定映像基址 `0x400000`，未启用 ASLR。未知构建或已修改构建拒绝处理，不按版本文件名或统一地址增量推测布局。
 
 新版使用示例（输入必须为尚未部署补丁的原始文件，输出必须不存在）：
 
@@ -69,6 +70,12 @@ Heaven 在启动时从 EXE 目录的 `../../Resources/ServerConfig/ClientTls` �
 2026-11-03本轮部署后，用户反馈“测试没问题，可以进入”。真实服务端日志确认登录和游戏端口均完成TLS 1.3，账号认证成功、返回3个角色，并有约75秒的进图后请求、移动、停步及心跳记录，实际连接0条TLS错误。部署记录已标记 `ActualClientVerified=true`，结果见 `Test/Client20261103/actual-client-verification.json`。这不代表所有NPC、传送点或长期游戏过程均已验证。
 
 ## 验证与回退
+
+2026-11-12 构建的地址由后台 GUI IDA 单独核对：SSL_CTX_new_ex `0x8D6F30`、SSL_CTX_free `0x8D66C0`、d2i_X509 `0x974CF0`、X509_STORE_add_cert `0x971EE0`、X509_free `0x974B80`、原连接入口 `0x69EAC0`、登录CALL `0x679E78`、getpeername IAT `0x22B40C0`。证书存储仍在context+0x14，沿用既有公开证书和严格本地对端选择条件。
+
+本轮输入为 `Test/Client20261112/Game.unpacked.original.exe`；使用 `Build.ps1 -OutputRoot F:\mxd\Jx\Test\Client20261112\Tools` 构建工具，输出 `Test/Client20261112/Game.unpacked.20261112.local.exe`。候选SHA256为 `1671DD6DBAF8020BB83AD32CA04C5BBB9BE58184E1BBC08F01079DE666716B61`，部署到用户指定的 `Release/Client/Game.unpacked.exe`，备份在 `Test/Client20261112/BeforeDeployment/Game.unpacked.exe`。没有覆盖带日期的旧客户端。
+
+本轮原生公钥选择9场景、信任初始化4场景、修改范围与工具拒绝回归通过；原文件范围仅改变30字节，原受保护连接入口、启动引导和重建导入保留。服务端TLS1.3登录、进图与心跳回归通过。用户随后反馈“已测试，当前暂未发现问题”，真实客户端登录和游戏连接均完成TLS1.3，约151秒日志快照包含182条游戏请求、移动和心跳，无TLS错误。本轮接入已通过用户实测，详见 `DevDoc/2026-11-12-新版客户端接入适配.md`。
 
 `Test/Client20261030/VerifyTrustHook.cmd` 执行候选中的真实 x86 初始化代码，以隔离的 OpenSSL 调用夹具核对成功、原初始化失败、DER 失败、追加失败四种返回及引用释放行为。后台 GUI IDA 的候选代码反汇编记录在 `trust-candidate-asm.result.json`。
 
