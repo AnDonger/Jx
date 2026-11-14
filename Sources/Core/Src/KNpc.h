@@ -639,6 +639,8 @@ public:
 	BOOL PolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds);
 	int GetMorphType() const;
 	BOOL SendMorphSync(int nClient);
+	BYTE GetClientMenuState();
+	void SendMenuStateSync();
 
 	void				NormalSync();									// 广播小同步
 	void				BroadCastState();								// 广播角色的状态信息,光环，头带等等效果

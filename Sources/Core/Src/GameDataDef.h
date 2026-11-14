@@ -20,7 +20,11 @@
 
 #define		_CHAT_SCRIPT_OPEN
 
+#ifdef _SERVER
+#define MAX_TEAM_MEMBER 11
+#else
 #define		MAX_TEAM_MEMBER						7		// 最大队员数量(不包括队长)
+#endif
 #define		MAX_SENTENCE_LENGTH					256		// 聊天每个语句最大长度
 
 #define		FILE_NAME_LENGTH					80

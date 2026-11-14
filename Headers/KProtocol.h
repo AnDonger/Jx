@@ -24,6 +24,36 @@
 
 // Current Release/Client wire layouts. Unknown fields are sent as zero.
 // Legacy structures below remain available to the original source client.
+// Current 86: state is at +7; optional sentence starts after the 12-byte prefix.
+struct GAME_NPC_MENU_STATE_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	DWORD NpcID;
+	BYTE State;
+	DWORD unknown_1;
+};
+
+static_assert(sizeof(GAME_NPC_MENU_STATE_SYNC) == 12, "86 menu state prefix");
+static_assert(offsetof(GAME_NPC_MENU_STATE_SYNC, State) == 7, "86 menu state byte");
+
+struct GAME_TEAM_LEAVE_SYNC
+{
+	BYTE ProtocolType;
+	DWORD m_dwNpcID;
+};
+
+struct GAME_TEAM_CHANGE_CAPTAIN_SYNC
+{
+	BYTE ProtocolType;
+	DWORD m_dwCaptainID;
+	DWORD m_dwMemberID;
+	BYTE State; // Current team admission state, retained across captain changes.
+};
+
+static_assert(sizeof(GAME_TEAM_LEAVE_SYNC) == 5, "6A team leave");
+static_assert(sizeof(GAME_TEAM_CHANGE_CAPTAIN_SYNC) == 10, "6B captain change");
+
 struct GAME_WORLD_SYNC
 {
 	BYTE ProtocolType;
@@ -35,6 +65,74 @@ struct GAME_WORLD_SYNC
 	DWORD MapX;
 	DWORD MapY;
 };
+
+// Current client: 60 wire slots, ordinary teams use at most 12.
+struct GAME_TEAM_SELF_SYNC
+{
+	BYTE ProtocolType;
+	BYTE State;
+	BYTE unknown_1;
+	DWORD NpcID[60];
+	char Name[60][32];
+	DWORD TeamID;
+	DWORD unknown_2;
+	BYTE Level[60];
+	DWORD unknown_3[60];
+	BYTE LargeTeamFlag;
+};
+
+// F8/1A: WORD length includes subtype, followed by 16-byte positions.
+struct GAME_TEAM_POSITION_ENTRY
+{
+	DWORD NpcID;
+	DWORD MapID;
+	DWORD X;
+	DWORD Y;
+};
+
+struct GAME_TEAM_POSITION_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	GAME_TEAM_POSITION_ENTRY Member[MAX_TEAM_MEMBER + 1];
+};
+
+static_assert(sizeof(GAME_TEAM_POSITION_ENTRY) == 16, "F8/1A team position entry");
+static_assert(offsetof(GAME_TEAM_POSITION_SYNC, Member) == 4, "F8/1A entries offset");
+
+// B8 is a variable-length list: WORD payload length, then 12-byte entries.
+// The current client reads maximum life before current life (not the reverse).
+struct GAME_TEAM_HEALTH_ENTRY
+{
+	DWORD NpcID;
+	DWORD LifeMax;
+	DWORD Life;
+};
+
+struct GAME_TEAM_HEALTH_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	GAME_TEAM_HEALTH_ENTRY Member[MAX_TEAM_MEMBER + 1];
+};
+
+static_assert(sizeof(GAME_TEAM_HEALTH_ENTRY) == 12, "B8 team life entry");
+static_assert(offsetof(GAME_TEAM_HEALTH_SYNC, Member) == 3, "B8 entries offset");
+
+struct GAME_TEAM_MEMBER_SYNC
+{
+	BYTE ProtocolType;
+	BYTE Level;
+	DWORD NpcID;
+	char Name[32];
+	DWORD unknown_1;
+};
+
+static_assert(sizeof(GAME_TEAM_SELF_SYNC) == 2472, "63 team snapshot");
+static_assert(offsetof(GAME_TEAM_SELF_SYNC, TeamID) == 2163, "63 team ID");
+static_assert(offsetof(GAME_TEAM_SELF_SYNC, Level) == 2171, "63 levels");
+static_assert(sizeof(GAME_TEAM_MEMBER_SYNC) == 42, "69 team member");
 
 // F3 is a forced relocation, not the periodic 4E movement snapshot.
 struct GAME_NPC_POSITION_SYNC

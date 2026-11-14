@@ -241,6 +241,14 @@ void	KPlayer::Active()
 	//时间任务的处理
 	m_TimerTask.Activate(g_PlayerTimerCallBackFun);
 	this->SendCurNormalSyncData();
+	// Team blood bars need B8 life data even outside the local visible region.
+	// Six simulation frames match the captured periodic update cadence.
+	if (m_bFinishLoading && m_cTeam.m_nFlag && m_cTeam.m_nID >= 0 && m_cTeam.m_nID < MAX_TEAM &&
+		(g_SubWorldSet.GetGameTime() % 6) == 0)
+	{
+		g_Team[m_cTeam.m_nID].SendHealthInfo(m_nPlayerIndex);
+		g_Team[m_cTeam.m_nID].SendPositionInfo(m_nPlayerIndex);
+	}
 	if (m_bFinishLoading && m_nIndex > 0)
 		Npc[m_nIndex].m_SkillList.ExpirePlayerSkillBuffs();
 	
@@ -1044,65 +1052,12 @@ void	KPlayer::SetRevivalPos(int nSubWorld, int nReviveId)
 //------------------------------------------------------------------------------
 void	KPlayer::S2CSendTeamInfo(BYTE* pProtocol)
 {
-	PLAYER_APPLY_TEAM_INFO	*pApplyTeamInfo = (PLAYER_APPLY_TEAM_INFO*)pProtocol;
-	
-	//------------------------------ 查询自身组队信息 -----------------------------
-	if (pApplyTeamInfo->m_dwTarNpcID == Npc[m_nIndex].m_dwID)
-	{
-		SendSelfTeamInfo();
+	if (!pProtocol || m_nIndex <= 0 || m_nIndex >= MAX_NPC || !m_bFinishLoading)
 		return;
-	}
-	
-	//--------------------------- 查询其他 npc 组队信息 -----------------------------
-	PLAYER_SEND_TEAM_INFO	sTeamInfo;
-	PLAYER_APPLY_TEAM_INFO_FALSE	sTeamInfoFalse;
-	// 寻找相应 npc id 的 player 编号
-	int		nPlayer, nRegionNo, i;
-	nPlayer = SubWorld[Npc[m_nIndex].m_SubWorldIndex].m_Region[Npc[m_nIndex].m_RegionIndex].FindPlayer(pApplyTeamInfo->m_dwTarNpcID);
-	if ( nPlayer >= 0)
-		goto SendMsg;
-	for (i = 0; i < 8; i++)
-	{
-		nRegionNo = SubWorld[Npc[m_nIndex].m_SubWorldIndex].m_Region[Npc[m_nIndex].m_RegionIndex].m_nConnectRegion[i];
-		if ( nRegionNo < 0)
-			continue;
-		nPlayer = SubWorld[Npc[m_nIndex].m_SubWorldIndex].m_Region[nRegionNo].FindPlayer(pApplyTeamInfo->m_dwTarNpcID);
-		if (nPlayer >= 0)
-			break;
-	}
-	if (i >= 8)
-		goto SendFalse;
-	
-SendMsg:
-	// 寻找队伍
-	KTeam	*pTeam;
-	if ( !Player[nPlayer].m_cTeam.m_nFlag )
-		goto SendFalse;
-	pTeam = &g_Team[Player[nPlayer].m_cTeam.m_nID];
-	if (pTeam->m_nCaptain < 0 || !pTeam->IsOpen())
-		goto SendFalse;
-	
-	// 发送队伍消息
-	sTeamInfo.ProtocolType = (BYTE)s2c_teaminfo;
-	sTeamInfo.m_nCaptain = Npc[Player[pTeam->m_nCaptain].m_nIndex].m_dwID;
-	for (i = 0; i < MAX_TEAM_MEMBER; i++)
-	{
-		if (pTeam->m_nMember[i] < 0)
-			sTeamInfo.m_nMember[i] = 0;
-		else
-			sTeamInfo.m_nMember[i] = Npc[Player[pTeam->m_nMember[i]].m_nIndex].m_dwID;
-	}
-	//	strcpy(sTeamInfo.m_szTeamName, pTeam->m_szName);
-	
-	// 发送
-	g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sTeamInfo, sizeof(PLAYER_SEND_TEAM_INFO));
-	return;
-	
-	// 发送失败通知
-SendFalse:
-	sTeamInfoFalse.ProtocolType = s2c_teamapplyinfofalse;
-	g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sTeamInfoFalse, sizeof(PLAYER_APPLY_TEAM_INFO_FALSE));
-	return;
+	PLAYER_APPLY_TEAM_INFO *pApplyTeamInfo = (PLAYER_APPLY_TEAM_INFO*)pProtocol;
+	if (pApplyTeamInfo->m_dwTarNpcID == Npc[m_nIndex].m_dwID)
+		SendSelfTeamInfo();
+	// Current 62/64 client handlers are empty. Do not send legacy team layouts.
 }
 #endif
 
@@ -1112,45 +1067,14 @@ SendFalse:
 //-------------------------------------------------------------------------
 void	KPlayer::SendSelfTeamInfo()
 {
-	if (m_cTeam.m_nFlag && m_cTeam.m_nID >= 0)	// 发送队伍信息
+	if (m_cTeam.m_nFlag && m_cTeam.m_nID >= 0 && m_cTeam.m_nID < MAX_TEAM)
+		g_Team[m_cTeam.m_nID].SendSelfInfo(m_nPlayerIndex);
+	else
 	{
-		int		nNpcIndex;
-		PLAYER_SEND_SELF_TEAM_INFO	sSelfInfo;
-		sSelfInfo.ProtocolType = s2c_teamselfinfo;
-		sSelfInfo.nTeamServerID = m_cTeam.m_nID;
-		sSelfInfo.m_dwLeadExp = m_dwLeadExp;
-		sSelfInfo.m_btState = g_Team[m_cTeam.m_nID].m_nState;
-		
-		// 队长
-		nNpcIndex = Player[g_Team[m_cTeam.m_nID].m_nCaptain].m_nIndex;
-		sSelfInfo.m_dwNpcID[0] = Npc[nNpcIndex].m_dwID;
-		sSelfInfo.m_btLevel[0] = (DWORD)Npc[nNpcIndex].m_Level;
-		strcpy(sSelfInfo.m_szNpcName[0], Npc[nNpcIndex].Name);
-		// 队员
-		for (int i = 0; i < MAX_TEAM_MEMBER; i++)
-		{
-			if (g_Team[m_cTeam.m_nID].m_nMember[i] >= 0)
-			{
-				nNpcIndex = Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_nIndex;
-				sSelfInfo.m_dwNpcID[i + 1] = Npc[nNpcIndex].m_dwID;
-				sSelfInfo.m_btLevel[i + 1] = (DWORD)Npc[nNpcIndex].m_Level;
-				strcpy(sSelfInfo.m_szNpcName[i + 1], Npc[nNpcIndex].Name);
-			}
-			else
-			{
-				sSelfInfo.m_dwNpcID[i + 1] = 0;
-				sSelfInfo.m_btLevel[i + 1] = 0;
-			}
-		}
-		// 发送消息
-		g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSelfInfo, sizeof(PLAYER_SEND_SELF_TEAM_INFO));
-	}
-	else	// 发送离队信息
-	{
-		PLAYER_LEAVE_TEAM	sLeaveTeam;
-		sLeaveTeam.ProtocolType = s2c_teamleave;
-		sLeaveTeam.m_dwNpcID = Npc[m_nIndex].m_dwID;
-		g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sLeaveTeam, sizeof(PLAYER_LEAVE_TEAM));
+		GAME_TEAM_LEAVE_SYNC Leave;
+		Leave.ProtocolType = 0x6A;
+		Leave.m_dwNpcID = Npc[m_nIndex].m_dwID;
+		g_pServer->PackDataToClient(m_nNetConnectIdx, &Leave, sizeof(Leave));
 	}
 }
 #endif
@@ -1201,43 +1125,57 @@ BOOL	KPlayer::SetTeamState(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 BOOL	KPlayer::S2CSendAddTeamInfo(BYTE* pProtocol)
 {
-	if (!m_cTeam.m_bCanTeamFlag)
-	{
-		SHOW_MSG_SYNC	sMsg;
-		sMsg.ProtocolType = s2c_msgshow;
-		sMsg.m_wMsgID = enumMSG_ID_CANNOT_ADD_TEAM;
-		sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-		g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
+	if (!pProtocol || m_nIndex <= 0 || m_nIndex >= MAX_NPC ||
+		!m_bFinishLoading || m_bExchangeServer || CheckTrading() ||
+		!m_cTeam.GetCanTeamFlag() || m_cTeam.m_nFlag ||
+		Npc[m_nIndex].m_SubWorldIndex < 0 || Npc[m_nIndex].m_RegionIndex < 0 ||
+		Npc[m_nIndex].m_bExchangeServer)
 		return FALSE;
-	}
-	
-	PLAYER_APPLY_ADD_TEAM	*pAddTeam = (PLAYER_APPLY_ADD_TEAM*)pProtocol;
-	
-	// 寻找队长 npc id 的 player 编号
-	int		nPlayer, nRegionNo, i;
-	nPlayer = SubWorld[Npc[m_nIndex].m_SubWorldIndex].m_Region[Npc[m_nIndex].m_RegionIndex].FindPlayer(pAddTeam->m_dwTarNpcID);
-	if ( nPlayer >= 0)
-		goto SendMsg;
-	for (i = 0; i < 8; i++)
+	PLAYER_APPLY_ADD_TEAM *pApply = (PLAYER_APPLY_ADD_TEAM*)pProtocol;
+	int nCaptain = FindAroundPlayer(pApply->m_dwTarNpcID);
+	if (nCaptain <= 0 || nCaptain >= MAX_PLAYER || nCaptain == m_nPlayerIndex ||
+		!Player[nCaptain].m_bFinishLoading || Player[nCaptain].m_bExchangeServer ||
+		Player[nCaptain].CheckTrading() || Player[nCaptain].m_nIndex <= 0 ||
+		Player[nCaptain].m_nIndex >= MAX_NPC)
+		return FALSE;
+	KPlayerTeam &Captain = Player[nCaptain].m_cTeam;
+	if (!Captain.m_nFlag || Captain.m_nFigure != TEAM_CAPTAIN ||
+		Captain.m_nID < 0 || Captain.m_nID >= MAX_TEAM ||
+		g_Team[Captain.m_nID].m_nCaptain != nCaptain ||
+		!g_Team[Captain.m_nID].IsOpen() || g_Team[Captain.m_nID].CheckFull())
+		return FALSE;
+	if (Npc[Player[nCaptain].m_nIndex].m_Camp == camp_begin && Npc[m_nIndex].m_Camp != camp_begin)
+		return FALSE;
+
+	// The captain's response must match this applicant, NPC generation and timeout.
+	m_cTeam.m_nApplyCaptainID = pApply->m_dwTarNpcID;
+	int nSlot = Captain.m_nListPos;
+	for (int i = 0; i < MAX_TEAM_MEMBER; i++)
 	{
-		nRegionNo = SubWorld[Npc[m_nIndex].m_SubWorldIndex].m_Region[Npc[m_nIndex].m_RegionIndex].m_nConnectRegion[i];
-		if ( nRegionNo < 0)
-			continue;
-		nPlayer = SubWorld[Npc[m_nIndex].m_SubWorldIndex].m_Region[nRegionNo].FindPlayer(pAddTeam->m_dwTarNpcID);
-		if (nPlayer >= 0)
+		if (Captain.m_nInviteList[i] == m_nPlayerIndex && Captain.m_nInviteKind[i] == 2)
+		{
+			nSlot = i;
 			break;
+		}
 	}
-	if (i >= 8)
-		return FALSE;
-	
-SendMsg:
-	if (Npc[Player[nPlayer].m_nIndex].m_Camp == camp_begin && Npc[m_nIndex].m_Camp != camp_begin)
-		return FALSE;
-	m_cTeam.m_nApplyCaptainID = pAddTeam->m_dwTarNpcID;
-	PLAYER_APPLY_ADD_TEAM	sAddTeam;
-	sAddTeam.ProtocolType = s2c_teamgetapply;
-	sAddTeam.m_dwTarNpcID = Npc[m_nIndex].m_dwID;
-	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, (BYTE*)&sAddTeam, sizeof(PLAYER_APPLY_ADD_TEAM));
+	Captain.m_nInviteList[nSlot] = m_nPlayerIndex;
+	Captain.m_nInviteKind[nSlot] = 2;
+	Captain.m_dwInviteNpcID[nSlot] = Npc[m_nIndex].m_dwID;
+	Captain.m_dwInviteTime[nSlot] = g_SubWorldSet.GetGameTime();
+	Captain.m_nListPos = (nSlot + 1) % MAX_TEAM_MEMBER;
+	if (g_Team[Captain.m_nID].m_nState == 2)
+	{
+		Captain.GetInviteReply(nCaptain, m_nPlayerIndex, 1, TRUE);
+		return m_cTeam.m_nFlag && m_cTeam.m_nID == Captain.m_nID;
+	}
+
+	// Current 68 is fixed at 37 bytes: NPC DWORD, then NUL-terminated name[32].
+	BYTE Notice[37];
+	memset(Notice, 0, sizeof(Notice));
+	Notice[0] = 0x68;
+	memcpy(Notice + 1, &Npc[m_nIndex].m_dwID, sizeof(DWORD));
+	g_StrCpyLen((char*)Notice + 5, Npc[m_nIndex].Name, 32);
+	g_pServer->PackDataToClient(Player[nCaptain].m_nNetConnectIdx, Notice, sizeof(Notice));
 	return TRUE;
 }
 #endif
@@ -1248,112 +1186,24 @@ SendMsg:
 //-------------------------------------------------------------------------
 BOOL	KPlayer::AddTeamMember(BYTE* pProtocol)
 {
-	// 错误检测(是否组队、是否队长、队伍开放状态、队员数、统率力)
-	if ( !m_cTeam.m_nFlag ||
-		m_cTeam.m_nFigure != TEAM_CAPTAIN ||
-		!g_Team[m_cTeam.m_nID].IsOpen() ||
-		g_Team[m_cTeam.m_nID].m_nMemNum >= MAX_TEAM_MEMBER ||
-		g_Team[m_cTeam.m_nID].m_nMemNum >= g_Team[m_cTeam.m_nID].CalcCaptainPower())
-	{
-		SendSelfTeamInfo();
+	if (!pProtocol || m_nIndex <= 0 || m_nIndex >= MAX_NPC ||
+		!m_bFinishLoading || m_bExchangeServer || CheckTrading() ||
+		!m_cTeam.m_nFlag || m_cTeam.m_nFigure != TEAM_CAPTAIN ||
+		m_cTeam.m_nID < 0 || m_cTeam.m_nID >= MAX_TEAM ||
+		g_Team[m_cTeam.m_nID].m_nCaptain != m_nPlayerIndex ||
+		!g_Team[m_cTeam.m_nID].IsOpen() || g_Team[m_cTeam.m_nID].CheckFull() ||
+		Npc[m_nIndex].m_SubWorldIndex < 0 || Npc[m_nIndex].m_RegionIndex < 0)
 		return FALSE;
-	}
-	
-	// 从npc id查找player
-	int		nPlayer, i;
-	PLAYER_ACCEPT_TEAM_MEMBER	*pAccept = (PLAYER_ACCEPT_TEAM_MEMBER*)pProtocol;
-	nPlayer = FindAroundPlayer(pAccept->m_dwNpcID);
-	if (nPlayer < 0)
+	PLAYER_ACCEPT_TEAM_MEMBER *pAccept = (PLAYER_ACCEPT_TEAM_MEMBER*)pProtocol;
+	int nPlayer = FindAroundPlayer(pAccept->m_dwNpcID);
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || nPlayer == m_nPlayerIndex ||
+		Player[nPlayer].m_nIndex <= 0 || Player[nPlayer].m_nIndex >= MAX_NPC ||
+		Player[nPlayer].m_cTeam.m_nFlag ||
+		(DWORD)Player[nPlayer].m_cTeam.m_nApplyCaptainID != Npc[m_nIndex].m_dwID)
 		return FALSE;
-	// 对方正处于不能组队状态
-	if (!Player[nPlayer].m_cTeam.m_bCanTeamFlag)
-	{
-		SHOW_MSG_SYNC	sMsg;
-		sMsg.ProtocolType = s2c_msgshow;
-		sMsg.m_wMsgID = enumMSG_ID_TARGET_CANNOT_ADD_TEAM;
-		sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-		g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-		return FALSE;
-	}
-	// 已经在队伍中
-	if (Player[nPlayer].m_cTeam.m_nFlag)
-		return FALSE;
-	if (Player[nPlayer].m_cTeam.m_nApplyCaptainID != Npc[this->m_nIndex].m_dwID)
-		return FALSE;
-	// 队伍添加成员
-	if ( !g_Team[m_cTeam.m_nID].AddMember(nPlayer) )
-		return FALSE;
-	// 改变队伍状态
-	if (g_Team[m_cTeam.m_nID].m_nMemNum >= MAX_TEAM_MEMBER || g_Team[m_cTeam.m_nID].CheckFull())
-	{
-		g_Team[m_cTeam.m_nID].SetTeamClose();
-	}
-	// 被接受队员队伍数据处理
-	Player[nPlayer].m_cTeam.Release();
-	Player[nPlayer].m_cTeam.m_nFlag = 1;
-	Player[nPlayer].m_cTeam.m_nFigure = TEAM_MEMBER;
-	Player[nPlayer].m_cTeam.m_nID = m_cTeam.m_nID;
-	Npc[Player[nPlayer].m_nIndex].SetCurrentCamp(Npc[m_nIndex].m_Camp);
-	
-	// 给各个队员发消息
-	PLAYER_TEAM_ADD_MEMBER	sAddMem;
-	sAddMem.ProtocolType = s2c_teamaddmember;
-	sAddMem.m_dwNpcID = Npc[Player[nPlayer].m_nIndex].m_dwID;
-	sAddMem.m_btLevel = (DWORD)Npc[Player[nPlayer].m_nIndex].m_Level;
-	strcpy(sAddMem.m_szName, Npc[Player[nPlayer].m_nIndex].Name);
-	
-	// 给队长发消息
-	g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sAddMem, sizeof(PLAYER_TEAM_ADD_MEMBER));
-	
-	// 给老队员发消息
-	for (i = 0; i < MAX_TEAM_MEMBER; i++)
-	{
-		if (g_Team[m_cTeam.m_nID].m_nMember[i] < 0 || g_Team[m_cTeam.m_nID].m_nMember[i] == nPlayer)
-			continue;
-		g_pServer->PackDataToClient(Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_nNetConnectIdx, (BYTE*)&sAddMem, sizeof(PLAYER_TEAM_ADD_MEMBER));
-	}
-	
-	// ------------------------------------- 给新队员发消息 --------------------------
-	int		nNpcIndex;
-	PLAYER_SEND_SELF_TEAM_INFO	sSelfInfo;
-	sSelfInfo.ProtocolType = s2c_teamselfinfo;
-	sSelfInfo.nTeamServerID = m_cTeam.m_nID;
-	sSelfInfo.m_dwLeadExp = Player[nPlayer].m_dwLeadExp;
-	sSelfInfo.m_btState = g_Team[m_cTeam.m_nID].m_nState;
-	// 队长数据
-	nNpcIndex = m_nIndex;
-	sSelfInfo.m_dwNpcID[0] = Npc[nNpcIndex].m_dwID;
-	sSelfInfo.m_btLevel[0] = (DWORD)Npc[nNpcIndex].m_Level;
-	strcpy(sSelfInfo.m_szNpcName[0], Npc[nNpcIndex].Name);
-	// 队员数据
-	for (i = 0; i < MAX_TEAM_MEMBER; i++)
-	{
-		if (g_Team[m_cTeam.m_nID].m_nMember[i] >= 0)
-		{
-			nNpcIndex = Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_nIndex;
-			sSelfInfo.m_dwNpcID[i + 1] = Npc[nNpcIndex].m_dwID;
-			sSelfInfo.m_btLevel[i + 1] = (DWORD)Npc[nNpcIndex].m_Level;
-			strcpy(sSelfInfo.m_szNpcName[i + 1], Npc[nNpcIndex].Name);
-		}
-		else
-		{
-			sSelfInfo.m_dwNpcID[i + 1] = 0;
-			sSelfInfo.m_btLevel[i + 1] = 0;
-		}
-	}
-	// 发送消息
-	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, (BYTE*)&sSelfInfo, sizeof(PLAYER_SEND_SELF_TEAM_INFO));
-	
-	SHOW_MSG_SYNC	sMsg;
-	sMsg.ProtocolType = s2c_msgshow;
-	sMsg.m_wMsgID = enumMSG_ID_TEAM_SELF_ADD;
-	sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1;
-	sMsg.m_lpBuf = 0;
-	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-	
-	// --------------------------------- 给新队员发消息 end --------------------------
-	
-	return TRUE;
+	// Consume the same bound invitation and perform one shared current 69/63 join.
+	m_cTeam.GetInviteReply(m_nPlayerIndex, nPlayer, 1, TRUE);
+	return Player[nPlayer].m_cTeam.m_nFlag && Player[nPlayer].m_cTeam.m_nID == m_cTeam.m_nID;
 }
 #endif
 
@@ -1363,34 +1213,10 @@ BOOL	KPlayer::AddTeamMember(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 void	KPlayer::LeaveTeam(BYTE* pProtocol)
 {
-	if (!m_cTeam.m_nFlag)
+	if (!m_cTeam.m_nFlag || m_cTeam.m_nID < 0 || m_cTeam.m_nID >= MAX_TEAM ||
+		m_nIndex <= 0 || m_nIndex >= MAX_NPC ||
+		!g_Team[m_cTeam.m_nID].CheckIn(m_nPlayerIndex))
 		return;
-	if (this->m_cTeam.m_nFigure == TEAM_CAPTAIN && g_Team[m_cTeam.m_nID].IsOpen())
-	{
-		g_Team[m_cTeam.m_nID].SetTeamClose();
-	}
-	
-	// 非队长离开队伍，发系统消息，队长离开队伍的系统消息处理在DeleteMember里面
-	if (m_cTeam.m_nFigure != TEAM_CAPTAIN)
-	{
-		SHOW_MSG_SYNC	sMsg;
-		sMsg.ProtocolType = s2c_msgshow;
-		sMsg.m_wMsgID = enumMSG_ID_TEAM_LEAVE;
-		sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1;
-		sMsg.m_lpBuf = (void*)Npc[this->m_nIndex].m_dwID;
-		
-		g_pServer->PackDataToClient(Player[g_Team[m_cTeam.m_nID].m_nCaptain].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-		for (int i = 0; i < MAX_TEAM_MEMBER; i++)
-		{
-			if (g_Team[m_cTeam.m_nID].m_nMember[i] > 0)
-			{
-				g_pServer->PackDataToClient(Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-			}
-		}
-		sMsg.m_lpBuf = 0;
-	}
-	
-	// 服务器端队员离开的处理
 	g_Team[m_cTeam.m_nID].DeleteMember(GetPlayerIndex());
 }
 #endif
@@ -1401,41 +1227,18 @@ void	KPlayer::LeaveTeam(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 void	KPlayer::TeamKickOne(BYTE* pProtocol)
 {
-	if ( !m_cTeam.m_nFlag || m_cTeam.m_nFigure != TEAM_CAPTAIN)
+	if (!pProtocol || !m_cTeam.m_nFlag || m_cTeam.m_nID < 0 || m_cTeam.m_nID >= MAX_TEAM ||
+		m_cTeam.m_nFigure != TEAM_CAPTAIN ||
+		g_Team[m_cTeam.m_nID].m_nCaptain != m_nPlayerIndex ||
+		m_nIndex <= 0 || m_nIndex >= MAX_NPC)
 		return;
-	
-	int		nMemNo;
-	PLAYER_TEAM_KICK_MEMBER	*pKickOne = (PLAYER_TEAM_KICK_MEMBER*)pProtocol;
-	nMemNo = g_Team[m_cTeam.m_nID].FindMemberID(pKickOne->m_dwNpcID);
-	if (nMemNo < 0)
+
+	PLAYER_TEAM_KICK_MEMBER *pKickOne = (PLAYER_TEAM_KICK_MEMBER*)pProtocol;
+	KTeam &Team = g_Team[m_cTeam.m_nID];
+	int nMember = Team.FindMemberID(pKickOne->m_dwNpcID);
+	if (nMember < 0)
 		return;
-	int		nPlayerNo;
-	// 服务器端队员离开的处理
-	nPlayerNo = g_Team[m_cTeam.m_nID].m_nMember[nMemNo];
-	g_Team[m_cTeam.m_nID].DeleteMember(nPlayerNo);
-	
-	// 发消息给客户端
-	int		nLength;
-	SHOW_MSG_SYNC	sMsg;
-	
-	nLength = strlen(Npc[Player[nPlayerNo].m_nIndex].Name);
-	sMsg.ProtocolType = s2c_msgshow;
-	sMsg.m_wMsgID = enumMSG_ID_TEAM_KICK_One;
-	sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID) + nLength;
-	sMsg.m_lpBuf = new BYTE[sMsg.m_wLength + 1];
-	
-	memcpy(sMsg.m_lpBuf, &sMsg, sizeof(SHOW_MSG_SYNC) - sizeof(LPVOID));
-	memcpy((char*)sMsg.m_lpBuf + sizeof(SHOW_MSG_SYNC) - sizeof(LPVOID), Npc[Player[nPlayerNo].m_nIndex].Name, nLength);
-	
-	g_pServer->PackDataToClient(Player[nPlayerNo].m_nNetConnectIdx, sMsg.m_lpBuf, sMsg.m_wLength + 1);
-	
-	g_pServer->PackDataToClient(Player[g_Team[m_cTeam.m_nID].m_nCaptain].m_nNetConnectIdx, sMsg.m_lpBuf, sMsg.m_wLength + 1);
-	for (int i = 0; i < MAX_TEAM_MEMBER; i++)
-	{
-		if (g_Team[m_cTeam.m_nID].m_nMember[i] > 0)
-			g_pServer->PackDataToClient(Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_nNetConnectIdx, sMsg.m_lpBuf, sMsg.m_wLength + 1);
-	}
-	sMsg.Release();
+	Team.DeleteMember(Team.m_nMember[nMember]);
 }
 #endif
 
@@ -1445,77 +1248,65 @@ void	KPlayer::TeamKickOne(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 void	KPlayer::TeamChangeCaptain(BYTE* pProtocol)
 {
-	if ( !m_cTeam.m_nFlag || m_cTeam.m_nFigure != TEAM_CAPTAIN)
+	if (!pProtocol || !m_cTeam.m_nFlag || m_cTeam.m_nID < 0 || m_cTeam.m_nID >= MAX_TEAM ||
+		m_cTeam.m_nFigure != TEAM_CAPTAIN ||
+		g_Team[m_cTeam.m_nID].m_nCaptain != m_nPlayerIndex ||
+		m_nIndex <= 0 || m_nIndex >= MAX_NPC)
 		return;
-	int		i, nMember, nPlayerNo, nIsOpen = 0;
-	PLAYER_APPLY_TEAM_CHANGE_CAPTAIN	*pChange = (PLAYER_APPLY_TEAM_CHANGE_CAPTAIN*)pProtocol;
-	nMember = g_Team[m_cTeam.m_nID].FindMemberID(pChange->m_dwNpcID);
+
+	PLAYER_APPLY_TEAM_CHANGE_CAPTAIN *pChange = (PLAYER_APPLY_TEAM_CHANGE_CAPTAIN*)pProtocol;
+	KTeam &Team = g_Team[m_cTeam.m_nID];
+	int nMember = Team.FindMemberID(pChange->m_dwNpcID);
 	if (nMember < 0)
 		return;
-	if (Npc[Player[g_Team[m_cTeam.m_nID].m_nMember[nMember]].m_nIndex].m_Camp == camp_begin && Npc[this->m_nIndex].m_Camp != camp_begin)
-	{
-		// 队长移交失败：对方统帅力不够
-		SHOW_MSG_SYNC	sMsg;
-		sMsg.ProtocolType = s2c_msgshow;
-		sMsg.m_wMsgID = enumMSG_ID_TEAM_CHANGE_CAPTAIN_FAIL2;
-		sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1;
-		sMsg.m_lpBuf = (LPVOID)pChange->m_dwNpcID;
-		g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-		sMsg.m_lpBuf = 0;
+	int nNewCaptain = Team.m_nMember[nMember];
+	if (nNewCaptain <= 0 || nNewCaptain >= MAX_PLAYER ||
+		!Player[nNewCaptain].m_cTeam.m_nFlag || Player[nNewCaptain].m_cTeam.m_nID != m_cTeam.m_nID ||
+		Player[nNewCaptain].m_nIndex <= 0 || Player[nNewCaptain].m_nIndex >= MAX_NPC)
 		return;
-	}
-	if (g_Team[m_cTeam.m_nID].m_nMemNum > PlayerSet.m_cLeadExp.GetMemNumFromLevel(Player[g_Team[m_cTeam.m_nID].m_nMember[nMember]].m_dwLeadLevel))
-	{
-		// 队长移交失败：对方统帅力不够
-		SHOW_MSG_SYNC	sMsg;
-		sMsg.ProtocolType = s2c_msgshow;
-		sMsg.m_wMsgID = enumMSG_ID_TEAM_CHANGE_CAPTAIN_FAIL;
-		sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1;
-		sMsg.m_lpBuf = (LPVOID)pChange->m_dwNpcID;
-		g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-		sMsg.m_lpBuf = 0;
+	if (Npc[Player[nNewCaptain].m_nIndex].m_Camp == camp_begin && Npc[m_nIndex].m_Camp != camp_begin)
 		return;
-	}
-	if (g_Team[m_cTeam.m_nID].IsOpen())
-	{
-		g_Team[m_cTeam.m_nID].SetTeamClose();
-		nIsOpen = 1;
-	}
-	nPlayerNo = g_Team[m_cTeam.m_nID].m_nCaptain;
-	g_Team[m_cTeam.m_nID].m_nCaptain = g_Team[m_cTeam.m_nID].m_nMember[nMember];
-	g_Team[m_cTeam.m_nID].m_nMember[nMember] = nPlayerNo;
+	if (Team.m_nMemNum > MAX_TEAM_MEMBER)
+		return;
+
+	Team.m_nCaptain = nNewCaptain;
+	Team.m_nMember[nMember] = m_nPlayerIndex;
 	m_cTeam.m_nFigure = TEAM_MEMBER;
-	Player[g_Team[m_cTeam.m_nID].m_nCaptain].m_cTeam.m_nFigure = TEAM_CAPTAIN;
-	// 改变阵营
-	Npc[Player[g_Team[m_cTeam.m_nID].m_nCaptain].m_nIndex].RestoreCurrentCamp();
-	for (i = 0; i < MAX_TEAM_MEMBER; i++)
+	Player[nNewCaptain].m_cTeam.m_nFigure = TEAM_CAPTAIN;
+	// Invitations belong to the captain who issued them, not a recycled player slot.
+	memset(m_cTeam.m_nInviteList, 0, sizeof(m_cTeam.m_nInviteList));
+	memset(Player[nNewCaptain].m_cTeam.m_nInviteList, 0, sizeof(Player[nNewCaptain].m_cTeam.m_nInviteList));
+	Npc[Player[nNewCaptain].m_nIndex].RestoreCurrentCamp();
+	for (int i = 0; i < MAX_TEAM_MEMBER; i++)
 	{
-		nPlayerNo = g_Team[m_cTeam.m_nID].m_nMember[i];
-		if (nPlayerNo < 0)
-			continue;
-		Npc[Player[nPlayerNo].m_nIndex].SetCurrentCamp(Npc[Player[g_Team[m_cTeam.m_nID].m_nCaptain].m_nIndex].m_Camp);
+		int nPlayer = Team.m_nMember[i];
+		if (nPlayer > 0 && nPlayer < MAX_PLAYER)
+		{
+			memset(Player[nPlayer].m_cTeam.m_nInviteList, 0, sizeof(Player[nPlayer].m_cTeam.m_nInviteList));
+			Npc[Player[nPlayer].m_nIndex].SetCurrentCamp(Npc[Player[nNewCaptain].m_nIndex].m_Camp);
+		}
 	}
-	
-	// 给各个队员发消息
-	PLAYER_TEAM_CHANGE_CAPTAIN	sChangeCaptain;
-	sChangeCaptain.ProtocolType = s2c_teamchangecaptain;
-	sChangeCaptain.m_dwCaptainID = pChange->m_dwNpcID;
-	sChangeCaptain.m_dwMemberID = Npc[m_nIndex].m_dwID;
-	// 给队长发消息
-	g_pServer->PackDataToClient(Player[g_Team[m_cTeam.m_nID].m_nCaptain].m_nNetConnectIdx, (BYTE*)&sChangeCaptain, sizeof(PLAYER_TEAM_CHANGE_CAPTAIN));
-	// 给队员发消息
-	for (i = 0; i < MAX_TEAM_MEMBER; i++)
+
+	GAME_TEAM_CHANGE_CAPTAIN_SYNC Change;
+	Change.ProtocolType = 0x6B;
+	Change.m_dwCaptainID = pChange->m_dwNpcID;
+	Change.m_dwMemberID = Npc[m_nIndex].m_dwID;
+	Change.State = (BYTE)Team.m_nState;
+	g_pServer->PackDataToClient(Player[nNewCaptain].m_nNetConnectIdx, &Change, sizeof(Change));
+	for (int i = 0; i < MAX_TEAM_MEMBER; i++)
 	{
-		nPlayerNo = g_Team[m_cTeam.m_nID].m_nMember[i];
-		if (nPlayerNo < 0)
-			continue;
-		g_pServer->PackDataToClient(Player[nPlayerNo].m_nNetConnectIdx, (BYTE*)&sChangeCaptain, sizeof(PLAYER_TEAM_CHANGE_CAPTAIN));
+		int nPlayer = Team.m_nMember[i];
+		if (nPlayer > 0 && nPlayer < MAX_PLAYER)
+		{
+			g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Change, sizeof(Change));
+			Player[nPlayer].SendCurNormalSyncData();
+		}
 	}
-	
-	if (nIsOpen)
-	{
-		g_Team[m_cTeam.m_nID].SetTeamOpen();
-	}
+	Player[nNewCaptain].SendCurNormalSyncData();
+	Npc[m_nIndex].NormalSync();
+	Npc[m_nIndex].SendMenuStateSync();
+	Npc[Player[nNewCaptain].m_nIndex].NormalSync();
+	Npc[Player[nNewCaptain].m_nIndex].SendMenuStateSync();
 }
 #endif
 
@@ -1525,39 +1316,21 @@ void	KPlayer::TeamChangeCaptain(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 void	KPlayer::TeamDismiss(BYTE* pProtocol)
 {
-	if ( !m_cTeam.m_nFlag || m_cTeam.m_nFigure != TEAM_CAPTAIN)
+	if (!pProtocol || !m_cTeam.m_nFlag || m_cTeam.m_nID < 0 || m_cTeam.m_nID >= MAX_TEAM ||
+		m_cTeam.m_nFigure != TEAM_CAPTAIN ||
+		g_Team[m_cTeam.m_nID].m_nCaptain != m_nPlayerIndex ||
+		m_nIndex <= 0 || m_nIndex >= MAX_NPC)
 		return;
-	
-	PLAYER_LEAVE_TEAM	sLeaveTeam;
-	int		i;
-	SHOW_MSG_SYNC	sMsg;
-	
-	// 队伍解散消息
-	sMsg.ProtocolType = s2c_msgshow;
-	sMsg.m_wMsgID = enumMSG_ID_TEAM_DISMISS;
-	sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-	g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-	
-	// 给队长发消息
-	sLeaveTeam.ProtocolType = s2c_teamleave;
-	sLeaveTeam.m_dwNpcID = Npc[m_nIndex].m_dwID;
-	g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sLeaveTeam, sizeof(PLAYER_LEAVE_TEAM));
-	// 给队员发消息
-	for (i = 0; i < MAX_TEAM_MEMBER; i++)
+
+	KTeam &Team = g_Team[m_cTeam.m_nID];
+	// Remove members first, so explicit dismissal never promotes a successor.
+	for (int i = 0; i < MAX_TEAM_MEMBER; i++)
 	{
-		g_pServer->PackDataToClient(Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-		
-		sLeaveTeam.m_dwNpcID = Npc[Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_nIndex].m_dwID;
-		g_pServer->PackDataToClient(Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_nNetConnectIdx, (BYTE*)&sLeaveTeam, sizeof(PLAYER_LEAVE_TEAM));
-		// 队员身份改变
-		Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_cTeam.m_nFlag = 0;
-		Npc[Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_nIndex].RestoreCurrentCamp();;
+		int nMember = Team.m_nMember[i];
+		if (nMember > 0 && nMember < MAX_PLAYER)
+			Team.DeleteMember(nMember);
 	}
-	// 队伍清空
-	g_Team[m_cTeam.m_nID].Release();
-	// 队长身份改变
-	m_cTeam.m_nFlag = 0;
-	Npc[m_nIndex].RestoreCurrentCamp();
+	Team.DeleteMember(m_nPlayerIndex);
 }
 #endif
 
@@ -2110,6 +1883,11 @@ void	KPlayer::AddExp(int nExp, int nTarLevel)
 		return;
 	}
 	
+	if (m_cTeam.m_nID < 0 || m_cTeam.m_nID >= MAX_TEAM ||
+		!g_Team[m_cTeam.m_nID].CheckIn(m_nPlayerIndex))
+		return;
+	// Average mode shares the existing team reward equally by eligible headcount.
+	// Classic mode retains the original level-weighted calculation.
 	// 已经组队
 	int		i, j, nShareFlag[MAX_TEAM_MEMBER + 1], nRegion, nTotalLevel = 0, nTotalPlayer = 0;
 	memset(nShareFlag, 0, sizeof(nShareFlag));
@@ -2188,6 +1966,10 @@ SharePlace:
 	}
 	int		k, nGetExp;
 	k = 100 + nTotalPlayer * 15;
+	BOOL bAverage = g_Team[m_cTeam.m_nID].m_nAllocationMode == 0x20;
+	int nAverageExp = 0;
+	if (bAverage)
+		nAverageExp = (int)((__int64)nExp * k / (100 * nTotalPlayer));
 	
 	
 	// 给队长分配经验
@@ -2196,7 +1978,10 @@ SharePlace:
 		nGetExp = k * Npc[Player[g_Team[m_cTeam.m_nID].m_nCaptain].m_nIndex].m_Level / nTotalLevel;
 		if (nGetExp < 5)
 			nGetExp = 5;
-		Player[g_Team[m_cTeam.m_nID].m_nCaptain].AddSelfExp(nExp * nGetExp / 100, nTarLevel);
+		if (bAverage)
+			Player[g_Team[m_cTeam.m_nID].m_nCaptain].AddSelfExp(nAverageExp, nTarLevel);
+		else
+			Player[g_Team[m_cTeam.m_nID].m_nCaptain].AddSelfExp(nExp * nGetExp / 100, nTarLevel);
 
 		// LeadExp = 怪物提供的经验值 * β * 分享者等级 / 分享者等级和；
 		int		nLeadExp = nExp * k * PlayerSet.m_cLevelAdd.GetLeadExpShare(Npc[m_nIndex].m_Series) * (nTotalLevel - Npc[m_nIndex].m_Level) / (nTotalLevel * 10000);
@@ -2223,7 +2008,10 @@ SharePlace:
 		nGetExp = k * Npc[Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_nIndex].m_Level / nTotalLevel;
 		if (nGetExp < 5)
 			nGetExp = 5;
-		Player[g_Team[m_cTeam.m_nID].m_nMember[i]].AddSelfExp(nExp * nGetExp / 100, nTarLevel);
+		if (bAverage)
+			Player[g_Team[m_cTeam.m_nID].m_nMember[i]].AddSelfExp(nAverageExp, nTarLevel);
+		else
+			Player[g_Team[m_cTeam.m_nID].m_nMember[i]].AddSelfExp(nExp * nGetExp / 100, nTarLevel);
 		//		if (g_Team[m_cTeam.m_nID].m_nMember[i] == m_nPlayerIndex)
 		//		{
 		//			if (nGetExp < 50)
@@ -2454,19 +2242,15 @@ void	KPlayer::LevelUp()
 	Level.unknown_2 = 128;
 	g_pServer->PackDataToClient(m_nNetConnectIdx, &Level, sizeof(Level));
 
-	if ( m_cTeam.m_nFlag )
+	if (m_cTeam.m_nFlag && m_cTeam.m_nID >= 0 && m_cTeam.m_nID < MAX_TEAM)
 	{
-		PLAYER_TEAMMATE_LEVEL_SYNC	sLevel;
-		sLevel.ProtocolType = s2c_teammatelevel;
-		sLevel.m_btLevel = (DWORD)Npc[m_nIndex].m_Level;
-		sLevel.m_dwTeammateID = Npc[m_nIndex].m_dwID;
-		// 给队长发
-		if (m_cTeam.m_nFigure != TEAM_CAPTAIN)
-			g_pServer->PackDataToClient(Player[g_Team[m_cTeam.m_nID].m_nCaptain].m_nNetConnectIdx, (BYTE*)&sLevel, sizeof(PLAYER_TEAMMATE_LEVEL_SYNC));
+		// Legacy 73 teammate-level packets collide with current attribute sync.
+		KTeam& Team = g_Team[m_cTeam.m_nID];
+		Team.SendSelfInfo(Team.m_nCaptain);
 		for (int i = 0; i < MAX_TEAM_MEMBER; i++)
 		{
-			if (g_Team[m_cTeam.m_nID].m_nMember[i] >= 0 && g_Team[m_cTeam.m_nID].m_nMember[i] != GetPlayerIndex())
-				g_pServer->PackDataToClient(Player[g_Team[m_cTeam.m_nID].m_nMember[i]].m_nNetConnectIdx, (BYTE*)&sLevel, sizeof(PLAYER_TEAMMATE_LEVEL_SYNC));
+			if (Team.m_nMember[i] > 0)
+				Team.SendSelfInfo(Team.m_nMember[i]);
 		}
 	}
 #endif
@@ -2597,12 +2381,8 @@ void	KPlayer::AddLeadExp(int nExp)
 #endif
 	}
 	
-#ifdef _SERVER
-	PLAYER_LEAD_EXP_SYNC	sLeadExp;
-	sLeadExp.ProtocolType = s2c_playersyncleadexp;
-	sLeadExp.m_dwLeadExp = m_dwLeadExp;
-	g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sLeadExp, sizeof(PLAYER_LEAD_EXP_SYNC));
-#endif
+// Keep the legacy saved leadership value internally. Its old 71 packet
+	// collides with the current level-up protocol and must never be emitted.
 	
 }
 
@@ -3650,41 +3430,22 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol, BOOL bPet)
 	
 	if (Object[nObjIndex].m_nBelong != -1)
 	{
+		BOOL bTask = FALSE;
+		if (Object[nObjIndex].m_nKind == Obj_Kind_Item)
+		{
+			int nItem = Object[nObjIndex].m_nItemDataID;
+			if (nItem <= 0 || nItem >= MAX_ITEM)
+				return FALSE;
+			bTask = Item[nItem].GetGenre() == item_task;
+		}
 		if (!m_cTeam.m_nFlag)
 		{
 			if (Object[nObjIndex].m_nBelong != m_nPlayerIndex)
-			{
 				return FALSE;
-			}
 		}
-		else
-		{
-			if (Object[nObjIndex].m_nKind == Obj_Kind_Money)
-			{
-				if (Object[nObjIndex].m_nBelong != m_nPlayerIndex &&
-					!g_Team[m_cTeam.m_nID].CheckIn(Object[nObjIndex].m_nBelong))
-				{
-					return FALSE;
-				}
-			}
-			else if (Object[nObjIndex].m_nKind == Obj_Kind_Item)
-			{
-				if (Object[nObjIndex].m_nItemDataID <= 0 || Object[nObjIndex].m_nItemDataID >= MAX_ITEM)
-				{
-					_ASSERT(0);
-					return FALSE;
-				}
-				if ((Item[Object[nObjIndex].m_nItemDataID].GetGenre() == item_task && Object[nObjIndex].m_nBelong != m_nPlayerIndex) ||
-					!g_Team[m_cTeam.m_nID].CheckIn(Object[nObjIndex].m_nBelong))
-				{
-					return FALSE;
-				}
-			}
-			else
-			{
-				return FALSE;
-			}
-		}
+		else if (m_cTeam.m_nID < 0 || m_cTeam.m_nID >= MAX_TEAM ||
+			!g_Team[m_cTeam.m_nID].CanPickUp(m_nPlayerIndex, Object[nObjIndex].m_nBelong, bTask))
+			return FALSE;
 	}
 	// 判断距离
 	if (Object[nObjIndex].m_nSubWorldID != Npc[m_nIndex].m_SubWorldIndex)

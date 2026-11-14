@@ -3731,7 +3731,7 @@ BOOL KNpc::SendSyncData(int nClient)
 	else
 		NpcSync.LifePerCent		= 0;
 	if (this->IsPlayer())
-		NpcSync.m_btMenuState	= (BYTE)Player[this->m_nPlayerIdx].m_cMenuState.m_nState;
+		NpcSync.m_btMenuState	= GetClientMenuState();
 	else
 		NpcSync.m_btMenuState	= 0;
 	int nMpsX, nMpsY;
@@ -6620,5 +6620,49 @@ int	KNpc::GetNpcPatePeopleInfo()
 			nHeight += nFontSize + 1;
 	}
 	return nHeight;
+}
+#endif
+
+#ifdef _SERVER
+BYTE KNpc::GetClientMenuState()
+{
+	if (!IsPlayer() || m_nPlayerIdx <= 0 || m_nPlayerIdx >= MAX_PLAYER)
+		return 0;
+	KPlayer& Owner = Player[m_nPlayerIdx];
+	int nState = Owner.m_cMenuState.m_nState;
+	// Keep non-team menu states (trade, idle) under their existing owner.
+	if (nState != PLAYER_MENU_STATE_NORMAL && nState != PLAYER_MENU_STATE_TEAMOPEN)
+		return (BYTE)nState;
+	if (!Owner.m_cTeam.m_nFlag || Owner.m_cTeam.m_nFigure != TEAM_CAPTAIN ||
+		Owner.m_cTeam.m_nID < 0 || Owner.m_cTeam.m_nID >= MAX_TEAM)
+		return 0;
+	KTeam& Team = g_Team[Owner.m_cTeam.m_nID];
+	if (Team.m_nCaptain != m_nPlayerIdx || !Team.IsOpen())
+		return 0;
+	// Native menu-state resources: 1 classic recruiting, 8 average recruiting.
+	return Team.m_nAllocationMode == 0x20 ? 8 : 1;
+}
+
+void KNpc::SendMenuStateSync()
+{
+	if (!g_pServer || !IsPlayer() || m_nPlayerIdx <= 0 || m_nPlayerIdx >= MAX_PLAYER ||
+		m_SubWorldIndex < 0 || m_RegionIndex < 0)
+		return;
+	BYTE Buffer[sizeof(GAME_NPC_MENU_STATE_SYNC) + MAX_SENTENCE_LENGTH];
+	memset(Buffer, 0, sizeof(Buffer));
+	GAME_NPC_MENU_STATE_SYNC* pSync = (GAME_NPC_MENU_STATE_SYNC*)Buffer;
+	pSync->ProtocolType = 0x86;
+	pSync->NpcID = m_dwID;
+	pSync->State = GetClientMenuState();
+	int nSentence = 0;
+	if (pSync->State != 0 && pSync->State != 1 && pSync->State != 8)
+	{
+		const char* pText = Player[m_nPlayerIdx].m_cMenuState.m_szSentence;
+		while (nSentence < MAX_SENTENCE_LENGTH && pText[nSentence])
+			nSentence++;
+		memcpy(Buffer + sizeof(*pSync), pText, nSentence);
+	}
+	pSync->Length = (WORD)(sizeof(*pSync) - 1 + nSentence);
+	SendDataToNearRegion(Buffer, pSync->Length + 1);
 }
 #endif

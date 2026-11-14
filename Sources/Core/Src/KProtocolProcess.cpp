@@ -217,6 +217,17 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[c2s_ladderquery] = &KProtocolProcess::LadderQuery;
 	ProcessFunc[c2s_repairitem] = &KProtocolProcess::ItemRepair;
 	// 当前客户端编号优先于旧枚举，避免分派到旧版聊天、交易等处理器。
+	ProcessFunc[0x53] = &KProtocolProcess::PlayerApplyTeamInfo;
+	ProcessFunc[0x54] = &KProtocolProcess::PlayerApplyCreateTeam;
+	ProcessFunc[0x55] = &KProtocolProcess::PlayerApplyTeamOpenClose;
+	ProcessFunc[0x56] = &KProtocolProcess::PlayerApplyAddTeam;
+	ProcessFunc[0x57] = &KProtocolProcess::PlayerAcceptTeamMember;
+	ProcessFunc[0x58] = &KProtocolProcess::PlayerApplyLeaveTeam;
+	ProcessFunc[0x59] = &KProtocolProcess::PlayerApplyTeamKickMember;
+	ProcessFunc[0x5A] = &KProtocolProcess::PlayerApplyTeamChangeCaptain;
+	ProcessFunc[0x5B] = &KProtocolProcess::PlayerApplyTeamDismiss;
+	ProcessFunc[0x77] = &KProtocolProcess::TeamInviteAdd;
+	ProcessFunc[0x79] = &KProtocolProcess::TeamReplyInvite;
 	ProcessFunc[0x51] = &KProtocolProcess::CurrentSkillCommand;
 	ProcessFunc[0x60] = &KProtocolProcess::ItemRepair;
 	ProcessFunc[0x61] = &KProtocolProcess::PlayerEatItem;
@@ -3711,12 +3722,22 @@ void KProtocolProcess::PlayerApplyTeamInfo(int nIndex, BYTE* pProtocol)
 
 void KProtocolProcess::PlayerApplyCreateTeam(int nIndex, BYTE* pProtocol)
 {
-	Player[nIndex].CreateTeam(pProtocol);
+	// The context menu sends 54/00 immediately followed by 77/target.
+	// The team window sends 54/01. Keep both observed selector values.
+	if (pProtocol[1] > 1 || !Player[nIndex].m_bFinishLoading || Player[nIndex].m_bExchangeServer)
+		return;
+	BOOL bCreated = Player[nIndex].CreateTeam(pProtocol);
+	g_DebugLog("[Team] Create request: player=%d selector=%u created=%d team=%d",
+		nIndex, pProtocol[1], bCreated, Player[nIndex].m_cTeam.m_nID);
 }
 
 void KProtocolProcess::PlayerApplyTeamOpenClose(int nIndex, BYTE* pProtocol)
 {
-	Player[nIndex].SetTeamState(pProtocol);
+	KPlayer& Owner = Player[nIndex];
+	if (!Owner.m_bFinishLoading || Owner.m_bExchangeServer || !Owner.m_cTeam.m_nFlag ||
+		Owner.m_cTeam.m_nID < 0 || Owner.m_cTeam.m_nID >= MAX_TEAM)
+		return;
+	g_Team[Owner.m_cTeam.m_nID].SetDistribution(nIndex, pProtocol[1], pProtocol[2]);
 }
 
 void KProtocolProcess::PlayerApplyAddTeam(int nIndex, BYTE* pProtocol)
@@ -3978,6 +3999,7 @@ void	KProtocolProcess::TeamReplyInvite(int nIndex, BYTE * pProtocol)
 {
 	TEAM_REPLY_INVITE_COMMAND	*pReply = (TEAM_REPLY_INVITE_COMMAND*)pProtocol;
 	if (!pProtocol ||
+		pReply->m_btResult > 1 ||
 		pReply->m_nIndex <= 0 ||
 		pReply->m_nIndex >= MAX_PLAYER ||
 		Player[pReply->m_nIndex].m_nIndex <= 0)

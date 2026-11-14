@@ -24,6 +24,9 @@ public:
 	int		m_nFigure;			// 如果已经组队，player 的身份：TEAM_CAPTAIN TEAM_MEMBER
 	int		m_nApplyCaptainID;	// 申请加入的目标队伍的队长的 npc id
 	int		m_nInviteList[MAX_TEAM_MEMBER];	// 邀请玩家加入本队伍列表
+	int		m_nInviteKind[MAX_TEAM_MEMBER]; // 1: captain invitation, 2: applicant request.
+	DWORD	m_dwInviteNpcID[MAX_TEAM_MEMBER];
+	DWORD	m_dwInviteTime[MAX_TEAM_MEMBER];
 	int		m_nListPos;			// 列表当前位置
 
 private:
@@ -34,7 +37,7 @@ public:
 	void	Release();
 	BOOL	CreateTeam(int nIdx, PLAYER_APPLY_CREATE_TEAM *pCreateTeam);
 	void	InviteAdd(int nIdx, TEAM_INVITE_ADD_COMMAND *pAdd);
-	void	GetInviteReply(int nSelfIdx, int nTargetIdx, int nResult);
+	void	GetInviteReply(int nSelfIdx, int nTargetIdx, int nResult, BOOL bApplication = FALSE);
 
 	void	SetCanTeamFlag(int nSelfIdx, BOOL bFlag);
 	BOOL	GetCanTeamFlag() {return m_bCanTeamFlag;};
@@ -90,6 +93,17 @@ public:
 	int		m_nState;									// 队伍状态：Team_S_Open Team_S_Close
 	int		m_nCaptain;									// 队长 id ，服务器端用 player index ，客户端用 npc id ，-1 为空
 	int		m_nMember[MAX_TEAM_MEMBER];					// 所有队员 id ，服务器端用 player index ，客户端用 npc id ，-1 为空
+#ifdef _SERVER
+	int		m_nAllocationMode;
+	int		m_nPickupMode;
+	BOOL	SetDistribution(int nPlayer, int nMode, int nPickup);
+	void	SendDistribution(int nPlayer);
+	void	SendSelfInfo(int nPlayer);
+	void	SendHealthInfo(int nPlayer);
+	void	SendPositionInfo(int nPlayer);
+	void	Broadcast(const void* pData, int nSize);
+	BOOL	CanPickUp(int nPlayer, int nOwner, BOOL bTask);
+#endif
 	int		m_nMemNum;									// 已有队员数量(不包括队长)
 #ifndef _SERVER
 	int		m_nMemLevel[MAX_TEAM_MEMBER + 1];			// 队员等级 (第一个队员为队长) (队员升级的时候要通知所有其他队员 not end)

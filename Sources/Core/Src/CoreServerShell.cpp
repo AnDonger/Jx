@@ -791,6 +791,12 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 	// 当前客户端的动作编号与旧版枚举不一致，先检查实际封包布局。
 	switch (nProtocol)
 	{
+	case 0x53: case 0x56: case 0x57: case 0x59: case 0x5A: case 0x77:
+		return nSize == 5;
+	case 0x54: return nSize == 2;
+	case 0x55: return nSize == 3;
+	case 0x58: case 0x5B: return nSize == 1;
+	case 0x79: return nSize == sizeof(TEAM_REPLY_INVITE_COMMAND);
 	case 0x51: return nSize == sizeof(GAME_SKILL_COMMAND);
 	case 0x60: return nSize == sizeof(ITEM_REPAIR);
 	case 0x61: return nSize == sizeof(GAME_USE_ITEM_COMMAND);

@@ -278,6 +278,9 @@ void	KPlayerTeam::Release()
 	m_nFigure = 0;
 	m_nApplyCaptainID = 0;
 	memset(m_nInviteList, 0, sizeof(m_nInviteList));
+	memset(m_nInviteKind, 0, sizeof(m_nInviteKind));
+	memset(m_dwInviteNpcID, 0, sizeof(m_dwInviteNpcID));
+	memset(m_dwInviteTime, 0, sizeof(m_dwInviteTime));
 	m_nListPos = 0;
 }
 #endif
@@ -285,80 +288,24 @@ void	KPlayerTeam::Release()
 #ifdef _SERVER
 BOOL	KPlayerTeam::CreateTeam(int nIdx, PLAYER_APPLY_CREATE_TEAM *pCreateTeam)
 {
-	_ASSERT(pCreateTeam);
-
-	// 当前处于不能组队状态
-	if (!m_bCanTeamFlag)
-	{
-		PLAYER_SEND_CREATE_TEAM_FALSE	sCreateFalse;
-		sCreateFalse.ProtocolType = s2c_teamcreatefalse;
-		sCreateFalse.m_btErrorID = Team_Create_Error_CannotCreate;
-		g_pServer->PackDataToClient(Player[nIdx].m_nNetConnectIdx, (BYTE*)&sCreateFalse, sizeof(PLAYER_SEND_CREATE_TEAM_FALSE));
+	if (!pCreateTeam || nIdx <= 0 || nIdx >= MAX_PLAYER || !m_bCanTeamFlag ||
+		m_nFlag || !Player[nIdx].m_bFinishLoading || Player[nIdx].m_bExchangeServer ||
+		Player[nIdx].CheckTrading() || Player[nIdx].m_nIndex <= 0 || Player[nIdx].m_nIndex >= MAX_NPC)
 		return FALSE;
-	}
-
-	if (m_nFlag)	// 队伍创建失败：已在队伍中
-	{
-		PLAYER_SEND_CREATE_TEAM_FALSE	sCreateFalse;
-		sCreateFalse.ProtocolType = s2c_teamcreatefalse;
-		sCreateFalse.m_btErrorID = Team_Create_Error_InTeam;
-		g_pServer->PackDataToClient(Player[nIdx].m_nNetConnectIdx, (BYTE*)&sCreateFalse, sizeof(PLAYER_SEND_CREATE_TEAM_FALSE));
+	int nTeam = g_TeamSet.CreateTeam(nIdx);
+	if (nTeam < 0)
 		return FALSE;
-	}
-
-//	char	szTeamName[32];
-//	memcpy(szTeamName, pCreateTeam->m_szTeamName, sizeof(szTeamName));
-//	szTeamName[31] = 0;
-//	if ( !szTeamName[0] )
-//	{
-//		PLAYER_SEND_CREATE_TEAM_FALSE	sCreateFalse;
-//		sCreateFalse.ProtocolType = s2c_teamcreatefalse;
-//		sCreateFalse.m_btErrorID = Team_Create_Error_Name;
-//		SendToClient(Player[nIdx].m_nNetConnectIdx, (BYTE*)&sCreateFalse, sizeof(PLAYER_SEND_CREATE_TEAM_FALSE));
-//		return FALSE;
-//	}
-	// 创建队伍
-	m_nID = g_TeamSet.CreateTeam(nIdx);//, szTeamName);
-	if (m_nID >= 0)	// 队伍创建成功
-	{
-		m_nFlag = 1;
-		m_nFigure = TEAM_CAPTAIN;
-		m_nApplyCaptainID = 0;
-		Npc[Player[nIdx].m_nIndex].RestoreCurrentCamp();
-
-		if (Player[nIdx].m_cMenuState.m_nState == PLAYER_MENU_STATE_TRADEOPEN)
-			Player[nIdx].m_cMenuState.SetState(nIdx, PLAYER_MENU_STATE_NORMAL);
-
-		PLAYER_SEND_CREATE_TEAM_SUCCESS	sCreateSuccess;
-		sCreateSuccess.ProtocolType = s2c_teamcreatesuccess;
-		sCreateSuccess.nTeamServerID = m_nID;
-
-		g_pServer->PackDataToClient(Player[nIdx].m_nNetConnectIdx, (BYTE*)&sCreateSuccess, sizeof(PLAYER_SEND_CREATE_TEAM_SUCCESS));
-		g_Team[m_nID].SetTeamOpen();
-
-		return TRUE;
-	}
-//	else if (m_nID == -1)					// 队伍创建失败：同名
-//	{
-//		PLAYER_SEND_CREATE_TEAM_FALSE	sCreateFalse;
-//		sCreateFalse.ProtocolType = s2c_teamcreatefalse;
-//		sCreateFalse.m_btErrorID = Team_Create_Error_SameName;
-//		SendToClient(Player[nIdx].m_nNetConnectIdx, (BYTE*)&sCreateFalse, sizeof(PLAYER_SEND_CREATE_TEAM_FALSE));
-//		return FALSE;
-//	}
-	else if (m_nID == -2)
-	{
-		PLAYER_SEND_CREATE_TEAM_FALSE	sCreateFalse;
-		sCreateFalse.ProtocolType = s2c_teamcreatefalse;
-		sCreateFalse.m_btErrorID = Team_Create_Error_TeamFull;
-		g_pServer->PackDataToClient(Player[nIdx].m_nNetConnectIdx, (BYTE*)&sCreateFalse, sizeof(PLAYER_SEND_CREATE_TEAM_FALSE));
-		return FALSE;
-	}
-	else	// 其他错误
-	{
-		return FALSE;
-	}
-
+	Release();
+	m_nID = nTeam;
+	m_nFlag = 1;
+	m_nFigure = TEAM_CAPTAIN;
+	Npc[Player[nIdx].m_nIndex].RestoreCurrentCamp();
+	PLAYER_SEND_CREATE_TEAM_SUCCESS Success;
+	Success.ProtocolType = 0x65;
+	Success.nTeamServerID = nTeam;
+	g_pServer->PackDataToClient(Player[nIdx].m_nNetConnectIdx, &Success, sizeof(Success));
+	g_Team[nTeam].SetTeamOpen();
+	Player[nIdx].SendCurNormalSyncData();
 	return TRUE;
 }
 #endif
@@ -369,33 +316,36 @@ BOOL	KPlayerTeam::CreateTeam(int nIdx, PLAYER_APPLY_CREATE_TEAM *pCreateTeam)
 //---------------------------------------------------------------------------
 void	KPlayerTeam::InviteAdd(int nIdx, TEAM_INVITE_ADD_COMMAND *pAdd)
 {
-	if (!pAdd)
+	if (!pAdd || nIdx <= 0 || nIdx >= MAX_PLAYER || !m_nFlag || m_nFigure != TEAM_CAPTAIN ||
+		m_nID < 0 || m_nID >= MAX_TEAM || g_Team[m_nID].m_nCaptain != nIdx ||
+		!g_Team[m_nID].IsOpen() || g_Team[m_nID].CheckFull())
 		return;
-	// 如果不在队伍中或者不是队长或者队伍未开放
-	if ( !this->m_nFlag || this->m_nFigure != TEAM_CAPTAIN || !g_Team[this->m_nID].IsOpen() )
+	if (!Player[nIdx].m_bFinishLoading || Player[nIdx].m_bExchangeServer || Player[nIdx].CheckTrading())
 		return;
-	int nTargetIdx = Player[nIdx].FindAroundPlayer(pAdd->m_dwNpcID);
-	if (nTargetIdx == -1)
+	int nTarget = Player[nIdx].FindAroundPlayer(pAdd->m_dwNpcID);
+	if (nTarget <= 0 || nTarget >= MAX_PLAYER || nTarget == nIdx ||
+		Player[nTarget].m_nIndex <= 0 || !Player[nTarget].m_bFinishLoading ||
+		Player[nTarget].m_bExchangeServer || Player[nTarget].m_cTeam.m_nFlag ||
+		!Player[nTarget].m_cTeam.GetCanTeamFlag() || Player[nTarget].CheckTrading())
 		return;
-	if (!Player[nTargetIdx].m_cTeam.m_bCanTeamFlag)
+	// Reinviting refreshes one pending request; it must not create replayable duplicates.
+	for (int i = 0; i < MAX_TEAM_MEMBER; i++)
 	{
-		SHOW_MSG_SYNC	sMsg;
-		sMsg.ProtocolType = s2c_msgshow;
-		sMsg.m_wMsgID = enumMSG_ID_TARGET_CANNOT_ADD_TEAM;
-		sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-		g_pServer->PackDataToClient(Player[nIdx].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-		return;
+		if (m_nInviteList[i] == nTarget)
+			m_nInviteList[i] = 0;
 	}
-	this->m_nInviteList[this->m_nListPos] = nTargetIdx;
-	this->m_nListPos++;
-	this->m_nListPos %= MAX_TEAM_MEMBER;
-	TEAM_INVITE_ADD_SYNC	sAdd;
-	sAdd.ProtocolType = s2c_teaminviteadd;
-	sAdd.m_nIdx = nIdx;
-	memset(sAdd.m_szName, 0, sizeof(sAdd.m_szName));
-	strcpy(sAdd.m_szName, Npc[Player[nIdx].m_nIndex].Name);
-	sAdd.m_wLength = sizeof(TEAM_INVITE_ADD_SYNC) - 1 - sizeof(sAdd.m_szName) + strlen(sAdd.m_szName);
-	g_pServer->PackDataToClient(Player[nTargetIdx].m_nNetConnectIdx, (BYTE*)&sAdd, sAdd.m_wLength + 1);
+	m_nInviteList[m_nListPos] = nTarget;
+	m_nInviteKind[m_nListPos] = 1;
+	m_dwInviteNpcID[m_nListPos] = Npc[Player[nTarget].m_nIndex].m_dwID;
+	m_dwInviteTime[m_nListPos] = g_SubWorldSet.GetGameTime();
+	m_nListPos = (m_nListPos + 1) % MAX_TEAM_MEMBER;
+	TEAM_INVITE_ADD_SYNC Invite;
+	memset(&Invite, 0, sizeof(Invite));
+	Invite.ProtocolType = 0x8B;
+	Invite.m_nIdx = nIdx;
+	g_StrCpyLen(Invite.m_szName, Npc[Player[nIdx].m_nIndex].Name, sizeof(Invite.m_szName));
+	Invite.m_wLength = sizeof(Invite) - 1 - sizeof(Invite.m_szName) + strlen(Invite.m_szName);
+	g_pServer->PackDataToClient(Player[nTarget].m_nNetConnectIdx, &Invite, Invite.m_wLength + 1);
 }
 #endif
 
@@ -403,122 +353,57 @@ void	KPlayerTeam::InviteAdd(int nIdx, TEAM_INVITE_ADD_COMMAND *pAdd)
 //---------------------------------------------------------------------------
 //	功能：收到邀请加入队伍的回复
 //---------------------------------------------------------------------------
-void	KPlayerTeam::GetInviteReply(int nSelfIdx, int nTargetIdx, int nResult)
+void	KPlayerTeam::GetInviteReply(int nSelfIdx, int nTargetIdx, int nResult, BOOL bApplication)
 {
-	// 状态对不对
-	if (!m_nFlag || m_nFigure != TEAM_CAPTAIN || !g_Team[m_nID].IsOpen())
+	if (nSelfIdx <= 0 || nSelfIdx >= MAX_PLAYER || nTargetIdx <= 0 || nTargetIdx >= MAX_PLAYER ||
+		nResult < 0 || nResult > 1 || !m_nFlag || m_nFigure != TEAM_CAPTAIN ||
+		m_nID < 0 || m_nID >= MAX_TEAM || g_Team[m_nID].m_nCaptain != nSelfIdx ||
+		!g_Team[m_nID].IsOpen() || Player[nTargetIdx].m_nIndex <= 0)
 		return;
-	// 有没有邀请
-	int i;
-	for (i = 0; i < MAX_TEAM_MEMBER; i++)
+	int nSlot;
+	for (nSlot = 0; nSlot < MAX_TEAM_MEMBER; nSlot++)
 	{
-		if (m_nInviteList[i] == nTargetIdx)
+		if (m_nInviteList[nSlot] == nTargetIdx &&
+			m_nInviteKind[nSlot] == (bApplication ? 2 : 1) &&
+			m_dwInviteNpcID[nSlot] == Npc[Player[nTargetIdx].m_nIndex].m_dwID)
 			break;
 	}
-	if (i >= MAX_TEAM_MEMBER)
+	if (nSlot == MAX_TEAM_MEMBER)
 		return;
-	if (Player[nTargetIdx].m_nIndex == 0)
+	DWORD dwAge = g_SubWorldSet.GetGameTime() - m_dwInviteTime[nSlot];
+	m_nInviteList[nSlot] = 0;
+	m_nInviteKind[nSlot] = 0;
+	m_dwInviteNpcID[nSlot] = 0;
+	m_dwInviteTime[nSlot] = 0;
+	// Invitation is consumed once, expires after the native apply timeout.
+	if (!nResult || dwAge > 500 || !Player[nTargetIdx].m_bFinishLoading ||
+		Player[nTargetIdx].m_bExchangeServer || Player[nTargetIdx].CheckTrading() ||
+		!Player[nTargetIdx].m_cTeam.GetCanTeamFlag() || Player[nTargetIdx].m_cTeam.m_nFlag ||
+		Player[nSelfIdx].FindAroundPlayer(Npc[Player[nTargetIdx].m_nIndex].m_dwID) != nTargetIdx ||
+		!g_Team[m_nID].AddMember(nTargetIdx))
 		return;
-
-	// 对方拒绝邀请
-	if (nResult == 0)
-	{
-		// 需要向队长发消息通知对方拒绝
-		SHOW_MSG_SYNC	sMsg;
-		sMsg.ProtocolType = s2c_msgshow;
-		sMsg.m_wMsgID = enumMSG_ID_TEAM_REFUSE_INVITE;
-		sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID) + sizeof(Npc[Player[nTargetIdx].m_nIndex].Name);
-		sMsg.m_lpBuf = new BYTE[sMsg.m_wLength + 1];
-		memcpy(sMsg.m_lpBuf, &sMsg, sizeof(SHOW_MSG_SYNC) - sizeof(LPVOID));
-		memcpy((char*)sMsg.m_lpBuf + sizeof(SHOW_MSG_SYNC) - sizeof(LPVOID), Npc[Player[nTargetIdx].m_nIndex].Name, sizeof(Npc[Player[nTargetIdx].m_nIndex].Name));
-		g_pServer->PackDataToClient(Player[nSelfIdx].m_nNetConnectIdx, sMsg.m_lpBuf, sMsg.m_wLength + 1);
-		return;
-	}
-
-	if (g_Team[m_nID].m_nMemNum >= MAX_TEAM_MEMBER ||
-		g_Team[m_nID].m_nMemNum >= g_Team[m_nID].CalcCaptainPower())
-		return;
-	// 自动离队
-	if (Player[nTargetIdx].m_cTeam.m_nFlag)
-	{
-		PLAYER_APPLY_LEAVE_TEAM	sLeave;
-		sLeave.ProtocolType = c2s_teamapplyleave;
-		Player[nTargetIdx].LeaveTeam((BYTE*)&sLeave);
-	}
-	// 队伍添加成员
-	if ( !g_Team[m_nID].AddMember(nTargetIdx) )
-		return;
-	// 改变队伍状态
-	if (g_Team[m_nID].m_nMemNum >= MAX_TEAM_MEMBER || g_Team[m_nID].CheckFull())
-	{
-		g_Team[m_nID].SetTeamClose();
-	}
-	// 被接受队员队伍数据处理
 	Player[nTargetIdx].m_cTeam.Release();
 	Player[nTargetIdx].m_cTeam.m_nFlag = 1;
 	Player[nTargetIdx].m_cTeam.m_nFigure = TEAM_MEMBER;
 	Player[nTargetIdx].m_cTeam.m_nID = m_nID;
 	Npc[Player[nTargetIdx].m_nIndex].SetCurrentCamp(Npc[Player[nSelfIdx].m_nIndex].m_Camp);
-
-
-	// 给各个队员发消息
-	PLAYER_TEAM_ADD_MEMBER	sAddMem;
-	memset(sAddMem.m_szName, 0, sizeof(sAddMem.m_szName));
-	sAddMem.ProtocolType = s2c_teamaddmember;
-	sAddMem.m_dwNpcID = Npc[Player[nTargetIdx].m_nIndex].m_dwID;
-	sAddMem.m_btLevel = (DWORD)Npc[Player[nTargetIdx].m_nIndex].m_Level;
-	strcpy(sAddMem.m_szName, Npc[Player[nTargetIdx].m_nIndex].Name);
-
-	// 给队长发消息
-	g_pServer->PackDataToClient(Player[nSelfIdx].m_nNetConnectIdx, (BYTE*)&sAddMem, sizeof(PLAYER_TEAM_ADD_MEMBER));
-
-	// 给老队员发消息
-	for (i = 0; i < MAX_TEAM_MEMBER; i++)
+	GAME_TEAM_MEMBER_SYNC Member;
+	memset(&Member, 0, sizeof(Member));
+	Member.ProtocolType = 0x69;
+	Member.NpcID = Npc[Player[nTargetIdx].m_nIndex].m_dwID;
+	Member.Level = (BYTE)Npc[Player[nTargetIdx].m_nIndex].m_Level;
+	g_StrCpyLen(Member.Name, Npc[Player[nTargetIdx].m_nIndex].Name, sizeof(Member.Name));
+	g_pServer->PackDataToClient(Player[nSelfIdx].m_nNetConnectIdx, &Member, sizeof(Member));
+	for (int i = 0; i < MAX_TEAM_MEMBER; i++)
 	{
-		if (g_Team[m_nID].m_nMember[i] < 0 || g_Team[m_nID].m_nMember[i] == nTargetIdx)
-			continue;
-		g_pServer->PackDataToClient(Player[g_Team[m_nID].m_nMember[i]].m_nNetConnectIdx, (BYTE*)&sAddMem, sizeof(PLAYER_TEAM_ADD_MEMBER));
+		int nPlayer = g_Team[m_nID].m_nMember[i];
+		if (nPlayer > 0 && nPlayer != nTargetIdx)
+			g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Member, sizeof(Member));
 	}
-
-// ------------------------------------- 给新队员发消息 --------------------------
-	int		nNpcIndex;
-	PLAYER_SEND_SELF_TEAM_INFO	sSelfInfo;
-	sSelfInfo.ProtocolType = s2c_teamselfinfo;
-	sSelfInfo.nTeamServerID = m_nID;
-	sSelfInfo.m_dwLeadExp = Player[nTargetIdx].m_dwLeadExp;
-	sSelfInfo.m_btState = g_Team[m_nID].m_nState;
-	// 队长数据
-	nNpcIndex = Player[nSelfIdx].m_nIndex;
-	sSelfInfo.m_dwNpcID[0] = Npc[nNpcIndex].m_dwID;
-	sSelfInfo.m_btLevel[0] = (DWORD)Npc[nNpcIndex].m_Level;
-	strcpy(sSelfInfo.m_szNpcName[0], Npc[nNpcIndex].Name);
-	// 队员数据
-	for (i = 0; i < MAX_TEAM_MEMBER; i++)
-	{
-		if (g_Team[m_nID].m_nMember[i] >= 0)
-		{
-			nNpcIndex = Player[g_Team[m_nID].m_nMember[i]].m_nIndex;
-			sSelfInfo.m_dwNpcID[i + 1] = Npc[nNpcIndex].m_dwID;
-			sSelfInfo.m_btLevel[i + 1] = (DWORD)Npc[nNpcIndex].m_Level;
-			strcpy(sSelfInfo.m_szNpcName[i + 1], Npc[nNpcIndex].Name);
-		}
-		else
-		{
-			sSelfInfo.m_dwNpcID[i + 1] = 0;
-			sSelfInfo.m_btLevel[i + 1] = 0;
-			memset(sSelfInfo.m_szNpcName[i + 1], 0, sizeof(sSelfInfo.m_szNpcName[i + 1]));
-		}
-	}
-	// 发送消息
-	g_pServer->PackDataToClient(Player[nTargetIdx].m_nNetConnectIdx, (BYTE*)&sSelfInfo, sizeof(PLAYER_SEND_SELF_TEAM_INFO));
-
-	SHOW_MSG_SYNC	sMsg;
-	sMsg.ProtocolType = s2c_msgshow;
-	sMsg.m_wMsgID = enumMSG_ID_TEAM_SELF_ADD;
-	sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-	g_pServer->PackDataToClient(Player[nTargetIdx].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-
-// --------------------------------- 给新队员发消息 end --------------------------
+	if (g_Team[m_nID].CheckFull())
+		g_Team[m_nID].SetTeamClose();
+	g_Team[m_nID].SendSelfInfo(nTargetIdx);
+	Player[nTargetIdx].SendCurNormalSyncData();
 }
 #endif
 
@@ -565,6 +450,10 @@ void	KTeam::Release()
 		m_nMember[i] = -1;
 	}
 	m_nState = Team_S_Close;
+#ifdef _SERVER
+	m_nAllocationMode = 0x10;
+	m_nPickupMode = 0;
+#endif
 #ifndef _SERVER
 	for (i = 0; i < MAX_TEAM_MEMBER + 1; i++)
 	{
@@ -634,24 +523,13 @@ BOOL	KTeam::CheckFull()
 BOOL	KTeam::SetTeamOpen()
 {
 #ifdef _SERVER
+	if (m_nCaptain <= 0 || m_nCaptain >= MAX_PLAYER)
+		return FALSE;
 	if (CheckFull())
 		return FALSE;
 	m_nState = Team_S_Open;
-
-	PLAYER_TEAM_OPEN_CLOSE	sTeamState;
-	sTeamState.ProtocolType = (BYTE)s2c_teamopenclose;
-	sTeamState.m_btOpenClose = Team_S_Open;
-	g_pServer->PackDataToClient(Player[m_nCaptain].m_nNetConnectIdx, (BYTE*)&sTeamState, sizeof(PLAYER_TEAM_OPEN_CLOSE));
-
-	Player[m_nCaptain].m_cMenuState.SetState(m_nCaptain, PLAYER_MENU_STATE_TEAMOPEN);
-
-	NPC_SET_MENU_STATE_SYNC	sSync;
-	sSync.ProtocolType = s2c_npcsetmenustate;
-	sSync.m_dwID = Npc[Player[m_nCaptain].m_nIndex].m_dwID;
-	sSync.m_btState = PLAYER_MENU_STATE_TEAMOPEN;
-	sSync.m_wLength = sizeof(NPC_SET_MENU_STATE_SYNC) - 1 - sizeof(sSync.m_szSentence);
-	Npc[Player[m_nCaptain].m_nIndex].SendDataToNearRegion((LPVOID)&sSync, sSync.m_wLength + 1);
-
+	SendDistribution(0);
+	Npc[Player[m_nCaptain].m_nIndex].SendMenuStateSync();
 	return TRUE;
 #else
 	m_nState = Team_S_Open;
@@ -666,22 +544,12 @@ BOOL	KTeam::SetTeamOpen()
 BOOL	KTeam::SetTeamClose()
 {
 #ifdef _SERVER
+	if (m_nCaptain <= 0 || m_nCaptain >= MAX_PLAYER)
+		return FALSE;
 	m_nState = Team_S_Close;
-
-	PLAYER_TEAM_OPEN_CLOSE	sTeamState;
-	sTeamState.ProtocolType = (BYTE)s2c_teamopenclose;
-	sTeamState.m_btOpenClose = Team_S_Close;
-	g_pServer->PackDataToClient(Player[m_nCaptain].m_nNetConnectIdx, (BYTE*)&sTeamState, sizeof(PLAYER_TEAM_OPEN_CLOSE));
-
-	Player[m_nCaptain].m_cMenuState.SetState(m_nCaptain, PLAYER_MENU_STATE_NORMAL);
-
-	NPC_SET_MENU_STATE_SYNC	sSync;
-	sSync.ProtocolType = s2c_npcsetmenustate;
-	sSync.m_dwID = Npc[Player[m_nCaptain].m_nIndex].m_dwID;
-	sSync.m_btState = PLAYER_MENU_STATE_NORMAL;
-	sSync.m_wLength = sizeof(NPC_SET_MENU_STATE_SYNC) - 1 - sizeof(sSync.m_szSentence);
-	Npc[Player[m_nCaptain].m_nIndex].SendDataToNearRegion((LPVOID)&sSync, sSync.m_wLength + 1);
-
+	memset(Player[m_nCaptain].m_cTeam.m_nInviteList, 0, sizeof(Player[m_nCaptain].m_cTeam.m_nInviteList));
+	SendDistribution(0);
+	Npc[Player[m_nCaptain].m_nIndex].SendMenuStateSync();
 	return TRUE;
 #else
 	m_nState = Team_S_Close;
@@ -696,7 +564,7 @@ BOOL	KTeam::SetTeamClose()
 //---------------------------------------------------------------------------
 BOOL	KTeam::IsOpen()
 {
-	return m_nState;
+	return m_nState != Team_S_Close;
 }
 #endif
 
@@ -706,7 +574,7 @@ BOOL	KTeam::IsOpen()
 int		KTeam::CalcCaptainPower()
 {
 #ifdef _SERVER
-	return PlayerSet.m_cLeadExp.GetMemNumFromLevel(Player[m_nCaptain].m_dwLeadLevel);
+	return MAX_TEAM_MEMBER;
 #else
 	return PlayerSet.m_cLeadExp.GetMemNumFromLevel(Player[CLIENT_PLAYER_INDEX].m_dwLeadLevel);
 #endif
@@ -718,6 +586,11 @@ int		KTeam::CalcCaptainPower()
 //---------------------------------------------------------------------------
 BOOL	KTeam::CheckAddCondition(int nPlayerIndex)
 {
+	if (nPlayerIndex <= 0 || nPlayerIndex >= MAX_PLAYER ||
+		m_nCaptain <= 0 || m_nCaptain >= MAX_PLAYER ||
+		Player[nPlayerIndex].m_nIndex <= 0 || Player[nPlayerIndex].m_nIndex >= MAX_NPC ||
+		Player[m_nCaptain].m_nIndex <= 0 || Player[m_nCaptain].m_nIndex >= MAX_NPC)
+		return FALSE;
 	if (Npc[Player[nPlayerIndex].m_nIndex].m_Camp != camp_begin && Npc[Player[m_nCaptain].m_nIndex].m_Camp == camp_begin)
 		return FALSE;
 	return TRUE;
@@ -745,6 +618,9 @@ BOOL	KTeam::CreateTeam(int nPlayerIndex)//, char *lpszName)
 //---------------------------------------------------------------------------
 BOOL	KTeam::AddMember(int nPlayerIndex)
 {
+	if (nPlayerIndex <= 0 || nPlayerIndex >= MAX_PLAYER ||
+		Player[nPlayerIndex].m_cTeam.m_nFlag || CheckIn(nPlayerIndex))
+		return FALSE;
 	// 队伍是否为空
 	if (m_nCaptain < 0)
 		return FALSE;
@@ -772,63 +648,103 @@ BOOL	KTeam::AddMember(int nPlayerIndex)
 //---------------------------------------------------------------------------
 BOOL	KTeam::DeleteMember(int nPlayerIndex)
 {
-	int		i;
-	PLAYER_LEAVE_TEAM	sLeaveTeam;
+	if (nPlayerIndex <= 0 || nPlayerIndex >= MAX_PLAYER ||
+		m_nCaptain <= 0 || m_nCaptain >= MAX_PLAYER || !CheckIn(nPlayerIndex) ||
+		Player[nPlayerIndex].m_nIndex <= 0 || Player[nPlayerIndex].m_nIndex >= MAX_NPC ||
+		!Player[nPlayerIndex].m_cTeam.m_nFlag ||
+		Player[nPlayerIndex].m_cTeam.m_nID != m_nIndex)
+		return FALSE;
 
 	if (nPlayerIndex == m_nCaptain)
 	{
-		SHOW_MSG_SYNC	sMsg;
-
-		// 队伍解散消息
-		sMsg.ProtocolType = s2c_msgshow;
-		sMsg.m_wMsgID = enumMSG_ID_TEAM_DISMISS;
-		sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-		g_pServer->PackDataToClient(Player[nPlayerIndex].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-
-		Player[nPlayerIndex].m_cTeam.Release();
-		Npc[Player[nPlayerIndex].m_nIndex].RestoreCurrentCamp();
-		sLeaveTeam.ProtocolType = s2c_teamleave;
-		sLeaveTeam.m_dwNpcID = Npc[Player[nPlayerIndex].m_nIndex].m_dwID;
-		g_pServer->PackDataToClient(Player[nPlayerIndex].m_nNetConnectIdx, (BYTE*)&sLeaveTeam, sizeof(PLAYER_LEAVE_TEAM));
-
-		for (i = 0; i < MAX_TEAM_MEMBER; i++)
+		int nSuccessor = -1;
+		for (int i = 0; i < MAX_TEAM_MEMBER; i++)
 		{
-			if (m_nMember[i] < 0)
-				continue;
-
-			g_pServer->PackDataToClient(Player[m_nMember[i]].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-
-			Npc[Player[m_nMember[i]].m_nIndex].RestoreCurrentCamp();
-			Player[m_nMember[i]].m_cTeam.Release();
-			sLeaveTeam.m_dwNpcID = Npc[Player[m_nMember[i]].m_nIndex].m_dwID;
-			g_pServer->PackDataToClient(Player[m_nMember[i]].m_nNetConnectIdx, (BYTE*)&sLeaveTeam, sizeof(PLAYER_LEAVE_TEAM));
+			int nMember = m_nMember[i];
+			if (nMember > 0 && nMember < MAX_PLAYER &&
+				Player[nMember].m_cTeam.m_nFlag && Player[nMember].m_cTeam.m_nID == m_nIndex &&
+				Player[nMember].m_nIndex > 0 && Player[nMember].m_nIndex < MAX_NPC)
+			{
+				nSuccessor = i;
+				break;
+			}
 		}
-		Release();
-		return TRUE;
+		if (nSuccessor >= 0)
+		{
+			// The capture sends 6B before 6A and keeps the allocation settings.
+			// Departure must finish even when a manual transfer would fail camp checks.
+			m_nCaptain = m_nMember[nSuccessor];
+			m_nMember[nSuccessor] = nPlayerIndex;
+			Player[nPlayerIndex].m_cTeam.m_nFigure = TEAM_MEMBER;
+			Player[m_nCaptain].m_cTeam.m_nFigure = TEAM_CAPTAIN;
+			memset(Player[m_nCaptain].m_cTeam.m_nInviteList, 0, sizeof(Player[m_nCaptain].m_cTeam.m_nInviteList));
+			Npc[Player[m_nCaptain].m_nIndex].RestoreCurrentCamp();
+			GAME_TEAM_CHANGE_CAPTAIN_SYNC Change;
+			Change.ProtocolType = 0x6B;
+			Change.m_dwCaptainID = Npc[Player[m_nCaptain].m_nIndex].m_dwID;
+			Change.m_dwMemberID = Npc[Player[nPlayerIndex].m_nIndex].m_dwID;
+			Change.State = (BYTE)m_nState;
+			g_pServer->PackDataToClient(Player[m_nCaptain].m_nNetConnectIdx, &Change, sizeof(Change));
+			Player[m_nCaptain].SendCurNormalSyncData();
+			for (int i = 0; i < MAX_TEAM_MEMBER; i++)
+			{
+				int nMember = m_nMember[i];
+				if (nMember <= 0 || nMember >= MAX_PLAYER)
+					continue;
+				memset(Player[nMember].m_cTeam.m_nInviteList, 0, sizeof(Player[nMember].m_cTeam.m_nInviteList));
+				Npc[Player[nMember].m_nIndex].SetCurrentCamp(Npc[Player[m_nCaptain].m_nIndex].m_Camp);
+				g_pServer->PackDataToClient(Player[nMember].m_nNetConnectIdx, &Change, sizeof(Change));
+				Player[nMember].SendCurNormalSyncData();
+			}
+			Npc[Player[m_nCaptain].m_nIndex].NormalSync();
+			Npc[Player[m_nCaptain].m_nIndex].SendMenuStateSync();
+		}
+		else
+		{
+			GAME_TEAM_LEAVE_SYNC Leave;
+			Leave.ProtocolType = 0x6A;
+			Leave.m_dwNpcID = Npc[Player[nPlayerIndex].m_nIndex].m_dwID;
+			Player[nPlayerIndex].m_cTeam.Release();
+			Npc[Player[nPlayerIndex].m_nIndex].RestoreCurrentCamp();
+			g_pServer->PackDataToClient(Player[nPlayerIndex].m_nNetConnectIdx, &Leave, sizeof(Leave));
+			Player[nPlayerIndex].SendCurNormalSyncData();
+			Npc[Player[nPlayerIndex].m_nIndex].NormalSync();
+			Npc[Player[nPlayerIndex].m_nIndex].SendMenuStateSync();
+			Release();
+			return TRUE;
+		}
 	}
-	else
+
+	int nSlot = -1;
+	for (int i = 0; i < MAX_TEAM_MEMBER; i++)
 	{
-		Player[nPlayerIndex].m_cTeam.Release();
-		sLeaveTeam.ProtocolType = s2c_teamleave;
-		sLeaveTeam.m_dwNpcID = Npc[Player[nPlayerIndex].m_nIndex].m_dwID;
-		g_pServer->PackDataToClient(Player[m_nCaptain].m_nNetConnectIdx, (BYTE*)&sLeaveTeam, sizeof(PLAYER_LEAVE_TEAM));
-		for (i = 0; i < MAX_TEAM_MEMBER; i++)
+		if (m_nMember[i] == nPlayerIndex)
 		{
-			if (m_nMember[i] == nPlayerIndex)
-			{
-				Npc[Player[m_nMember[i]].m_nIndex].RestoreCurrentCamp();
-				m_nMember[i] = -1;
-				m_nMemNum--;
-				g_pServer->PackDataToClient(Player[nPlayerIndex].m_nNetConnectIdx, (BYTE*)&sLeaveTeam, sizeof(PLAYER_LEAVE_TEAM));
-			}
-			else
-			{
-				if (m_nMember[i] >= 0)
-					g_pServer->PackDataToClient(Player[m_nMember[i]].m_nNetConnectIdx, (BYTE*)&sLeaveTeam, sizeof(PLAYER_LEAVE_TEAM));
-			}
+			nSlot = i;
+			break;
 		}
 	}
+	if (nSlot < 0)
+		return FALSE;
+	m_nMember[nSlot] = -1;
+	m_nMemNum--;
 
+	GAME_TEAM_LEAVE_SYNC Leave;
+	Leave.ProtocolType = 0x6A;
+	Leave.m_dwNpcID = Npc[Player[nPlayerIndex].m_nIndex].m_dwID;
+	Player[nPlayerIndex].m_cTeam.Release();
+	Npc[Player[nPlayerIndex].m_nIndex].RestoreCurrentCamp();
+	g_pServer->PackDataToClient(Player[nPlayerIndex].m_nNetConnectIdx, &Leave, sizeof(Leave));
+	g_pServer->PackDataToClient(Player[m_nCaptain].m_nNetConnectIdx, &Leave, sizeof(Leave));
+	for (int i = 0; i < MAX_TEAM_MEMBER; i++)
+	{
+		int nMember = m_nMember[i];
+		if (nMember > 0 && nMember < MAX_PLAYER)
+			g_pServer->PackDataToClient(Player[nMember].m_nNetConnectIdx, &Leave, sizeof(Leave));
+	}
+	Player[nPlayerIndex].SendCurNormalSyncData();
+	Npc[Player[nPlayerIndex].m_nIndex].NormalSync();
+	Npc[Player[nPlayerIndex].m_nIndex].SendMenuStateSync();
 	return TRUE;
 }
 #endif
@@ -1015,7 +931,7 @@ int		KTeamSet::CreateTeam(int nPlayerID)//, char *lpszName)
 		return -2;
 //	if (!CheckName(lpszName))
 //		return -1;
-	if (g_Team[nTeamID].CreateTeam(nPlayerID));//, lpszName))
+	if (g_Team[nTeamID].CreateTeam(nPlayerID))//, lpszName))
 		return nTeamID;
 	return -1;
 }
@@ -1042,3 +958,185 @@ int		KTeamSet::CreateTeam(int nPlayerID)//, char *lpszName)
 
 
 
+
+#ifdef _SERVER
+void KTeam::Broadcast(const void* pData, int nSize)
+{
+	if (!g_pServer || m_nCaptain <= 0 || m_nCaptain >= MAX_PLAYER)
+		return;
+	g_pServer->PackDataToClient(Player[m_nCaptain].m_nNetConnectIdx, pData, nSize);
+	for (int i = 0; i < MAX_TEAM_MEMBER; i++)
+	{
+		int nPlayer = m_nMember[i];
+		if (nPlayer > 0 && nPlayer < MAX_PLAYER)
+			g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, pData, nSize);
+	}
+}
+
+void KTeam::SendDistribution(int nPlayer)
+{
+	BYTE Mode[] = {0x67, (BYTE)m_nAllocationMode, (BYTE)m_nPickupMode};
+	BYTE State[] = {0x67, (BYTE)m_nState, (BYTE)m_nPickupMode};
+	if (nPlayer > 0 && nPlayer < MAX_PLAYER)
+	{
+		g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, Mode, sizeof(Mode));
+		g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, State, sizeof(State));
+	}
+	else
+	{
+		Broadcast(State, sizeof(State));
+		Broadcast(Mode, sizeof(Mode));
+	}
+}
+
+BOOL KTeam::SetDistribution(int nPlayer, int nMode, int nPickup)
+{
+	if (nPlayer != m_nCaptain || !Player[nPlayer].m_cTeam.m_nFlag ||
+		Player[nPlayer].m_cTeam.m_nID != m_nIndex ||
+		(nPickup < 0 || nPickup > 2))
+		return FALSE;
+	if (nMode == 0x10 || nMode == 0x20)
+		m_nAllocationMode = nMode;
+	else if (nMode >= 0 && nMode <= 2)
+	{
+		m_nState = nMode;
+		if (!nMode)
+			memset(Player[m_nCaptain].m_cTeam.m_nInviteList, 0, sizeof(Player[m_nCaptain].m_cTeam.m_nInviteList));
+		SendDistribution(0);
+		Npc[Player[m_nCaptain].m_nIndex].SendMenuStateSync();
+		return TRUE;
+	}
+	else
+		return FALSE;
+	m_nPickupMode = nPickup;
+	SendDistribution(0);
+	Npc[Player[m_nCaptain].m_nIndex].SendMenuStateSync();
+	return TRUE;
+}
+
+void KTeam::SendSelfInfo(int nPlayer)
+{
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || !CheckIn(nPlayer))
+		return;
+	GAME_TEAM_SELF_SYNC Sync;
+	memset(&Sync, 0, sizeof(Sync));
+	Sync.ProtocolType = 0x63;
+	Sync.State = (BYTE)(m_nAllocationMode | m_nState);
+	Sync.TeamID = m_nIndex;
+	for (int i = 0; i <= MAX_TEAM_MEMBER; i++)
+	{
+		int nMember = i == 0 ? m_nCaptain : m_nMember[i - 1];
+		if (nMember <= 0 || nMember >= MAX_PLAYER)
+			continue;
+		int nNpc = Player[nMember].m_nIndex;
+		if (nNpc <= 0 || nNpc >= MAX_NPC)
+			continue;
+		Sync.NpcID[i] = Npc[nNpc].m_dwID;
+		Sync.Level[i] = (BYTE)Npc[nNpc].m_Level;
+		g_StrCpyLen(Sync.Name[i], Npc[nNpc].Name, sizeof(Sync.Name[i]));
+	}
+	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Sync, sizeof(Sync));
+	SendDistribution(nPlayer);
+	SendHealthInfo(nPlayer);
+	SendPositionInfo(nPlayer);
+}
+#endif
+
+#ifdef _SERVER
+BOOL KTeam::CanPickUp(int nPlayer, int nOwner, BOOL bTask)
+{
+	if (nOwner == -1)
+		return TRUE;
+	if (!CheckIn(nPlayer))
+		return FALSE;
+	if (bTask)
+		return nOwner == nPlayer;
+	if (!CheckIn(nOwner))
+		return FALSE;
+	return m_nPickupMode != 1 || nPlayer == m_nCaptain;
+}
+#endif
+
+#ifdef _SERVER
+void KTeam::SendHealthInfo(int nPlayer)
+{
+	if (!g_pServer || nPlayer <= 0 || nPlayer >= MAX_PLAYER ||
+		!Player[nPlayer].m_bFinishLoading || Player[nPlayer].m_bExchangeServer ||
+		Player[nPlayer].m_nNetConnectIdx == -1 ||
+		!Player[nPlayer].m_cTeam.m_nFlag || Player[nPlayer].m_cTeam.m_nID != m_nIndex ||
+		!CheckIn(nPlayer))
+		return;
+
+	GAME_TEAM_HEALTH_SYNC Sync;
+	memset(&Sync, 0, sizeof(Sync));
+	Sync.ProtocolType = 0xB8;
+	int nCount = 0;
+	for (int i = 0; i <= MAX_TEAM_MEMBER; i++)
+	{
+		int nMember = i == 0 ? m_nCaptain : m_nMember[i - 1];
+		if (nMember <= 0 || nMember >= MAX_PLAYER)
+			continue;
+		KPlayer& Member = Player[nMember];
+		int nNpc = Member.m_nIndex;
+		if (!Member.m_cTeam.m_nFlag || Member.m_cTeam.m_nID != m_nIndex ||
+			!Member.m_bFinishLoading || Member.m_bExchangeServer || Member.m_nNetConnectIdx == -1 ||
+			nNpc <= 0 || nNpc >= MAX_NPC || Npc[nNpc].m_bExchangeServer ||
+			Npc[nNpc].m_RegionIndex < 0 || Npc[nNpc].m_SubWorldIndex < 0)
+			continue;
+		GAME_TEAM_HEALTH_ENTRY& Entry = Sync.Member[nCount++];
+		Entry.NpcID = Npc[nNpc].m_dwID;
+		Entry.LifeMax = (DWORD)max(0, Npc[nNpc].m_CurrentLifeMax);
+		Entry.Life = (DWORD)max(0, min(Npc[nNpc].m_CurrentLife, (int)Entry.LifeMax));
+	}
+	if (!nCount)
+		return;
+	Sync.Length = (WORD)(sizeof(Sync.Length) + nCount * sizeof(GAME_TEAM_HEALTH_ENTRY));
+	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Sync, Sync.Length + 1);
+}
+#endif
+
+#ifdef _SERVER
+void KTeam::SendPositionInfo(int nPlayer)
+{
+	// Party map positions must reach members outside the NPC broadcast region.
+	if (!g_pServer || nPlayer <= 0 || nPlayer >= MAX_PLAYER ||
+		!Player[nPlayer].m_bFinishLoading || Player[nPlayer].m_bExchangeServer ||
+		Player[nPlayer].m_nNetConnectIdx == -1 ||
+		!Player[nPlayer].m_cTeam.m_nFlag || Player[nPlayer].m_cTeam.m_nID != m_nIndex ||
+		!CheckIn(nPlayer))
+		return;
+
+	GAME_TEAM_POSITION_SYNC Sync;
+	memset(&Sync, 0, sizeof(Sync));
+	Sync.ProtocolType = 0xF8;
+	Sync.SubType = 0x1A;
+	int nCount = 0;
+	for (int i = 0; i <= MAX_TEAM_MEMBER; i++)
+	{
+		int nMember = i == 0 ? m_nCaptain : m_nMember[i - 1];
+		if (nMember <= 0 || nMember >= MAX_PLAYER)
+			continue;
+		KPlayer& Member = Player[nMember];
+		int nNpc = Member.m_nIndex;
+		if (!Member.m_cTeam.m_nFlag || Member.m_cTeam.m_nID != m_nIndex ||
+			!Member.m_bFinishLoading || Member.m_bExchangeServer || Member.m_nNetConnectIdx == -1 ||
+			nNpc <= 0 || nNpc >= MAX_NPC || Npc[nNpc].m_bExchangeServer ||
+			Npc[nNpc].m_RegionIndex < 0 || Npc[nNpc].m_SubWorldIndex < 0 ||
+			Npc[nNpc].m_SubWorldIndex >= MAX_SUBWORLD)
+			continue;
+		int nX = 0;
+		int nY = 0;
+		Npc[nNpc].GetMpsPos(&nX, &nY);
+		GAME_TEAM_POSITION_ENTRY& Entry = Sync.Member[nCount++];
+		Entry.NpcID = Npc[nNpc].m_dwID;
+		Entry.MapID = SubWorld[Npc[nNpc].m_SubWorldIndex].m_SubWorldID;
+		Entry.X = nX;
+		Entry.Y = nY;
+	}
+	if (!nCount)
+		return;
+	Sync.Length = (WORD)(sizeof(Sync.Length) + sizeof(Sync.SubType) +
+		nCount * sizeof(GAME_TEAM_POSITION_ENTRY));
+	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Sync, Sync.Length + 1);
+}
+#endif
