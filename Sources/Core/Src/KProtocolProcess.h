@@ -151,6 +151,7 @@ public:
 	void	PlayerApplyTeamKickMember(int nIndex, BYTE* pProtocol);
 	void	PlayerApplyTeamChangeCaptain(int nIndex, BYTE* pProtocol);
 	void	PlayerApplyTeamDismiss(int nIndex, BYTE* pProtocol);
+	void CurrentCampCommand(int nIndex, BYTE* pProtocol);
 	void	PlayerApplySetPK(int nIndex, BYTE* pProtocol);
 	void	PlayerApplyFactionData(int nIndex, BYTE* pProtocol);
 	void	PlayerSendChat(int nIndex, BYTE* pProtocol);

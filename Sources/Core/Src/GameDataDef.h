@@ -220,15 +220,21 @@ enum OBJ_GENDER
 	OBJ_G_FEMALE,		//雌的，女的
 };
 
+// Current-client camp selection becomes available at level 30 (inclusive).
+#define PK_CAMP_MIN_LEVEL 30
+
 enum NPCCAMP
 {
 	camp_begin,				// 新手阵营（加入门派前的玩家）
 	camp_justice,			// 正派阵营
 	camp_evil,				// 邪派阵营
 	camp_balance,			// 中立阵营
-	camp_free,				// 杀手阵营（出师后的玩家）
+	camp_country_yellow,				// 杀手阵营（出师后的玩家）
 	camp_animal,			// 野兽阵营
 	camp_event,				// 路人阵营
+	camp_pk_closed,
+	camp_free,
+	camp_war,
 	camp_num,				// 阵营数
 };
 

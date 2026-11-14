@@ -164,6 +164,7 @@ KProtocolProcess::KProtocolProcess()
 	ProcessFunc[c2s_npcdeath] = NULL;
 	ProcessFunc[0x50] = &KProtocolProcess::CurrentRunCommand;
 	ProcessFunc[0xB2] = &KProtocolProcess::InventoryPurchaseCommand;
+	ProcessFunc[0xA0] = &KProtocolProcess::CurrentCampCommand;
 	ProcessFunc[0xB8] = &KProtocolProcess::CurrentExtensionCommand;
 	ProcessFunc[c2s_playertalk] = &KProtocolProcess::PlayerTalkCommand;
 	ProcessFunc[c2s_teamapplyinfo] = &KProtocolProcess::PlayerApplyTeamInfo;
@@ -3564,12 +3565,23 @@ static BOOL ReadScriptFeedback(const BYTE *pData, const BYTE *pEnd, DWORD &dwTok
 	return TRUE;
 }
 
+void KProtocolProcess::CurrentCampCommand(int nIndex, BYTE* pProtocol)
+{
+	Player[nIndex].ChangePKCamp(pProtocol[1]);
+}
+
 void KProtocolProcess::CurrentExtensionCommand(int nIndex, BYTE* pProtocol)
 {
 	WORD wLength;
 	memcpy(&wLength, pProtocol + 1, sizeof(wLength));
 	if (wLength < 3)
 		return;
+	if (pProtocol[3] == 0x34)
+	{
+		if (wLength + 1 == sizeof(GAME_CHARACTER_DETAILS_COMMAND))
+			Player[nIndex].SendCharacterDetails(((const GAME_CHARACTER_DETAILS_COMMAND*)pProtocol)->Name);
+		return;
+	}
 	if (pProtocol[3] == 0x0B)
 	{
 		if (wLength == 5 && pProtocol[4] == 0)

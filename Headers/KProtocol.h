@@ -3095,6 +3095,27 @@ void SendClientCmdRevive();
 void SendObjMouseClick(int nObjID, DWORD dwRegionID);
 void SendClientCmdRepair(DWORD dwID);
 
+// Current client B8/34 -> F8/4A. Attribute slots are unsigned WORDs.
+struct GAME_CHARACTER_DETAILS_COMMAND
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	char Name[32];
+};
+struct GAME_CHARACTER_DETAILS_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	char Name[32];
+	WORD Attack[23];
+	WORD Defense[20];
+	WORD Other[9];
+};
+static_assert(sizeof(GAME_CHARACTER_DETAILS_COMMAND) == 36, "character details request size");
+static_assert(sizeof(GAME_CHARACTER_DETAILS_SYNC) == 140, "character details response size");
+
 extern	int	g_nProtocolSize[MAX_PROTOCOL_NUM];
 #pragma pack(pop, enter_protocol)
 #endif

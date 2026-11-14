@@ -68,20 +68,24 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 		return FALSE;
 	DWORD dwLength = pRole->dwLSkillOffset - dwOffset;
 	if (!dwLength)
+	{
+		Player.m_dwLastCampChangeTime = 0;
 		return TRUE;
+	}
 	if (dwLength < sizeof(PLAYER_SKILL_EXT_HEADER))
 		return FALSE;
 	const BYTE* pData = (const BYTE*)pRole + dwOffset;
 	PLAYER_SKILL_EXT_HEADER Header;
 	memcpy(&Header, pData, sizeof(Header));
 	DWORD dwRecordSize = Header.Version >= 3 ? sizeof(PLAYER_SKILL_EXT_RECORD_V3) : sizeof(PLAYER_SKILL_EXT_RECORD);
-	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 5) ||
+	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 6) ||
 		Header.SkillCount != pRole->nFightSkillCount || Header.SkillCount >= MAX_NPCSKILL || Header.BuffCount > 16 ||
 		dwLength != sizeof(Header) + Header.SkillCount * dwRecordSize +
 		Header.BuffCount * sizeof(PLAYER_SKILL_BUFF) +
 		(Header.Version >= 2 ? sizeof(PLAYER_PET_DATA) : 0) +
 		(Header.Version >= 4 ? sizeof(PLAYER_MORPH_DATA) : 0) +
-		(Header.Version >= 5 ? sizeof(PLAYER_INVENTORY_EXPANSION) : 0))
+		(Header.Version >= 5 ? sizeof(PLAYER_INVENTORY_EXPANSION) : 0) +
+		(Header.Version >= 6 ? sizeof(DWORD) : 0))
 		return FALSE;
 	BOOL Seen[MAX_NPCSKILL];
 	PLAYER_SKILL_EXT_RECORD Records[MAX_NPCSKILL];
@@ -195,11 +199,19 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	if (Header.Version >= 5)
 	{
 		memcpy(&Expansion, pData, sizeof(Expansion));
+		pData += sizeof(Expansion);
 		if (Expansion.BagRows > 127 || (Expansion.BagRows & (Expansion.BagRows + 1)))
 			return FALSE;
 		for (int i = 0; i < 6; i++)
 			if (Expansion.StoreTime[i] != 0 && Expansion.StoreTime[i] != 31536000)
 				return FALSE;
+	}
+	DWORD LastCampChangeTime = 0;
+	if (Header.Version >= 6)
+	{
+		memcpy(&LastCampChangeTime, pData, sizeof(LastCampChangeTime));
+		if (LastCampChangeTime > dwNow && LastCampChangeTime - dwNow > 180)
+			return FALSE;
 	}
 	DWORD PreviousCastTimes[MAX_NPCSKILL];
 	for (int i = 0; i < MAX_NPCSKILL; i++)
@@ -213,6 +225,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 			return FALSE;
 		}
 	}
+	Player.m_dwLastCampChangeTime = LastCampChangeTime;
 	Player.m_Pet = Pet;
 	Player.m_InventoryExpansion = Expansion;
 	Npc[Player.m_nIndex].m_nMorphType = Morph.Type;
@@ -236,7 +249,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	return TRUE;
 }
 
-static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_PET_DATA& Pet, const PLAYER_INVENTORY_EXPANSION& Expansion, BYTE* pData, DWORD dwCapacity)
+static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_PET_DATA& Pet, const PLAYER_INVENTORY_EXPANSION& Expansion, DWORD LastCampChangeTime, BYTE* pData, DWORD dwCapacity)
 {
 	DWORD dwNow = (DWORD)time(NULL);
 	DWORD dwBuffCount = 0;
@@ -245,9 +258,9 @@ static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_
 		if (List.m_SkillBuffs[i].BuffId && List.m_SkillBuffs[i].EndTime > dwNow)
 			dwBuffCount++;
 	}
-	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 5, List.GetCount(), dwBuffCount};
+	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 6, List.GetCount(), dwBuffCount};
 	DWORD dwSize = sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD_V3) +
-		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet) + sizeof(PLAYER_MORPH_DATA) + sizeof(Expansion);
+		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet) + sizeof(PLAYER_MORPH_DATA) + sizeof(Expansion) + sizeof(LastCampChangeTime);
 	if (dwSize > dwCapacity)
 		return -1;
 	memcpy(pData, &Header, sizeof(Header));
@@ -286,6 +299,8 @@ static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_
 	memcpy(pData, &Morph, sizeof(Morph));
 	pData += sizeof(Morph);
 	memcpy(pData, &Expansion, sizeof(Expansion));
+	pData += sizeof(Expansion);
+	memcpy(pData, &LastCampChangeTime, sizeof(LastCampChangeTime));
 	return dwSize;
 }
 
@@ -808,6 +823,7 @@ label_retry:
 
 	pNpc->m_Series	= pRoleData->BaseInfo.ifiveprop;
 	pNpc->m_Camp	= pRoleData->BaseInfo.iteam;
+	UpdatePKCampForLevel(FALSE);
 	
 	pNpc->m_nSex	= pRoleData->BaseInfo.bSex;
 
@@ -829,7 +845,7 @@ label_retry:
 	pNpc->m_CurrentStamina = pRoleData->BaseInfo.icurstamina;
 
 	// PK信息
-	m_cPK.SetNormalPKState(pRoleData->BaseInfo.cPkStatus);
+	m_cPK.SetNormalPKState(pNpc->m_Level >= PK_CAMP_MIN_LEVEL);
 	m_cPK.SetPKValue(pRoleData->BaseInfo.ipkvalue);
 
 	// 初始化部分数据（这些数据数据库不存储）
@@ -1493,7 +1509,7 @@ int KPlayer::SavePlayerFightSkillList(BYTE* pRoleBuffer)
 		return -1;
 	pRoleData->nFightSkillCount = nCount;
 	dwOffset += dwStandardSize;
-	int nSize = SavePlayerSkillExtension(Npc[m_nIndex], List, m_Pet, m_InventoryExpansion, pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
+	int nSize = SavePlayerSkillExtension(Npc[m_nIndex], List, m_Pet, m_InventoryExpansion, m_dwLastCampChangeTime, pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
 	if (nSize < 0)
 		return -1;
 	pRoleData->dwLSkillOffset = dwOffset + nSize;

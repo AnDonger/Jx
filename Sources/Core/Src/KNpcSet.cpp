@@ -124,6 +124,14 @@ NPC_RELATION KNpcSet::GenOneRelation(NPCKIND Kind1, NPCKIND Kind2, NPCCAMP Camp1
 	if (Kind1 == kind_dialoger || Kind2 == kind_dialoger)
 		return relation_dialog;
 
+	// Current-client camp 7 protects players, but never prevents fighting monsters.
+	if (Kind1 == kind_player && Kind2 == kind_player &&
+		(Camp1 == camp_pk_closed || Camp2 == camp_pk_closed))
+		return relation_ally;
+	if (Kind1 == kind_player && Camp1 >= camp_pk_closed && Kind2 != kind_player)
+		Camp1 = camp_justice;
+	if (Kind2 == kind_player && Camp2 >= camp_pk_closed && Kind1 != kind_player)
+		Camp2 = camp_justice;
 	// 路人阵营没有战斗关系
 	if (Camp1 == camp_event || Camp2 == camp_event)
 		return relation_none;

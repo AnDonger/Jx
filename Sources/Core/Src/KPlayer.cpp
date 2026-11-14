@@ -35,6 +35,7 @@
 #include "KItemGenerator.h"
 #include "KTaskFuns.h"
 #include "Text.h"
+#include <time.h>
 
 #ifdef _SERVER
 #ifndef _STANDALONE
@@ -101,6 +102,7 @@ KPlayer::~KPlayer()
 void	KPlayer::Release()
 {
 #ifdef _SERVER
+	m_dwLastCampChangeTime = 0;
 	ZeroMemory(&m_Pet, sizeof(m_Pet));
 	ZeroMemory(&m_InventoryExpansion, sizeof(m_InventoryExpansion));
 	m_nInventoryPurchaseKind = 0;
@@ -1338,8 +1340,125 @@ void	KPlayer::TeamDismiss(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 //	功能：收到客户端请求设定PK状态
 //-------------------------------------------------------------------------
+// Normalize legacy beginner saves and the level-30 transition without charging cooldown.
+void KPlayer::UpdatePKCampForLevel(BOOL bSync)
+{
+	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC)
+		return;
+	KNpc& Hero = Npc[m_nIndex];
+	int nOldCamp = Hero.m_Camp;
+	int nCamp = nOldCamp;
+	if (Hero.m_Level < PK_CAMP_MIN_LEVEL)
+		nCamp = camp_begin;
+	else if (nCamp == camp_begin)
+		nCamp = camp_pk_closed;
+	if (!bSync)
+	{
+		// Load before RestoreNpcBaseInfo and the first world snapshot, without broadcasts.
+		Hero.m_Camp = nCamp;
+		Hero.m_CurrentCamp = nCamp;
+		return;
+	}
+	if (nCamp == nOldCamp)
+		return;
+	m_cPK.SetNormalPKState(Hero.m_Level >= PK_CAMP_MIN_LEVEL);
+	Hero.SetCamp(nCamp);
+	// Keep a temporary team camp until the existing team restore path applies.
+	if (Hero.m_CurrentCamp == nOldCamp)
+		Hero.SetCurrentCamp(nCamp);
+	g_DebugLog("[Camp] player=%d level=%d normalized=%d->%d", m_nPlayerIndex,
+		Hero.m_Level, nOldCamp, nCamp);
+}
+
+// Seven current-client camps; legacy BOOL PK requests retain their own entry.
+void KPlayer::ChangePKCamp(BYTE Camp)
+{
+	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC || !m_bFinishLoading || m_bExchangeServer ||
+		!((Camp >= 1 && Camp <= 4) || (Camp >= camp_pk_closed && Camp <= camp_war)))
+		return;
+	KNpc& Hero = Npc[m_nIndex];
+	if (Hero.m_Level < PK_CAMP_MIN_LEVEL || Hero.m_RegionIndex < 0 || Hero.m_SubWorldIndex < 0 || Hero.m_bExchangeServer ||
+		Hero.m_Doing == do_death || Hero.m_CurrentLife <= 0)
+		return;
+	DWORD Now = (DWORD)time(NULL);
+	if (m_dwLastCampChangeTime && (Now < m_dwLastCampChangeTime || Now - m_dwLastCampChangeTime < 180))
+	{
+		// Official 91 message 31: switching is restricted for three minutes.
+		BYTE Message[] = {0x91, 4, 0, 31, 0};
+		g_pServer->PackDataToClient(m_nNetConnectIdx, Message, sizeof(Message));
+		return;
+	}
+	if (Hero.m_Camp == Camp && Hero.m_CurrentCamp == Camp)
+		return;
+	m_dwLastCampChangeTime = Now;
+	// 9B/01 is sent for PK-off too. Camp 7 supplies the actual PK-off state.
+	m_cPK.SetNormalPKState(TRUE);
+	Hero.SetCamp(Camp);
+	Hero.SetCurrentCamp(Camp);
+	g_DebugLog("[Camp] player=%d camp=%u changedAt=%lu", m_nPlayerIndex, Camp, Now);
+}
+
+static WORD CharacterDetailValue(int Value)
+{
+	return (WORD)(Value < 0 ? 0 : (Value > 65535 ? 65535 : Value));
+}
+
+void KPlayer::SendCharacterDetails(const char* pszName)
+{
+	if (!pszName || m_nIndex <= 0 || m_nIndex >= MAX_NPC || !m_bFinishLoading || m_bExchangeServer ||
+		!memchr(pszName, 0, 32) || strcmp(pszName, Npc[m_nIndex].Name))
+		return;
+	const KNpc& Hero = Npc[m_nIndex];
+	GAME_CHARACTER_DETAILS_SYNC Packet = {};
+	Packet.ProtocolType = 0xF8;
+	Packet.Length = sizeof(Packet) - 1;
+	Packet.SubType = 0x4A;
+	memcpy(Packet.Name, Hero.Name, sizeof(Packet.Name));
+	// Slot order verified in current client 6FC8D0; labels come from attribs_ui_group.txt.
+	// -1 slots are not consumed by the current client and remain zero (unknown_1..2).
+	static const int AttackIds[23] = {126,311,161,281,275,276,277,278,279,280,-1,146,284,263,285,
+		298,299,300,301,302,303,338,342};
+	static const int DefenseIds[20] = {113,106,104,293,294,295,296,297,149,191,-1,269,314,270,315,
+		339,340,341,327,290};
+	static const int OtherIds[9] = {88,92,118,117,120,119,312,313,110};
+	for (int Group = 0; Group < 3; Group++)
+	{
+		const int* Ids = Group == 0 ? AttackIds : (Group == 1 ? DefenseIds : OtherIds);
+		WORD* Values = Group == 0 ? Packet.Attack : (Group == 1 ? Packet.Defense : Packet.Other);
+		int Count = Group == 0 ? 23 : (Group == 1 ? 20 : 9);
+		for (int i = 0; i < Count; i++)
+		{
+			int Id = Ids[i];
+			if (Id < 0)
+				continue;
+			int Value = Hero.m_CurrentAdditionalAttrib[Id];
+			switch (Id)
+			{
+			case 126: Value = Hero.m_CurrentPhysicsEnhance; break;
+			case 161: Value = Hero.m_CurrentColdEnhance; break;
+			case 146: Value = Hero.m_CurrentDeadlyStrike; break;
+			case 113: Value = Hero.m_CurrentHitRecover; break;
+			case 106: Value = Hero.m_CurrentFreezeTimeReducePercent; break;
+			case 104: Value = Hero.m_CurrentPhysicsResist; break;
+			case 149: Value = Hero.m_ManaShield.nValue[0]; break;
+			case 88: Value = Hero.m_CurrentLifeReplenish; break;
+			case 92: Value = Hero.m_CurrentManaReplenish; break;
+			case 118: Value = Hero.m_CurrentMeleeDmgRetPercent; break;
+			case 117: Value = Hero.m_CurrentMeleeDmgRet; break;
+			case 120: Value = Hero.m_CurrentRangeDmgRetPercent; break;
+			case 119: Value = Hero.m_CurrentRangeDmgRet; break;
+			case 110: Value = Hero.m_CurrentStunTimeReducePercent; break;
+			}
+			Values[i] = CharacterDetailValue(Value);
+		}
+	}
+	g_pServer->PackDataToClient(m_nNetConnectIdx, &Packet, sizeof(Packet));
+}
+
 void	KPlayer::SetPK(BYTE* pProtocol)
 {
+	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC || Npc[m_nIndex].m_Level < PK_CAMP_MIN_LEVEL)
+		return;
 	PLAYER_SET_PK	*pPK = (PLAYER_SET_PK*)pProtocol;
 	
 	if (pPK->m_btPKFlag)
@@ -2216,6 +2335,7 @@ void	KPlayer::LevelUp()
 #ifdef _SERVER
 	// 给客户端发送数据
 	// 自己的数据
+	UpdatePKCampForLevel(TRUE);
 	PLAYER_ATTRIBUTE_SYNC Attribute;
 	memset(&Attribute, 0, sizeof(Attribute));
 	Attribute.ProtocolType = 0x73;

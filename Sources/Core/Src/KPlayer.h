@@ -227,6 +227,7 @@ public:
 
 	KPlayerTask		m_cTask;					// 玩家任务系统(变量)
 
+	DWORD m_dwLastCampChangeTime; // UTC seconds, persisted in SPG1 v6.
 	KPlayerPK		m_cPK;						// PK关系处理
 
 	KPlayerTong		m_cTong;					// 自己的帮会信息
@@ -460,6 +461,9 @@ public:
 	void			TeamKickOne(BYTE* pProtocol);			// 收到客户端队长通知踢出某个队员
 	void			TeamChangeCaptain(BYTE* pProtocol);		// 收到客户端队长通知把队长身份交给某个队员
 	void			TeamDismiss(BYTE* pProtocol);			// 收到客户端队长请求解散队伍
+	void UpdatePKCampForLevel(BOOL bSync);
+	void ChangePKCamp(BYTE Camp);
+	void SendCharacterDetails(const char* pszName);
 	void			SetPK(BYTE* pProtocol);					// 收到客户端请求设定PK状态
 	void			SendFactionData(BYTE* pProtocol);		// 收到客户端请求获得门派数据
 	void			ServerSendChat(BYTE* pProtocol);		// 收到客户端发来的聊天语句
