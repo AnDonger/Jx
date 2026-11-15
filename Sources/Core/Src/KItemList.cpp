@@ -308,6 +308,7 @@ void KItemList::SyncItemData(int nIdx, int nPlace, int nX, int nY)
 	sItem.m_Durability = Item[nIdx].GetDurability();
 	sItem.unknown_1 = Item[nIdx].m_dwUpgradeData;
 	sItem.unknown_2 = Item[nIdx].m_btGenerationFlags;
+	sItem.ValidityStartTime = Item[nIdx].GetValidityStartTime();
 	sItem.StateFlags = Item[nIdx].m_btStateFlags;
 	sItem.BindingMode = Item[nIdx].m_btBindingMode;
 	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC) - sizeof(sItem.unknown_9));
@@ -2413,6 +2414,7 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 				sItem.m_RandomSeed = Item[m_Hand].m_GeneratorParam.uRandomSeed;
 				sItem.m_Version = Item[m_Hand].m_GeneratorParam.nVersion;
 				sItem.m_Durability = Item[m_Hand].GetDurability();
+				sItem.ValidityStartTime = Item[m_Hand].GetValidityStartTime();
 				g_pServer->PackDataToClient(Player[Player[m_PlayerIdx].m_cTrade.m_nTradeDest].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC));
 
 				g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sMove, sizeof(PLAYER_MOVE_ITEM_SYNC));

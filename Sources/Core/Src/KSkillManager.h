@@ -34,6 +34,21 @@ struct PLAYER_SKILL_BUFF_RULE
 	BOOL OfflineTime;
 };
 
+// Native IB templates have their own namespace; classic E5 kinds may use the same numbers.
+struct PLAYER_ITEM_BUFF_RULE
+{
+	BOOL Loaded;
+	int Duration;
+	int MaxDuration;
+	BOOL OfflineTime;
+	int LifeReplenish;
+	int ManaReplenish;
+	int ExperiencePercent;
+	int SkillExpPercent;
+};
+
+const int MAX_PLAYER_ITEM_BUFF_TEMPLATE = 1024;
+
 class KSkillManager
 {
     friend class KSkill;
@@ -51,6 +66,8 @@ private:
 	TSkillInfo m_SkillInfo[MAX_SKILL];
 	PLAYER_SKILL_RULE m_PlayerRules[MAX_SKILL];
 	PLAYER_SKILL_BUFF_RULE m_PlayerBuffRules[3];
+	PLAYER_ITEM_BUFF_RULE m_ItemBuffRules[MAX_PLAYER_ITEM_BUFF_TEMPLATE];
+	BOOL m_ItemStateSkills[MAX_SKILL];
 	int m_nHitSkillExpRate;
 	int m_EquipmentSkillSeries[8][MAX_SKILL];
 	int m_nSupportSkillExpRate;
@@ -71,6 +88,12 @@ public:
 	BOOL LoadPlayerRules();
 	int GetEquipmentSeriesBonus(int nSkillId, const int* pAttrib) const;
 	BOOL LoadPlayerBuffRules();
+	BOOL LoadItemBuffRules();
+	BOOL IsItemStateSkill(int nSkillId) const
+	{
+		return nSkillId > 0 && nSkillId < MAX_SKILL && m_ItemStateSkills[nSkillId];
+	}
+	const PLAYER_ITEM_BUFF_RULE* GetItemBuffRule(int nBuffId) const;
 	const PLAYER_SKILL_BUFF_RULE* GetPlayerBuffRule(int nBuffId) const;
 	int GetHitSkillExpRate() const
 	{

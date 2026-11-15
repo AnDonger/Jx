@@ -177,14 +177,17 @@ static void LoadNpcScriptCalls(DWORD dwScriptId, const char *pszFile)
 
 static BOOL IsItemTransactionFunction(const std::string& Function)
 {
-	// 只开放已纳入快照的变更及只读接口；传送只许延迟提交，其他地图、技能、Buff及外部IO禁用。
+	// 只开放已纳入快照的变更及只读接口；Buff在提交后同步，传送只许延迟提交。
 	static const char* Names[] =
 	{
-		"Say", "Talk", "MsgBox", "CloseDialog", "PutMessage", "Msg2Player", "WriteLog",
-		"HaveNormalItem", "HaveItem2", "IsExistItem", "DelNormalItem", "AddNormalItem", "AddNormalItemPile",
+		"Say", "SayTask", "Talk", "MsgBox", "CloseDialog", "PutMessage", "Msg2Player", "WriteLog",
+		"HaveNormalItem", "HaveItem2", "IsExistItem", "DelNormalItem", "AddNormalItem", "AddNormalItem2", "AddNormalItemPile",
+		"AddEventItem", "AddOwnExp", "GetMorphType", "GetExtPoint", "GetBit", "SetBit",
 		"GetCash", "Pay", "Earn", "GetCopperCashCount", "WasteCopperCash",
 		"GetTask", "SetTask", "GetTaskTemp", "SetTaskTemp", "GetTaskByte", "SetTaskByte",
-		"GetName", "GetLevel", "GetSex", "GetSeries", "GetPlayerType",
+		"GetName", "GetLevel", "GetSex", "GetSeries", "GetPlayerType", "SystemTime",
+		"IsSkillActived", "IsExistBuff", "HaveIBBuff", "GetIBBuffLeftTimes",
+		"AddBuff", "AddIBBuff", "CanAddIBBuff", "AddStateBuff", "RemoveStateBuff", "RemoveBuff",
 		"GetWorldPos", "GetFightState", "GetCamp", "GetPK", "GetUseItemInfo", "ConsumeUseItem", "TeleportWithItem",
 		"GetPetType", "GetPetHonor", "GetPetColor", "GetPetName", "IsPetReleased",
 		"GenPet", "DelPet", "SetPetType", "SetPetHonor", "ReleasePet",

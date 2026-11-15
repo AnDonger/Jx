@@ -154,6 +154,8 @@ public:
 #endif
 
 	const char * GetSkillName(){return m_szName;};
+	int					GetItemBuffDuration() const;
+	BOOL				ApplyItemState(int nLauncher, int nSeconds) const;
 	BOOL				ApplyStateSkill(int nLauncher) const;
 	BOOL				ApplyAuraSkill(int nLauncher) const;
 	BOOL				MatchesWeapon(int nLauncher) const;

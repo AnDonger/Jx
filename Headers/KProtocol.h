@@ -1585,7 +1585,9 @@ typedef struct
 	int				m_nMoney2;
 } CURPLAYER_SYNC;
 
-#define MAX_SCIRPTACTION_BUFFERNUM 300
+// 原服成长礼包菜单正文超过300字节（样本最长428）；仅扩大本地容量，线包仍为22字节前缀加实际正文。
+#define MAX_SCIRPTACTION_BUFFERNUM 1024
+#define MAX_SCRIPT_TALK_BUFFERNUM 300
 
 typedef struct
 {

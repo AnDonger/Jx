@@ -13,6 +13,8 @@ KSkillManager::KSkillManager()
 	memset(m_pOrdinSkill, 0, sizeof(m_pOrdinSkill));
 	memset(m_PlayerRules, 0, sizeof(m_PlayerRules));
 	memset(m_PlayerBuffRules, 0, sizeof(m_PlayerBuffRules));
+	memset(m_ItemBuffRules, 0, sizeof(m_ItemBuffRules));
+	memset(m_ItemStateSkills, 0, sizeof(m_ItemStateSkills));
 	m_nHitSkillExpRate = 1;
 	m_nSupportSkillExpRate = 1;
 }
@@ -75,7 +77,7 @@ BOOL KSkillManager::Init()
 
 	memset(m_SkillInfo, 0,  sizeof(m_SkillInfo));
 
-	if (!LoadPlayerRules() || !LoadPlayerBuffRules())
+	if (!LoadPlayerRules() || !LoadPlayerBuffRules() || !LoadItemBuffRules())
 		return FALSE;
 
 	//	Load OrdinSkill Info 
@@ -335,6 +337,83 @@ const PLAYER_SKILL_BUFF_RULE* KSkillManager::GetPlayerBuffRule(int nBuffId) cons
 			return &m_PlayerBuffRules[i];
 	}
 	return NULL;
+}
+
+// Only accept fully understood native effects. Unsupported attributes never become cosmetic buffs.
+BOOL KSkillManager::LoadItemBuffRules()
+{
+	memset(m_ItemBuffRules, 0, sizeof(m_ItemBuffRules));
+	memset(m_ItemStateSkills, 0, sizeof(m_ItemStateSkills));
+	KTabFile Items;
+	if (!Items.Load("\\settings\\item\\001\\magicscript.txt"))
+		return FALSE;
+	for (int i = 2; i <= Items.GetHeight(); i++)
+	{
+		int nDetail = -1, nSkillId = 0;
+		Items.GetInteger(i, "具体类别", -1, &nDetail);
+		Items.GetInteger(i, "技能ID（参数1）", 0, &nSkillId);
+		if (nDetail == 0 && nSkillId > 0 && nSkillId < MAX_SKILL)
+			m_ItemStateSkills[nSkillId] = TRUE;
+	}
+	KTabFile File;
+	if (!File.Load("\\settings\\item\\001\\ibitem.txt"))
+		return FALSE;
+	for (int nRow = 2; nRow <= File.GetHeight(); nRow++)
+	{
+		int nId = -1, nMode = -1, nMaxCount = 0, nOffline = -1;
+		File.GetInteger(nRow, "具体类别", -1, &nId);
+		if (nId < 0 || nId >= MAX_PLAYER_ITEM_BUFF_TEMPLATE)
+			continue;
+		PLAYER_ITEM_BUFF_RULE Rule = {};
+		File.GetInteger(nRow, "属性时间(秒）", 0, &Rule.Duration);
+		File.GetInteger(nRow, "自身额外叠加最大数量", 0, &nMaxCount);
+		File.GetInteger(nRow, 14, -1, &nOffline);
+		File.GetInteger(nRow, 16, -1, &nMode);
+		if (Rule.Duration <= 0 || nMaxCount <= 0 || nMaxCount > 10000 || nMode != 0 ||
+			(nOffline != 0 && nOffline != 1) || (__int64)Rule.Duration * nMaxCount > 0x7fffffff)
+			continue;
+		BOOL bSupported = TRUE, bHasEffect = FALSE;
+		for (int nColumn = 31; nColumn <= 66; nColumn += 2)
+		{
+			char szValue[128] = {};
+			int nAttribute = 0;
+			File.GetInteger(nRow, nColumn, 0, &nAttribute);
+			File.GetString(nRow, nColumn + 1, "", szValue, sizeof(szValue));
+			if (!nAttribute)
+				continue;
+			char* pEnd = NULL;
+			long nValue = strtol(szValue, &pEnd, 10);
+			if (pEnd == szValue || *pEnd || nValue <= 0 || nValue > 32767)
+			{
+				bSupported = FALSE;
+				break;
+			}
+			switch (nAttribute)
+			{
+			case 88: Rule.LifeReplenish += nValue; break;
+			case 92: Rule.ManaReplenish += nValue; break;
+			case 181: Rule.ExperiencePercent += nValue; break;
+			case 187: Rule.SkillExpPercent += nValue; break;
+			default: bSupported = FALSE; break;
+			}
+			bHasEffect = TRUE;
+		}
+		if (!bSupported || !bHasEffect)
+			continue;
+		Rule.MaxDuration = Rule.Duration * nMaxCount;
+		Rule.OfflineTime = nOffline;
+		Rule.Loaded = TRUE;
+		if (m_ItemBuffRules[nId].Loaded)
+			return FALSE;
+		m_ItemBuffRules[nId] = Rule;
+	}
+	return TRUE;
+}
+
+const PLAYER_ITEM_BUFF_RULE* KSkillManager::GetItemBuffRule(int nBuffId) const
+{
+	return nBuffId >= 0 && nBuffId < MAX_PLAYER_ITEM_BUFF_TEMPLATE && m_ItemBuffRules[nBuffId].Loaded ?
+		&m_ItemBuffRules[nBuffId] : NULL;
 }
 
 int KSkillManager::GetEquipmentSeriesBonus(int nSkillId, const int* pAttrib) const

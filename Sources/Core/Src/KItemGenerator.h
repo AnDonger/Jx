@@ -93,7 +93,7 @@ public:
 private:
 	BOOL InitGemRules();
 	KLibOfBPT* GetVersionLibrary(int nVersion);
-	BOOL Gen_MagicAttrib(int, const int*, int, int, KItemNormalAttrib*, int nVersion, KLibOfBPT*);
+	BOOL Gen_MagicAttrib(int, const int*, int, int, KItemNormalAttrib*, int nVersion, KLibOfBPT*, int nClass);
 	const KMAGICATTRIB_TABFILE* GetMARecord(int) const;
 	BOOL GMA_GetAvaliableMA(int);
 	BOOL GMA_GetLevelAndDropRate(int);

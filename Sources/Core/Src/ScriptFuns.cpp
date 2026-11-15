@@ -432,6 +432,7 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 		{
 			Skills.RefreshPlayerSkillLevels();
 			Skills.SyncPlayerSkillBuffs();
+			Role.m_ulLastSaveTime = 0;
 		}
 		if (pState->Experience > 0)
 			Role.DirectAddExp(pState->Experience);
@@ -1231,11 +1232,19 @@ int LuaIsExistBuff(Lua_State* L)
 	return 1;
 }
 
+int LuaHaveIBBuff(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nBuff = (int)Lua_ValueToNumber(L, 1);
+	Lua_PushNumber(L, pSkills && pSkills->GetPlayerSkillBuffTime(KSkillList::GetItemBuffStorageId(nBuff)) ? 1 : 0);
+	return 1;
+}
+
 int LuaGetIBBuffLeftTimes(Lua_State* L)
 {
 	KSkillList* pSkills = GetPlayerScriptSkills(L);
 	int nBuff = (int)Lua_ValueToNumber(L, 1);
-	Lua_PushNumber(L, pSkills ? pSkills->GetPlayerSkillBuffTime(nBuff) : 0);
+	Lua_PushNumber(L, pSkills ? pSkills->GetPlayerSkillBuffTime(KSkillList::GetItemBuffStorageId(nBuff)) : 0);
 	return 1;
 }
 
@@ -1243,7 +1252,9 @@ int LuaRemoveBuff(Lua_State* L)
 {
 	KSkillList* pSkills = GetPlayerScriptSkills(L);
 	int nBuff = (int)Lua_ValueToNumber(L, 1);
-	Lua_PushNumber(L, pSkills && pSkills->RemovePlayerSkillBuff(nBuff) ? 1 : 0);
+	int nPlayer = pSkills ? Npc[pSkills->m_nNpcIndex].GetPlayerIdx() : 0;
+	BOOL bSync = !nPlayer || !g_NpcScriptExchange[nPlayer];
+	Lua_PushNumber(L, pSkills && pSkills->RemovePlayerSkillBuff(nBuff, bSync) ? 1 : 0);
 	return 1;
 }
 
@@ -1346,8 +1357,19 @@ int LuaAddBuff(Lua_State* L)
 	KSkillList* pSkills = GetPlayerScriptSkills(L);
 	if (!pSkills || Lua_GetTopIndex(L) != 5)
 	{
+		if (pSkills) RejectNpcScriptItem(L, Npc[pSkills->m_nNpcIndex].GetPlayerIdx());
 		Lua_PushNumber(L, 0);
 		return 1;
+	}
+	for (int i = 1; i <= 5; i++)
+	{
+		double Value = Lua_ValueToNumber(L, i);
+		if (!Lua_IsNumber(L, i) || !(Value >= 0 && Value <= 0x7fffffff) || Value != (int)Value)
+		{
+			RejectNpcScriptItem(L, Npc[pSkills->m_nNpcIndex].GetPlayerIdx());
+			Lua_PushNumber(L, 0);
+			return 1;
+		}
 	}
 	int nBuff = (int)Lua_ValueToNumber(L, 1);
 	int nTime = (int)Lua_ValueToNumber(L, 2);
@@ -1356,7 +1378,7 @@ int LuaAddBuff(Lua_State* L)
 	BOOL bAdded = FALSE;
 	int nPlayer = pSkills ? Npc[pSkills->m_nNpcIndex].GetPlayerIdx() : 0;
 	BOOL bSync = !nPlayer || !g_NpcScriptExchange[nPlayer];
-	if (nBuff == 5 || nBuff == 7 || nBuff == 12 || nBuff == 13 || nBuff == 14 || nBuff == 23)
+	if (nBuff == 5 || nBuff == 7 || nBuff == 12 || nBuff == 13 || nBuff == 14 || nBuff == 15 || nBuff == 23)
 		bAdded = pSkills->AddPlayerSkillBuff(nBuff, nTime, 0, nFirst, FALSE, bSync);
 	else if (nBuff == 8)
 		bAdded = pSkills->AddPlayerSkillBuff(nBuff, nTime, nFirst, nSecond, FALSE, bSync);
@@ -1366,45 +1388,73 @@ int LuaAddBuff(Lua_State* L)
 	return 1;
 }
 
-static BOOL CanAddScriptDew(KSkillList& Skills, int nBuff)
+static BOOL ReadItemBuffArguments(Lua_State* L, int& nBuff, int& nSeconds)
 {
-	int Buffs[] = {107, 271, 272};
-	const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(nBuff);
-	if (!pRule || Skills.GetPlayerSkillBuffTime(nBuff) > pRule->MaxDuration - pRule->Duration)
+	int nCount = Lua_GetTopIndex(L);
+	if ((nCount != 1 && nCount != 2) || !Lua_IsNumber(L, 1))
 		return FALSE;
-	for (int i = 0; i < 3; i++)
-	{
-		if (nBuff != Buffs[i] && Skills.GetPlayerSkillBuffTime(Buffs[i]))
-			return FALSE;
-	}
+	double Id = Lua_ValueToNumber(L, 1);
+	double Seconds = nCount == 2 ? Lua_ValueToNumber(L, 2) : 0;
+	if (!(Id >= 0 && Id < MAX_PLAYER_ITEM_BUFF_TEMPLATE) || Id != (int)Id ||
+		(nCount == 2 && !Lua_IsNumber(L, 2)) || !(Seconds >= 0 && Seconds <= 0x7fffffff) || Seconds != (int)Seconds)
+		return FALSE;
+	nBuff = (int)Id;
+	nSeconds = (int)Seconds;
 	return TRUE;
 }
 
-// 原临仙露回调先DelNormalItem再AddIBBuff；扣物品时再次检查互斥和100小时上限。
-static BOOL CanConsumeScriptDew(Lua_State* L, int nGenre, int nDetail, int nParticular)
+// Queue state-backed item buffs in the same persisted snapshot as ordinary item buffs.
+int LuaAddStateBuff(Lua_State* L)
 {
-	if (nGenre != item_magicorscript || nDetail != 1)
-		return TRUE;
-	int nBuff = 0;
-	if (nParticular == 508 || nParticular == 512 || nParticular == 1091)
-		nBuff = 107;
-	else if (nParticular == 942 || nParticular == 943 || nParticular == 1092)
-		nBuff = 271;
-	else if (nParticular == 944 || nParticular == 945 || nParticular == 1093)
-		nBuff = 272;
-	if (!nBuff)
-		return TRUE;
 	KSkillList* pSkills = GetPlayerScriptSkills(L);
-	return pSkills && CanAddScriptDew(*pSkills, nBuff);
+	int nPlayer = pSkills ? Npc[pSkills->m_nNpcIndex].GetPlayerIdx() : 0;
+	double Id = Lua_ValueToNumber(L, 1);
+	int nCount = Lua_GetTopIndex(L);
+	double Peace = nCount == 2 ? Lua_ValueToNumber(L, 2) : 0;
+	BOOL bAdded = pSkills && (nCount == 1 || nCount == 2) && Lua_IsNumber(L, 1) &&
+		(nCount == 1 || Lua_IsNumber(L, 2)) && (Peace == 0 || Peace == 1) &&
+		Id > 0 && Id < MAX_SKILL && Id == (int)Id &&
+		pSkills->AddItemStateBuff((int)Id, 1, !nPlayer || !g_NpcScriptExchange[nPlayer], Peace != 0);
+	if (!bAdded)
+		RejectNpcScriptItem(L, nPlayer);
+	Lua_PushNumber(L, bAdded ? 1 : 0);
+	return 1;
+}
+
+int LuaRemoveStateBuff(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nPlayer = pSkills ? Npc[pSkills->m_nNpcIndex].GetPlayerIdx() : 0;
+	double Id = Lua_ValueToNumber(L, 1);
+	if (!pSkills || Lua_GetTopIndex(L) != 1 || !Lua_IsNumber(L, 1) ||
+		Id <= 0 || Id >= MAX_SKILL || Id != (int)Id || !g_SkillManager.IsItemStateSkill((int)Id))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	Lua_PushNumber(L, pSkills->RemovePlayerSkillBuff(0x20000 | (int)Id, !nPlayer || !g_NpcScriptExchange[nPlayer]) ? 1 : 0);
+	return 1;
+}
+
+int LuaCanAddIBBuff(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nBuff = 0, nSeconds = 0;
+	BOOL bAllowed = pSkills && ReadItemBuffArguments(L, nBuff, nSeconds) && pSkills->CanAddItemBuff(nBuff, nSeconds);
+	Lua_PushNumber(L, bAllowed ? 1 : 0);
+	return 1;
 }
 
 int LuaAddIBBuff(Lua_State* L)
 {
 	KSkillList* pSkills = GetPlayerScriptSkills(L);
-	int nBuff = (int)Lua_ValueToNumber(L, 1);
-	const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(nBuff);
-	BOOL bAdded = pSkills && pRule && CanAddScriptDew(*pSkills, nBuff) &&
-		pSkills->AddPlayerSkillBuff(nBuff, pRule->Duration, 0, pRule->Multiplier, TRUE);
+	int nBuff = 0, nSeconds = 0;
+	int nPlayer = pSkills ? Npc[pSkills->m_nNpcIndex].GetPlayerIdx() : 0;
+	BOOL bSync = !nPlayer || !g_NpcScriptExchange[nPlayer];
+	BOOL bAdded = pSkills && ReadItemBuffArguments(L, nBuff, nSeconds) && pSkills->AddItemBuff(nBuff, nSeconds, bSync);
+	if (!bAdded)
+		RejectNpcScriptItem(L, nPlayer);
 	Lua_PushNumber(L, bAdded ? 1 : 0);
 	return 1;
 }
@@ -1435,8 +1485,7 @@ static int QuickScriptItem(Lua_State* L, BOOL bConsume)
 			continue;
 		if (bConsume)
 		{
-			BOOL bAllowed = CanConsumeScriptDew(L, nGenre, nDetail, nParticular);
-			Lua_PushNumber(L, bAllowed && Items.ConsumeItem(pItem->nIdx, 1) ? 1 : 0);
+			Lua_PushNumber(L, Items.ConsumeItem(pItem->nIdx, 1) ? 1 : 0);
 			return 1;
 		}
 		nCount += Data.GetStackCount();
@@ -1723,7 +1772,6 @@ int LuaDelNormalItem(Lua_State *L)
 	KItemList& List = Player[nPlayerIndex].m_ItemList;
 	if (nCount <= 0 || CountNormalItems(List, nGenre, nDetail, nParticular, nLevel) < nCount
 #ifdef _SERVER
-		|| !CanConsumeScriptDew(L, nGenre, nDetail, nParticular)
 #endif
 		)
 	{
@@ -2307,10 +2355,10 @@ int LuaTalkUI(Lua_State * L)
 			return 0;
 		size_t nLength = strlen(pString);
 		// 每段的分隔符和末尾NUL也占空间，禁止重叠sprintf及越界写入。
-		if (nLength + 2 > sizeof(UiInfo.m_pContent) - nContentLen)
+		if (nLength + 2 > MAX_SCRIPT_TALK_BUFFERNUM - nContentLen)
 		{
 			g_DebugLog("[ScriptUI] Talk content exceeds %u bytes; player=%d sentences=%d kept=%d",
-				(unsigned int)sizeof(UiInfo.m_pContent), nPlayerIndex, nOptionNum, i);
+				(unsigned int)MAX_SCRIPT_TALK_BUFFERNUM, nPlayerIndex, nOptionNum, i);
 			nOptionNum = i;
 			break;
 		}
@@ -4550,17 +4598,30 @@ int LuaAddNormalItem(Lua_State *L)
 	}
 	// 可选表参数兼容原六参数接口：Count、Bound、BindingMode。
 	int nCount = 1, nBound = 0, nBindingMode = 0;
+	int nMagicCount = 0, nMagicLevel = 1;
 	if (nParamNum == 7 && Lua_IsTable(L, 7) &&
 		(!ReadScriptItemOption(L, 7, "Count", 1, 100000, &nCount) ||
 		!ReadScriptItemOption(L, 7, "Bound", 0, 1, &nBound) ||
 		!ReadScriptItemOption(L, 7, "BindingMode", 0, 255, &nBindingMode) ||
+		!ReadScriptItemOption(L, 7, "MagicCount", 0, 6, &nMagicCount) ||
+		!ReadScriptItemOption(L, 7, "MagicLevel", 1, MATF_LEVEL, &nMagicLevel) ||
 		!nBound && nBindingMode != 0))
 	{
 		RejectNpcScriptItem(L, nPlayerIndex);
 		Lua_PushNumber(L, 0);
 		return 1;
 	}
+	// 通用随机属性发奖参数。仅装备支持，系别和属性档位必须满足原生成表边界。
+	if (nMagicCount > 0 && (Values[0] != item_equip || Values[1] >= MATF_CBDR ||
+		Values[4] >= MATF_SERIES || nCount != 1))
+	{
+		RejectNpcScriptItem(L, nPlayerIndex);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
 	int MagicLevels[6] = {0};
+	for (int i = 0; i < nMagicCount; i++)
+		MagicLevels[i] = nMagicLevel;
 	int nItem = ItemSet.Add(Values[0], Values[4], Values[3], Values[5],
 		Values[1], Values[2], MagicLevels, g_SubWorldSet.GetGameVersion());
 	// 新材料表没有等级列，旧 NPC 发奖仍有等级1的引用；只兼容这一种引用。
@@ -4576,7 +4637,8 @@ int LuaAddNormalItem(Lua_State *L)
 		return 1;
 	}
 	if (!Item[nItem].SetStackCount(nCount) ||
-		Item[nItem].GetGenre() == item_equip && nCount != 1)
+		Item[nItem].GetGenre() == item_equip && nCount != 1 ||
+		nMagicCount > 0 && Item[nItem].GetMagicAttribCount() != nMagicCount)
 	{
 		ItemSet.Remove(nItem);
 		RejectNpcScriptItem(L, nPlayerIndex);
@@ -7184,9 +7246,12 @@ TLua_Funcs GameScriptFuns[] =
 	{"IsExistBuff", LuaIsExistBuff},
 	{"AddBuff", LuaAddBuff},
 	{"RemoveBuff", LuaRemoveBuff},
-	{"HaveIBBuff", LuaIsExistBuff},
+	{"HaveIBBuff", LuaHaveIBBuff},
 	{"GetIBBuffLeftTimes", LuaGetIBBuffLeftTimes},
 	{"AddIBBuff", LuaAddIBBuff},
+	{"CanAddIBBuff", LuaCanAddIBBuff},
+	{"AddStateBuff", LuaAddStateBuff},
+	{"RemoveStateBuff", LuaRemoveStateBuff},
 	{"HaveNormalItemInQuick", LuaHaveNormalItemInQuick},
 	{"DelNormalItemInQuick", LuaDelNormalItemInQuick},
 	{"SystemTime", LuaSystemTime},

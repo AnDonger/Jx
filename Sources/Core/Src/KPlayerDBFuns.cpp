@@ -121,17 +121,16 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 		PLAYER_SKILL_BUFF Buff;
 		memcpy(&Buff, pData, sizeof(Buff));
 		pData += sizeof(Buff);
-		const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(Buff.BuffId);
-		if (pRule && !pRule->OfflineTime)
+		const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(KSkillList::GetItemBuffTemplateId(Buff.BuffId));
+		if ((pRule && !pRule->OfflineTime) || (Buff.BuffId & 0xffff0000) == 0x20000)
 		{
 			// 在线计时的存档字段保存剩余秒数，重登重新建立当前会话到期时间。
-			if (Buff.EndTime > (DWORD)pRule->MaxDuration)
+			if (Buff.EndTime > (DWORD)KSkillList::GetBuffMaxDuration(Buff.BuffId))
 				return FALSE;
 			Buff.EndTime += dwNow;
 		}
 		if (!KSkillList::IsValidPlayerSkillBuffData(Buff.BuffId, Buff.SkillId, Buff.Value) ||
-			(pRule && Buff.Value != pRule->Multiplier) ||
-			(Buff.EndTime > dwNow && Buff.EndTime - dwNow > 100 * 3600))
+			(Buff.EndTime > dwNow && Buff.EndTime - dwNow > (DWORD)KSkillList::GetBuffMaxDuration(Buff.BuffId)))
 			return FALSE;
 		if (Buff.BuffId == 8)
 		{
@@ -142,9 +141,6 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 		for (DWORD j = 0; j < i; j++)
 		{
 			if (Buffs[j].BuffId == Buff.BuffId)
-				return FALSE;
-			if (pRule && Buff.EndTime > dwNow && Buffs[j].EndTime > dwNow &&
-				g_SkillManager.GetPlayerBuffRule(Buffs[j].BuffId))
 				return FALSE;
 		}
 		Buffs[i] = Buff;
@@ -281,8 +277,8 @@ static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_
 		PLAYER_SKILL_BUFF Buff = List.m_SkillBuffs[i];
 		if (!Buff.BuffId || Buff.EndTime <= dwNow)
 			continue;
-		const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(Buff.BuffId);
-		if (pRule && !pRule->OfflineTime)
+		const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(KSkillList::GetItemBuffTemplateId(Buff.BuffId));
+		if ((pRule && !pRule->OfflineTime) || (Buff.BuffId & 0xffff0000) == 0x20000)
 			Buff.EndTime -= dwNow;
 		memcpy(pData, &Buff, sizeof(Buff));
 		pData += sizeof(Buff);
@@ -418,10 +414,11 @@ static int SavePlayerTaskExtension(KPlayerTask& Task, BYTE *pData, DWORD dwCapac
 }
 
 static BOOL GetPlayerItemCounts(const TRoleData* pRoleData, const BYTE** ppCounts,
-	const PLAYER_ITEM_STATE** ppStates)
+	const PLAYER_ITEM_STATE** ppStates, const DWORD** ppValidityTimes)
 {
 	*ppCounts = NULL;
 	*ppStates = NULL;
+	*ppValidityTimes = NULL;
 	if (pRoleData->nItemCount < 0 || pRoleData->nItemCount >= MAX_PLAYER_ITEM ||
 		pRoleData->dwItemOffset < 0 || pRoleData->dwFriendOffset < 0)
 		return FALSE;
@@ -438,9 +435,11 @@ static BOOL GetPlayerItemCounts(const TRoleData* pRoleData, const BYTE** ppCount
 	PLAYER_ITEM_COUNT_HEADER Header;
 	memcpy(&Header, (const BYTE*)pRoleData + nEnd, sizeof(Header));
 	if (Header.Magic != PLAYER_ITEM_COUNT_MAGIC ||
-		Header.ItemCount != (DWORD)pRoleData->nItemCount || (Header.Version != 1 && Header.Version != 2))
+		Header.ItemCount != (DWORD)pRoleData->nItemCount || (Header.Version != 1 && Header.Version != 2 && Header.Version != 3))
 		return FALSE;
 	DWORD nStride = Header.Version == 1 ? 1 : sizeof(PLAYER_ITEM_STATE);
+	if (Header.Version == 3)
+		nStride += sizeof(DWORD);
 	if (nExtra != sizeof(Header) + Header.ItemCount * nStride)
 		return FALSE;
 	const BYTE* pData = (const BYTE*)pRoleData + nEnd + sizeof(Header);
@@ -461,6 +460,8 @@ static BOOL GetPlayerItemCounts(const TRoleData* pRoleData, const BYTE** ppCount
 				return FALSE;
 		}
 		*ppStates = pStates;
+		if (Header.Version == 3)
+			*ppValidityTimes = (const DWORD*)(pData + Header.ItemCount * sizeof(PLAYER_ITEM_STATE));
 	}
 	return TRUE;
 }
@@ -888,7 +889,8 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 	
 	const BYTE* pCounts = NULL;
 	const PLAYER_ITEM_STATE* pStates = NULL;
-	if (!GetPlayerItemCounts((const TRoleData*)pRoleBuffer, &pCounts, &pStates))
+	const DWORD* pValidityTimes = NULL;
+	if (!GetPlayerItemCounts((const TRoleData*)pRoleBuffer, &pCounts, &pStates, &pValidityTimes))
 	{
 		g_DebugLog("[Item] Invalid saved item count block: role=%s", m_PlayerName);
 		return -1;
@@ -1048,6 +1050,9 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 			g_DebugLog("[Item] Cannot generate saved item: role=%s, item=%d, class=%d, detail=%d, particular=%d, level=%d, version=%d", m_PlayerName, i, nItemClass, NewItem.m_CommonAttrib.nDetailType, NewItem.m_CommonAttrib.nParticularType, NewItem.m_CommonAttrib.nLevel, NewItem.m_GeneratorParam.nVersion);
 			return -1;
 		}
+		// 老存档没有有效期起点，由正常模板生成补一次；新版不能重登续期。
+		if (pValidityTimes && pValidityTimes[i])
+			NewItem.m_dwValidityStartTime = pValidityTimes[i];
 		// 把生成的装备的耐久度调整为数据库中存储的。
 		if (pItemData->idurability != DB_ITEM_DURABILITY_INITIAL)
 		{
@@ -1409,6 +1414,8 @@ int	KPlayer::SavePlayerItemList(BYTE * pRoleBuffer)
 	PLAYER_ITEM_STATE States[MAX_PLAYER_ITEM];
 	ZeroMemory(States, sizeof(States));
 	BOOL bHasState = FALSE;
+	DWORD ValidityTimes[MAX_PLAYER_ITEM];
+	BOOL bHasValidity = FALSE;
 
 	int	nItemCount = 0;
 	char szSection[100];
@@ -1451,6 +1458,9 @@ int	KPlayer::SavePlayerItemList(BYTE * pRoleBuffer)
 		pItemData->iidentify = 0;
 		//*****************************************************************************8
 
+		ValidityTimes[nItemCount] = Item[nItemIndex].GetValidityStartTime();
+		if (ValidityTimes[nItemCount])
+			bHasValidity = TRUE;
 		Counts[nItemCount] = (BYTE)Item[nItemIndex].GetStackCount();
 		States[nItemCount].Count = Counts[nItemCount];
 		States[nItemCount].UpgradeData = Item[nItemIndex].m_dwUpgradeData;
@@ -1475,19 +1485,25 @@ int	KPlayer::SavePlayerItemList(BYTE * pRoleBuffer)
 		if (Counts[i] > 1)
 			bHasStack = TRUE;
 	}
-	if (bHasStack || bHasState)
+	if (bHasStack || bHasState || bHasValidity)
 	{
-		DWORD dwStateSize = bHasState ? nItemCount * sizeof(PLAYER_ITEM_STATE) : nItemCount;
-		if (pEnd - pRoleBuffer + sizeof(PLAYER_ITEM_COUNT_HEADER) + dwStateSize >= sizeof(m_SaveBuffer))
+		DWORD dwStateSize = (bHasState || bHasValidity) ? nItemCount * sizeof(PLAYER_ITEM_STATE) : nItemCount;
+		DWORD dwValiditySize = bHasValidity ? nItemCount * sizeof(DWORD) : 0;
+		if (pEnd - pRoleBuffer + sizeof(PLAYER_ITEM_COUNT_HEADER) + dwStateSize + dwValiditySize >= sizeof(m_SaveBuffer))
 			return -1;
 		PLAYER_ITEM_COUNT_HEADER Header;
 		Header.Magic = PLAYER_ITEM_COUNT_MAGIC;
-		Header.Version = bHasState ? 2 : 1;
+		Header.Version = bHasValidity ? 3 : (bHasState ? 2 : 1);
 		Header.ItemCount = nItemCount;
 		memcpy(pEnd, &Header, sizeof(Header));
 		pEnd += sizeof(Header);
-		memcpy(pEnd, bHasState ? (const void*)States : (const void*)Counts, dwStateSize);
+		memcpy(pEnd, (bHasState || bHasValidity) ? (const void*)States : (const void*)Counts, dwStateSize);
 		pEnd += dwStateSize;
+		if (dwValiditySize)
+		{
+			memcpy(pEnd, ValidityTimes, dwValiditySize);
+			pEnd += dwValiditySize;
+		}
 	}
 	pRoleData->dwFriendOffset = pEnd - pRoleBuffer;
 	pRoleData->dwDataLen = pEnd - pRoleBuffer;
@@ -1624,7 +1640,7 @@ int	KPlayer::SavePlayerTaskList(BYTE * pRoleBuffer)
 	int nItems = 0;
 	for (PlayerItem *pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
 		nItems++;
-	if (dwOffset + nItems * (sizeof(TDBItemData) + sizeof(PLAYER_ITEM_STATE)) + sizeof(PLAYER_ITEM_COUNT_HEADER) >= sizeof(m_SaveBuffer) - 32)
+	if (dwOffset + nItems * (sizeof(TDBItemData) + sizeof(PLAYER_ITEM_STATE) + sizeof(DWORD)) + sizeof(PLAYER_ITEM_COUNT_HEADER) >= sizeof(m_SaveBuffer) - 32)
 		return -1;
 	pRoleData->dwItemOffset = dwOffset;
 	return 1;

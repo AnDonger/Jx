@@ -310,6 +310,10 @@ void KNpc::SetCamp(int nCamp)
 {
 	m_Camp = nCamp;
 #ifdef _SERVER
+	if (IsPlayer() && m_SkillList.m_nNpcIndex > 0)
+		m_SkillList.RefreshPlayerSkillLevels();
+#endif
+#ifdef _SERVER
 	POINT	POff[8] = 
 	{
 		{0, 32},
@@ -676,10 +680,10 @@ BOOL KNpc::ProcessState()
 		if (!(m_LoopFrames % GAME_REPLENISH_TIME) && m_CurrentLife > 0 &&
 			m_Doing != do_death && m_Doing != do_revive)
 		{
-			m_CurrentLife += m_CurrentLifeReplenish + (IsPlayer() ? m_SkillList.GetPlayerBuffValue(14) : 0);
+			m_CurrentLife += m_CurrentLifeReplenish + (IsPlayer() ? m_SkillList.GetPlayerBuffValue(14) + m_SkillList.GetItemBuffAttribute(88) : 0);
 			if (m_CurrentLife > m_CurrentLifeMax)
 				m_CurrentLife = m_CurrentLifeMax;
-			m_CurrentMana += m_CurrentManaReplenish + (IsPlayer() ? m_SkillList.GetPlayerBuffValue(13) : 0);
+			m_CurrentMana += m_CurrentManaReplenish + (IsPlayer() ? m_SkillList.GetPlayerBuffValue(13) + m_SkillList.GetItemBuffAttribute(92) : 0);
 			if (m_CurrentMana > m_CurrentManaMax)
 				m_CurrentMana = m_CurrentManaMax;
 		}
@@ -5405,6 +5409,34 @@ void KNpc::LoseMoney(int nBelongPlayer)
 
 }
 
+// Increase the chance of obtaining an item while retaining the original conditional weights.
+// With no bonus, retain the original one-roll path and interval order.
+int KItemDropRate::GetDropIndex(int nPercent) const
+{
+	if (!pItemParam || nCount <= 0 || nMaxRandRate <= 0)
+		return -1;
+	int nRoll = g_Random(nMaxRandRate);
+	int nTotal = 0;
+	if (nPercent > 100)
+	{
+		for (int i = 0; i < nCount && nTotal < nMaxRandRate; i++)
+			nTotal += min(max(0, pItemParam[i].nRate), nMaxRandRate - nTotal);
+		int nChance = (int)min((__int64)nMaxRandRate, (__int64)nTotal * min(nPercent, 1100) / 100);
+		if (!nTotal || nRoll >= nChance)
+			return -1;
+		nRoll = g_Random(nTotal);
+	}
+	nTotal = 0;
+	for (int i = 0; i < nCount; i++)
+	{
+		int nWeight = min(max(0, pItemParam[i].nRate), nMaxRandRate - nTotal);
+		if (nRoll >= nTotal && nRoll < nTotal + nWeight)
+			return i;
+		nTotal += nWeight;
+	}
+	return -1;
+}
+
 void KNpc::LoseSingleItem(KItemDropRate *pDropRate, int nBelongPlayer)
 {
 	if (!pDropRate || pDropRate->nMaxRandRate <= 0)
@@ -5413,20 +5445,11 @@ void KNpc::LoseSingleItem(KItemDropRate *pDropRate, int nBelongPlayer)
 	if (pDropRate->nMaxItemLevelScale <= 0 || pDropRate->nMinItemLevelScale <= 0)
 		return;
 
-	int nRand = g_Random(pDropRate->nMaxRandRate);
-	int nCheckRand = 0;	// 累加概率，确认是否落在区间内
-
-	int i;
-	for (i = 0; i < pDropRate->nCount; i++)
-	{
-		if (nRand >= nCheckRand && nRand < nCheckRand + pDropRate->pItemParam[i].nRate)
-		{
-			break;
-		}
-		nCheckRand += pDropRate->pItemParam[i].nRate;
-	}
-
-	if (i == pDropRate->nCount)
+	int nPercent = 100;
+	if (nBelongPlayer > 0 && nBelongPlayer < MAX_PLAYER && Player[nBelongPlayer].m_nIndex > 0)
+		nPercent += Npc[Player[nBelongPlayer].m_nIndex].m_SkillList.GetPlayerBuffValue(15);
+	int i = pDropRate->GetDropIndex(nPercent);
+	if (i < 0)
 		return;
 
 	int nGenre, nSeries, nLuck, nDetail, nParticular, nLevel, pnMagicLevel[6];

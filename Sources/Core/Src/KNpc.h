@@ -184,6 +184,7 @@ struct KItemDropRate
 	int			nMinItemLevel;
 	int			nMaxItemLevel;
 	KItemParam*	pItemParam;
+	int			GetDropIndex(int nPercent) const;
 };
 #endif
 

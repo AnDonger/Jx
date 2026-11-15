@@ -108,6 +108,7 @@ typedef struct
 	char		m_szScript[260];
 	BOOL		m_bConsumeOnUse;
 	int			m_nCopperPrice;		// 原资源铜钱价格，仅供铜钱商店结算。
+	int			m_nExistDays;		// 原表存在时间，按客户端本地日界计天，0为不限时。
 } KBASICPROP_NORMALITEM;
 
 // 以下结构用于描述一对最大,最小值
@@ -153,7 +154,10 @@ typedef struct
 	int			m_nLevel;					// 等级要求
 	char		m_szIntro[SZBUFLEN_1];		// 说明文字
 	KMACP		m_MagicAttrib;				// 核心参数
-	int			m_DropRate[MATF_CBDR];		// 出现概率
+	int			m_DropRate[MATF_CBDR];
+	BOOL		m_bClassWeights;
+	int			m_ClassDropRate[3][MATF_CBDR];
+	int			m_ParamMultiplier[3][3];		// 出现概率
     //add by Freeway Chen in 2003.5.30
     int         m_nUseFlag;                 // 该魔法是否被使用过
 } KMAGICATTRIB_TABFILE;

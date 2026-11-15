@@ -4,6 +4,7 @@
 #include "KNpc.h"
 #include "KNpcAttribModify.h"
 #include "KItem.h"
+#include <time.h>
 #include "KItemSet.h"
 #include "KItemGenerator.h"
 #include "KMagicDesc.h"
@@ -38,6 +39,8 @@ KItem::KItem()
 	m_btStateFlags = 0;
 	m_btBindingMode = 0;
 	m_btReforgeLuck = 0;
+	m_dwValidityStartTime = 0;
+	m_nExistDays = 0;
 #ifndef _SERVER
 	::memset(&m_Image,   0, sizeof(KRUImage));
 #endif
@@ -518,6 +521,9 @@ void KItem::operator = (const KBASICPROP_NORMALITEM& sData)
 	pCA->nLevel = sData.m_nLevel;
 	pCA->nSeries = sData.m_nSeries;
 	strcpy(pCA->szItemName, sData.m_szName);
+	m_nExistDays = sData.m_nExistDays;
+	if (m_nExistDays > 0 && !m_dwValidityStartTime)
+		m_dwValidityStartTime = (DWORD)_time64(NULL);
 	ZeroMemory(m_aryBaseAttrib, sizeof(m_aryBaseAttrib));
 	ZeroMemory(m_aryRequireAttrib, sizeof(m_aryRequireAttrib));
 	ZeroMemory(m_aryMagicAttrib, sizeof(m_aryMagicAttrib));
@@ -700,7 +706,8 @@ BOOL KItem::CanStackWith(const KItem& Other) const
 		m_CommonAttrib.nHeight != Other.m_CommonAttrib.nHeight ||
 		m_GeneratorParam.nVersion != Other.m_GeneratorParam.nVersion ||
 		m_GeneratorParam.nLuck != Other.m_GeneratorParam.nLuck ||
-		m_nCurrentDur != Other.m_nCurrentDur)
+		m_nCurrentDur != Other.m_nCurrentDur ||
+		GetValidityEndTime() != Other.GetValidityEndTime())
 		return FALSE;
 	// 相同表项仍须核对效果，避免把不同属性的消耗品合并。
 	return memcmp(m_aryBaseAttrib, Other.m_aryBaseAttrib, sizeof(m_aryBaseAttrib)) == 0 &&
@@ -708,6 +715,30 @@ BOOL KItem::CanStackWith(const KItem& Other) const
 		memcmp(m_aryMagicAttrib, Other.m_aryMagicAttrib, sizeof(m_aryMagicAttrib)) == 0 &&
 		memcmp(m_GeneratorParam.nGeneratorLevel, Other.m_GeneratorParam.nGeneratorLevel,
 			sizeof(m_GeneratorParam.nGeneratorLevel)) == 0;
+}
+
+// 客户端73EA90按获得日的本地日界计算：第N天结束前仍可使用。
+__int64 KItem::GetValidityEndTime() const
+{
+	if (m_nExistDays <= 0 || !m_dwValidityStartTime)
+		return 0;
+	__time64_t Start = m_dwValidityStartTime;
+	tm Local = {};
+	if (_localtime64_s(&Local, &Start) != 0)
+		return 0;
+	Local.tm_hour = Local.tm_min = Local.tm_sec = 0;
+	Local.tm_mday += m_nExistDays;
+	Local.tm_isdst = -1;
+	__time64_t End = _mktime64(&Local);
+	return End > 0 ? End - 1 : 0;
+}
+
+BOOL KItem::IsExpired(DWORD dwNow) const
+{
+	__int64 End = GetValidityEndTime();
+	if (!End)
+		return FALSE;
+	return (__int64)(dwNow ? dwNow : (DWORD)_time64(NULL)) > End;
 }
 
 BOOL KItem::SetStackCount(int nCount)
@@ -727,6 +758,8 @@ void KItem::Remove()
 	m_btStateFlags = 0;
 	m_btBindingMode = 0;
 	m_btReforgeLuck = 0;
+	m_dwValidityStartTime = 0;
+	m_nExistDays = 0;
 }
 
 BOOL KItem::SetBaseAttrib(IN const KItemNormalAttrib* pAttrib)

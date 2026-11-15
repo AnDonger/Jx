@@ -312,7 +312,6 @@ public:
 	BOOL			CanCompoundItems();
 	void			CompoundMessage(const char* pszMessage);
 	BOOL			UseSkillBook(int nItem);
-	BOOL			UseSkillBuffItem(int nItem);
 	void			CloseStoreBox();
 #endif
 	void			SetFirstDamage();

@@ -130,6 +130,9 @@ class KItem
 {
 public:
 	KItem();
+	DWORD GetValidityStartTime() const { return m_dwValidityStartTime; }
+	__int64 GetValidityEndTime() const;
+	BOOL IsExpired(DWORD dwNow = 0) const;
 	~KItem();
 
 // 以下是核心成员变量
@@ -146,6 +149,8 @@ private:
 	int		m_nIndex;							// 自身在道具数组中的索引
 	DWORD	m_dwID;								// 独立的ID，用于客户端与服务器端的交流
 	DWORD	m_dwUpgradeData;
+	DWORD	m_dwValidityStartTime;			// 获得时的Unix秒；重登及拆分保留。
+	int		m_nExistDays;
 	BYTE	m_btGenerationFlags;
 	BYTE	m_btStateFlags;
 	BYTE	m_btBindingMode;

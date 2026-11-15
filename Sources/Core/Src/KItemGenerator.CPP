@@ -312,7 +312,11 @@ BOOL KItemGenerator::Gen_Equipment(IN int nDetailType,
 		return TRUE;
 	// 确定装备的魔法属性
 	KItemNormalAttrib	sMA[6];	// 道具的魔法属性
-	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion, pLibrary);
+	int nClass = -1;
+	for (int n = 0; n < 6; n++)
+		if (pEqu->m_aryPropReq[n].nType == magic_requireseries)
+			nClass = pEqu->m_aryPropReq[n].nPara;
+	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion, pLibrary, nClass);
 	if (bEC)
 		pItem->SetAttrib_MA(sMA);
 
@@ -330,7 +334,7 @@ BOOL KItemGenerator::Gen_Equipment(IN int nDetailType,
 // Add by Freeway Chen in 2003.5.30
 BOOL KItemGenerator::Gen_MagicAttrib(
     int nType, const int* pnaryMALevel, int nSeriesReq, int nLucky,
-	KItemNormalAttrib* pnaryMA, int nGameVersion, KLibOfBPT* pLibrary
+	KItemNormalAttrib* pnaryMA, int nGameVersion, KLibOfBPT* pLibrary, int nClass
 )
 {
     int nResult = false;
@@ -397,7 +401,9 @@ BOOL KItemGenerator::Gen_MagicAttrib(
                 continue;
 
             // 如果运气不足，取下一个
-            if ((pMAItem->m_DropRate[nType]) <= nDecide)
+            if (pMAItem->m_bClassWeights ?
+				(nClass < 0 || nClass >= 3 || pMAItem->m_ClassDropRate[nClass][nType] <= 0) :
+				(pMAItem->m_DropRate[nType] <= nDecide))
                 continue;
             
             // 检查是否已经有相同的“属性调整类别”
@@ -427,6 +433,20 @@ BOOL KItemGenerator::Gen_MagicAttrib(
         
         // 如果发现满足条件的魔法属性，就设置
         int nLuckyItemIndex = GetRandomNumber(0, nSelectedCount - 1);
+		const KMAGICATTRIB_TABFILE* pFirst = pLibrary->GetMARecord(SelectedMagicTable.Get(0));
+		if (pFirst && pFirst->m_bClassWeights)
+		{
+			__int64 nTotalWeight = 0;
+			for (int n = 0; n < nSelectedCount; n++)
+				nTotalWeight += pLibrary->GetMARecord(SelectedMagicTable.Get(n))->m_ClassDropRate[nClass][nType];
+			// Scale the deterministic 15-bit item RNG instead of taking modulo of a million-point weight.
+			__int64 nChoice = (__int64)GetRandomNumber(0, 32767) * nTotalWeight / 32768;
+			for (int n = 0; n < nSelectedCount; n++)
+			{
+				nChoice -= pLibrary->GetMARecord(SelectedMagicTable.Get(n))->m_ClassDropRate[nClass][nType];
+				if (nChoice < 0) { nLuckyItemIndex = n; break; }
+			}
+		}
         KMAGICATTRIB_TABFILE *pMAItem = (KMAGICATTRIB_TABFILE *)pLibrary->GetMARecord(
              SelectedMagicTable.Get(nLuckyItemIndex)
         );
@@ -453,6 +473,9 @@ BOOL KItemGenerator::Gen_MagicAttrib(
             pMAItem->m_MagicAttrib.aryRange[2].nMin, 
             pMAItem->m_MagicAttrib.aryRange[2].nMax
         );
+		if (pMAItem->m_bClassWeights)
+			for (int n = 0; n < 3; n++)
+				pnaryMA[i].nValue[n] *= pMAItem->m_ParamMultiplier[nClass][n];
 		g_DebugLog(
 			"[GenMagicAttrib] pnaryMA[%d]: (%d:%s), nAttribType = %d, nValue[0] = %d, nValue[1] = %d, nValue[2] = %d,", 
 			i,
@@ -807,7 +830,11 @@ BOOL KItemGenerator::Gen_ExistEquipment(IN int nDetailType,
 		return TRUE;
 	// 确定装备的魔法属性
 	KItemNormalAttrib	sMA[6];	// 道具的魔法属性
-	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion, pLibrary);
+	int nClass = -1;
+	for (int n = 0; n < 6; n++)
+		if (pEqu->m_aryPropReq[n].nType == magic_requireseries)
+			nClass = pEqu->m_aryPropReq[n].nPara;
+	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion, pLibrary, nClass);
 	if (bEC)
 		pItem->SetAttrib_MA(sMA);
 

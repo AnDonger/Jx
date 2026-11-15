@@ -370,7 +370,7 @@ BOOL KLibOfBPT::InitMALib()
 	m_BPTMagicAttrib.GetMACount((int*)naryMACount);
 
 	// 根据取回的数值，为各装备的魔法属性索引表分配内容
-	for (int i = 0; i < MATF_CBDR - 1; i++)	// -1 because of horse
+	for (int i = 0; i < MATF_CBDR; i++)	// Include random-attribute mounts.
 	{
 		_ASSERT(naryMACount[0][i] > 0);	// 不可能没有一个魔法前缀适用于该装备
 		_ASSERT(naryMACount[1][i] > 0);	// 不可能没有一个魔法后缀适用于该装备
@@ -1300,10 +1300,12 @@ BOOL KBPT_NormalItem::LoadRecord(int i, KTabFile* pTF)
 	pTF->GetString(nRow, "脚本名(参数1)", "", pBuf->m_szScript, sizeof(pBuf->m_szScript));
 	pTF->GetInteger(nRow, "使用后是否消失", 0, &pBuf->m_bConsumeOnUse);
 	pTF->GetInteger(nRow, "铜钱价格", 0, &pBuf->m_nCopperPrice);
+	pTF->GetInteger(nRow, "存在时间", 0, &pBuf->m_nExistDays);
 	pBuf->m_bValid = bRead && pBuf->m_szName[0] && pBuf->m_nItemGenre == m_nGenre &&
 		pBuf->m_nDetailType >= 0 && pBuf->m_nParticularType >= 0 &&
 		pBuf->m_nLevel >= 0 && pBuf->m_nWidth > 0 && pBuf->m_nHeight > 0 &&
-		pBuf->m_nPrice >= 0 && pBuf->m_bStack >= 0 && pBuf->m_nWeight >= 0;
+		pBuf->m_nPrice >= 0 && pBuf->m_bStack >= 0 && pBuf->m_nWeight >= 0 &&
+		pBuf->m_nExistDays >= 0 && pBuf->m_nExistDays <= 36500;
 	if (!pBuf->m_bValid)
 		g_DebugLog("[Item] Invalid normal item resource row: file=%s, row=%d, genre=%d, detail=%d, particular=%d",
 			m_szTabFile, nRow, pBuf->m_nItemGenre, pBuf->m_nDetailType, pBuf->m_nParticularType);
@@ -1810,6 +1812,42 @@ BOOL KBPT_MagicAttrib_TF::LoadRecord(int i, KTabFile* pTF)
 	// 初始化
 	KMAGICATTRIB_TABFILE* pBuf = (KMAGICATTRIB_TABFILE*)m_pBuf;
 	pBuf = pBuf + i;	// 读入的属性记在 pBuf 所指结构中
+	ZeroMemory(pBuf, sizeof(*pBuf));
+	if (pTF->FindColumn("甲士倍率") > 0 && pTF->GetWidth() >= 54)
+	{
+		const int nRow = i + 2;
+		pBuf->m_bClassWeights = TRUE;
+		pTF->GetString(nRow, 1, "", pBuf->m_szName, sizeof(pBuf->m_szName));
+		pTF->GetInteger(nRow, 2, 0, &pBuf->m_nPos);
+		pTF->GetInteger(nRow, 3, -1, &pBuf->m_nClass);
+		pTF->GetInteger(nRow, 4, 1, &pBuf->m_nLevel);
+		pTF->GetInteger(nRow, 5, 0, &pBuf->m_MagicAttrib.nPropKind);
+		pTF->GetString(nRow, 21, "", pBuf->m_szIntro, sizeof(pBuf->m_szIntro));
+		for (int nParam = 0; nParam < 3; nParam++)
+		{
+			pTF->GetInteger(nRow, 6 + nParam * 5, 0, &pBuf->m_MagicAttrib.aryRange[nParam].nMin);
+			pTF->GetInteger(nRow, 7 + nParam * 5, 0, &pBuf->m_MagicAttrib.aryRange[nParam].nMax);
+			for (int nClass = 0; nClass < 3; nClass++)
+				pTF->GetInteger(nRow, 8 + nParam * 5 + nClass, 1, &pBuf->m_ParamMultiplier[nClass][nParam]);
+		}
+		for (int nType = 0; nType < MATF_CBDR; nType++)
+		{
+			for (int nClass = 0; nClass < 3; nClass++)
+			{
+				pTF->GetInteger(nRow, 22 + nClass * MATF_CBDR + nType, 0, &pBuf->m_ClassDropRate[nClass][nType]);
+				if (pBuf->m_ClassDropRate[nClass][nType] > pBuf->m_DropRate[nType])
+					pBuf->m_DropRate[nType] = pBuf->m_ClassDropRate[nClass][nType];
+			}
+			if (pBuf->m_DropRate[nType] > 0)
+				m_naryMACount[pBuf->m_nPos == 0 ? 1 : 0][nType]++;
+		}
+		// Non-prefix rows in the original table are not candidates for random equipment.
+		if (pBuf->m_nPos < 0 || pBuf->m_nPos >= MATF_PREFIXPOSFIX ||
+			pBuf->m_nClass < -1 || pBuf->m_nClass >= MATF_SERIES ||
+			pBuf->m_nLevel < 1 || pBuf->m_nLevel > MATF_LEVEL)
+			ZeroMemory(pBuf->m_DropRate, sizeof(pBuf->m_DropRate));
+		return TRUE;
+	}
 	const PROPINFO	aryPI[] =
 	{
 		{ PI_VARTYPE_CHAR,			pBuf->m_szName, sizeof(pBuf->m_szName)},
@@ -2041,6 +2079,8 @@ BOOL KBPT_ClassifiedMAT::Set(int nData)
 	_ASSERT(this != NULL);
 	_ASSERT(nData >= 0);	// nData 为数组下标
 	_ASSERT(m_nNumOfValidData >= 0 && m_nNumOfValidData < m_nSize);
+	if (!m_pnTable || m_nNumOfValidData < 0 || m_nNumOfValidData >= m_nSize)
+		return FALSE;
 	m_pnTable[m_nNumOfValidData++] = nData;
 	return TRUE;
 }

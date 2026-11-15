@@ -1,10 +1,10 @@
 # 当前 Lua 可用函数说明（Lua函数表）
 
-核对日期：2026-11-12。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
+核对日期：2026-11-15。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
 
 ## 阅读方法与范围
 
-- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **268个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **360个不同名字**，均有独立条目。
+- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **271个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **363个不同名字**，均有独立条目。
 - “实现已核对”表示已对照当前注册和函数正文，**不表示全部接口已通过新版客户端实测**。带“旧接口”“待适配”“有缺陷”“不可用”的条目保留用于查错；不能把存在名字当成功能已完整适配。
 - 以服务端 `_SERVER` 分支为准，排除注释中的注册项、客户端专用 `PlaySound` / `PlaySprMovie`、未注册的C++辅助函数。原脚本内 `main`、`OnCompound`、公共库中自定义函数不属于引擎全局API；只能在加载了对应脚本后使用其实际定义。
 - 普通NPC／玩家脚本由 `GameScriptFuns` 注册；全局世界脚本由 `WorldScriptFuns` 注册。标准库在创建Lua状态时打开。脚本可覆盖同名全局，使用时还要核对原脚本及 `Include` 内容。
@@ -46,6 +46,8 @@ Lua不得直接连接、查询或修改数据库，不得编写、拼接或执�
 
 背包／仓库永久购买业务见 `Resources/script/背包仓库扩展.lua`；费用来自归档 `00587-29b2371f.bin`，仓库确认流程参考 `00596-2a5f65da.bin`。扩展系统入口有自动事务，权限变化在提交后同步并通过C++保存，Lua不访问数据库；新增的权限快照不表示仓库内物品操作已纳入NPC物品交换快照。
 
+2026-11-15礼包适配：道具脚本事务已开放 `SayTask`、`AddNormalItem2`、`AddEventItem`、`AddOwnExp`、`GetMorphType`、`GetExtPoint`、`GetBit`、`SetBit`。前四项分别复用现有延迟UI、物品快照、事件物品发奖和提交后经验发放；后四项是只读或纯数值计算。`GetExtPoint`仍是旧扩展点余额，不等于铜钱，也不会自动扣款；`SetBit`仍只能置1，不能清0。本轮没有新增注册函数。
+
 ## 分类索引
 
 - **对白、窗口与提示**：[Say](#say)、[SayTask](#saytask)、[Talk](#talk)、[MsgBox](#msgbox)、[CloseDialog](#closedialog)、[PutMessage](#putmessage)、[Msg2Player](#msg2player)、[TopMessage](#topmessage)、[Sale](#sale)、[OpenBox](#openbox)、[OpenNewCompound](#opennewcompound)、[EnchaseItem](#enchaseitem)、[AddNote](#addnote)、[PlayMusic](#playmusic)、[FadeInMusic](#fadeinmusic)、[FadeOutMusic](#fadeoutmusic)。
@@ -54,7 +56,7 @@ Lua不得直接连接、查询或修改数据库，不得编写、拼接或执�
 - **物品、现金、铜钱与窗口事务**：[HaveNormalItem](#havenormalitem)、[HaveItem2](#haveitem2)、[IsExistItem](#isexistitem)、[ConsumeUseItem](#consumeuseitem)、[DelNormalItem](#delnormalitem)、[DelItem2](#delitem2)、[AddNormalItem](#addnormalitem)、[AddNormalItem2](#addnormalitem2)、[AddNormalItemPile](#addnormalitempile)、[GetItemLevel2](#getitemlevel2)、[HaveNormalItemInQuick](#havenormaliteminquick)、[DelNormalItemInQuick](#delnormaliteminquick)、[GetSelectedItems](#getselecteditems)、[DelSelectedItem](#delselecteditem)、[CompleteItemOperation](#completeitemoperation)、[GetCash](#getcash)、[Pay](#pay)、[Earn](#earn)、[PrePay](#prepay)、[GetCopperCashCount](#getcoppercashcount)、[WasteCopperCash](#wastecoppercash)、[GetCredit](#getcredit)、[DecCredit](#deccredit)、[GetRepute](#getrepute)、[AddRepute](#addrepute)、[ImproveItemMagicAttr](#improveitemmagicattr)、[AddItem](#additem)、[AddEventItem](#addeventitem)、[GetItemCount](#getitemcount)、[HaveEventItem](#haveeventitem)、[HaveItem](#haveitem)、[DelItem](#delitem)、[DelEventItem](#deleventitem)、[DropItem](#dropitem)。
 - **玩家任务与位、字节操作**：[GetTask](#gettask)、[SetTask](#settask)、[GetTaskTemp](#gettasktemp)、[SetTaskTemp](#settasktemp)、[TaskNote](#tasknote)、[GetTaskByte](#gettaskbyte)、[SetTaskByte](#settaskbyte)、[GetBit](#getbit)、[SetBit](#setbit)、[GetByte](#getbyte)、[SetByte](#setbyte)。
 - **角色查询、属性与身份**：[GetName](#getname)、[GetUUID](#getuuid)、[GetLevel](#getlevel)、[GetSex](#getsex)、[GetSeries](#getseries)、[GetPlayerType](#getplayertype)、[GetDefend](#getdefend)、[GetExp](#getexp)、[GetLeadExp](#getleadexp)、[GetLeadLevel](#getleadlevel)、[GetRestAP](#getrestap)、[GetRestSP](#getrestsp)、[GetProp](#getprop)、[GetMagicPoint](#getmagicpoint)、[GetCurCamp](#getcurcamp)、[GetCamp](#getcamp)、[GetRank](#getrank)、[GetPK](#getpk)、[GetLucky](#getlucky)、[GetEng](#geteng)、[GetDex](#getdex)、[GetStrg](#getstrg)、[GetVit](#getvit)、[GetLife](#getlife)、[GetMana](#getmana)、[GetStamina](#getstamina)、[RestoreLife](#restorelife)、[RestoreMana](#restoremana)、[RestoreStamina](#restorestamina)、[GetColdR](#getcoldr)、[GetFireR](#getfirer)、[GetLightR](#getlightr)、[GetPoisonR](#getpoisonr)、[GetPhyR](#getphyr)、[SetFireR](#setfirer)、[SetLightR](#setlightr)、[SetPoisonR](#setpoisonr)、[SetPhyR](#setphyr)、[SetColdR](#setcoldr)、[SetCurCamp](#setcurcamp)、[SetCamp](#setcamp)、[RestoreCamp](#restorecamp)、[GetFaction](#getfaction)、[SetFaction](#setfaction)、[SetSeries](#setseries)、[SetRank](#setrank)、[AddOwnExp](#addownexp)、[AddExp](#addexp)、[AddLeadExp](#addleadexp)、[AddMagicPoint](#addmagicpoint)、[AddProp](#addprop)、[GetExtPoint](#getextpoint)、[PayExtPoint](#payextpoint)。
-- **技能与限时效果**：[IsSkillActived](#isskillactived)、[IsExistBuff](#isexistbuff)、[HaveIBBuff](#haveibbuff)、[GetIBBuffLeftTimes](#getibbufflefttimes)、[AddBuff](#addbuff)、[AddIBBuff](#addibbuff)、[RemoveBuff](#removebuff)、[AddMagic](#addmagic)、[DelMagic](#delmagic)、[HaveMagic](#havemagic)、[GetMagicLevel](#getmagiclevel)、[GetSkillId](#getskillid)、[SetSkillLevel](#setskilllevel)、[RollbackSkill](#rollbackskill)、[UpdateSkill](#updateskill)。
+- **技能与限时效果**：[IsSkillActived](#isskillactived)、[IsExistBuff](#isexistbuff)、[HaveIBBuff](#haveibbuff)、[GetIBBuffLeftTimes](#getibbufflefttimes)、[AddBuff](#addbuff)、[AddIBBuff](#addibbuff)、[CanAddIBBuff](#canaddibbuff)、[AddStateBuff](#addstatebuff)、[RemoveStateBuff](#removestatebuff)、[RemoveBuff](#removebuff)、[AddMagic](#addmagic)、[DelMagic](#delmagic)、[HaveMagic](#havemagic)、[GetMagicLevel](#getmagiclevel)、[GetSkillId](#getskillid)、[SetSkillLevel](#setskilllevel)、[RollbackSkill](#rollbackskill)、[UpdateSkill](#updateskill)。
 - **地图、坐标、NPC与复活**：[GetWorldPos](#getworldpos)、[GetUseItemInfo](#getuseiteminfo)、[TeleportWithItem](#teleportwithitem)、[GetPos](#getpos)、[SetPos](#setpos)、[NewWorld](#newworld)、[SubWorldID2Idx](#subworldid2idx)、[GetNpcIdx](#getnpcidx)、[AddNpc](#addnpc)、[DelNpc](#delnpc)、[SetNpcScript](#setnpcscript)、[SetNpcCurCamp](#setnpccurcamp)、[SetRevPos](#setrevpos)、[SetTempRevPos](#settemprevpos)、[SetDeathScript](#setdeathscript)、[SetLogoutRV](#setlogoutrv)、[UseTownPortal](#usetownportal)、[ReturnFromPortal](#returnfromportal)、[SetFightState](#setfightstate)、[GetFightState](#getfightstate)、[AttackNpc](#attacknpc)、[KillNpc](#killnpc)、[Death](#death)、[KillPlayer](#killplayer)、[HideNpc](#hidenpc)、[RevivalAllNpc](#revivalallnpc)、[SetPropState](#setpropstate)。
 - **队伍、聊天、公告及管理**：[IsCaptain](#iscaptain)、[GetTeam](#getteam)、[GetTeamSize](#getteamsize)、[LeaveTeam](#leaveteam)、[SetCreateTeam](#setcreateteam)、[Msg2Team](#msg2team)、[Msg2SubWorld](#msg2subworld)、[Msg2Region](#msg2region)、[Msg2GM](#msg2gm)、[Msg2IP](#msg2ip)、[AddGlobalNews](#addglobalnews)、[AddGlobalCountNews](#addglobalcountnews)、[AddGlobalTimeNews](#addglobaltimenews)、[AddLocalNews](#addlocalnews)、[AddLocalCountNews](#addlocalcountnews)、[AddLocalTimeNews](#addlocaltimenews)、[GetInfo](#getinfo)、[GetIP](#getip)、[GetServerName](#getservername)、[GetPlayerCount](#getplayercount)、[KickOutPlayer](#kickoutplayer)、[KickOutSelf](#kickoutself)、[KickOutAccount](#kickoutaccount)、[SetChatFlag](#setchatflag)、[SetPK](#setpk)、[SetPunish](#setpunish)、[ShowLadder](#showladder)、[OpenTong](#opentong)、[SwearBrother](#swearbrother)、[MakeEnemy](#makeenemy)、[AddLoaclTimeNews](#addloacltimenews)。
 - **旧车站、码头与路标资源**：[AddStation](#addstation)、[AddTermini](#addtermini)、[GetStation](#getstation)、[GetStationCount](#getstationcount)、[GetCityCount](#getcitycount)、[GetWayPoint](#getwaypoint)、[GetStationName](#getstationname)、[GetWayPointName](#getwaypointname)、[GetPrice2Station](#getprice2station)、[GetPrice2WayPoint](#getprice2waypoint)、[GetStationPos](#getstationpos)、[GetWayPointPos](#getwaypointpos)、[GetWharfName](#getwharfname)、[GetWharfCount](#getwharfcount)、[GetWharfPrice](#getwharfprice)、[GetWharf](#getwharf)、[GetWharfPos](#getwharfpos)、[GetTerminiFState](#getterminifstate)、[GetCity](#getcity)。
@@ -77,7 +79,7 @@ Say(textOrId, count, option1, ...)
 
 - 参数：textOrId：对白字符串或 stringresource 文本ID；count：选项数；option："显示文本/回调名"。第三参数也可传连续选项数组。
 - 返回：无。
-- 限制／说明：选项无斜线时回调默认为 main；最多 MAX_ANSWERNUM 个。显示和回调分开发送，回调必须存在于当前脚本，不在本次函数内直接执行。
+- 限制／说明：选项无斜线时回调默认为 main；最多 MAX_ANSWERNUM 个。正文与选项合计须小于1024个GBK字节，超长时不发送；本地脚本缓冲容量不改变0x79的22字节线包前缀。`Talk`仍保留300字节独立限制。显示和回调分开发送，回调必须存在于当前脚本，不在本次函数内直接执行。
 - 实现：[`LuaSelectUI`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:631)。
 
 用法示例：
@@ -593,9 +595,9 @@ local ok = DelItem2(genre, detail, particular, level, 5)
 AddNormalItem(genre, detail, particular, level, series, luck[, options])
 ```
 
-- 参数：genre/detail/particular/level：原资源物品身份；series：模板生成系别；luck：生成幸运参数。前六项为非负整数。options：{Count=1, Bound=0, BindingMode=0}；或兼容旧第7参数0。
+- 参数：genre/detail/particular/level：原资源物品身份；series：模板生成系别；luck：生成幸运参数。前六项为非负整数。options：{Count=1, Bound=0, BindingMode=0, MagicCount=0, MagicLevel=1}；或兼容旧第7参数0。
 - 返回：通常为 成功标志(1/0), 属性说明字符串；部分早期失败仅返回0（第二值为nil）。不返回物品索引。
-- 限制／说明：Count范围1～100000且受模板堆叠上限约束，装备只能1；Bound为0/1，BindingMode为0～255，未绑定时模式必须0。按当前资源版本生成，装备满耐久，自动找背包空位／叠加并同步。材料level=1的旧调用可回退level=0。满包或发奖失败在已有事务内抛错回滚。不要套用其他版本“第7参数=数量”的调用。
+- 限制／说明：Count范围1～100000且受模板堆叠上限约束，装备只能1；Bound为0/1，BindingMode为0～255，未绑定时模式必须0。按当前资源版本生成，装备满耐久，自动找背包空位／叠加并同步。材料level=1的旧调用可回退level=0。`MagicCount`可选0～6，0保持原行为；正值仅支持普通装备生成表覆盖的detail（0～10）、series（0～4）和Count=1。`MagicLevel`可选1～10，表示每条随机魔法属性的生成档位，并非装备需求等级。按原属性表生成，无法生成指定条数则失败，不会降为白装。固有套装／黄金等属性模板一般无需设置这两项。满包或发奖失败在已有事务内抛错回滚。不要套用其他版本“第7参数=数量”的调用。
 - 实现：[`LuaAddNormalItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:3801)。
 
 用法示例：
@@ -613,9 +615,9 @@ local ok, desc = AddNormalItem(genre, detail, particular, level, 0, 0,
 AddNormalItem2(genre, detail, particular, level, series, luck[, options])
 ```
 
-- 参数：genre/detail/particular/level：原资源物品身份；series：模板生成系别；luck：生成幸运参数。前六项为非负整数。options：{Count=1, Bound=0, BindingMode=0}；或兼容旧第7参数0。
+- 参数：genre/detail/particular/level：原资源物品身份；series：模板生成系别；luck：生成幸运参数。前六项为非负整数。options：{Count=1, Bound=0, BindingMode=0, MagicCount=0, MagicLevel=1}；或兼容旧第7参数0。
 - 返回：通常为 成功标志(1/0), 属性说明字符串；部分早期失败仅返回0（第二值为nil）。不返回物品索引。
-- 限制／说明：与 `AddNormalItem` 同一实现、同一参数和返回值。Count范围1～100000且受模板堆叠上限约束，装备只能1；Bound为0/1，BindingMode为0～255，未绑定时模式必须0。按当前资源版本生成，装备满耐久，自动找背包空位／叠加并同步。材料level=1的旧调用可回退level=0。满包或发奖失败在已有事务内抛错回滚。不要套用其他版本“第7参数=数量”的调用。
+- 限制／说明：与 `AddNormalItem` 同一实现、同一参数和返回值。Count范围1～100000且受模板堆叠上限约束，装备只能1；Bound为0/1，BindingMode为0～255，未绑定时模式必须0。按当前资源版本生成，装备满耐久，自动找背包空位／叠加并同步。材料level=1的旧调用可回退level=0。`MagicCount`可选0～6，0保持原行为；正值仅支持普通装备生成表覆盖的detail（0～10）、series（0～4）和Count=1。`MagicLevel`可选1～10，表示每条随机魔法属性的生成档位，并非装备需求等级。按原属性表生成，无法生成指定条数则失败，不会降为白装。固有套装／黄金等属性模板一般无需设置这两项。满包或发奖失败在已有事务内抛错回滚。不要套用其他版本“第7参数=数量”的调用。
 - 实现：[`LuaAddNormalItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:3801)。
 
 用法示例：
@@ -633,9 +635,9 @@ local ok, desc = AddNormalItem2(genre, detail, particular, level, 0, 0,
 AddNormalItemPile(genre, detail, particular, level, series, luck[, options])
 ```
 
-- 参数：genre/detail/particular/level：原资源物品身份；series：模板生成系别；luck：生成幸运参数。前六项为非负整数。options：{Count=1, Bound=0, BindingMode=0}；或兼容旧第7参数0。
+- 参数：genre/detail/particular/level：原资源物品身份；series：模板生成系别；luck：生成幸运参数。前六项为非负整数。options：{Count=1, Bound=0, BindingMode=0, MagicCount=0, MagicLevel=1}；或兼容旧第7参数0。
 - 返回：通常为 成功标志(1/0), 属性说明字符串；部分早期失败仅返回0（第二值为nil）。不返回物品索引。
-- 限制／说明：与 `AddNormalItem` 同一实现、同一参数和返回值。Count范围1～100000且受模板堆叠上限约束，装备只能1；Bound为0/1，BindingMode为0～255，未绑定时模式必须0。按当前资源版本生成，装备满耐久，自动找背包空位／叠加并同步。材料level=1的旧调用可回退level=0。满包或发奖失败在已有事务内抛错回滚。不要套用其他版本“第7参数=数量”的调用。
+- 限制／说明：与 `AddNormalItem` 同一实现、同一参数和返回值。Count范围1～100000且受模板堆叠上限约束，装备只能1；Bound为0/1，BindingMode为0～255，未绑定时模式必须0。按当前资源版本生成，装备满耐久，自动找背包空位／叠加并同步。材料level=1的旧调用可回退level=0。`MagicCount`可选0～6，0保持原行为；正值仅支持普通装备生成表覆盖的detail（0～10）、series（0～4）和Count=1。`MagicLevel`可选1～10，表示每条随机魔法属性的生成档位，并非装备需求等级。按原属性表生成，无法生成指定条数则失败，不会降为白装。固有套装／黄金等属性模板一般无需设置这两项。满包或发奖失败在已有事务内抛错回滚。不要套用其他版本“第7参数=数量”的调用。
 - 实现：[`LuaAddNormalItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:3801)。
 
 用法示例：
@@ -643,6 +645,13 @@ AddNormalItemPile(genre, detail, particular, level, series, luck[, options])
 ```lua
 local ok, desc = AddNormalItemPile(genre, detail, particular, level, 0, 0,
     {Count=1, Bound=0, BindingMode=0})
+```
+
+随机蓝色坐骑示例（三个别名相同）：
+
+```lua
+assert(AddNormalItem(0, 10, GetPlayerType(), 2, 0, 100,
+    {MagicCount=1, MagicLevel=2}) == 1)
 ```
 
 ### `GetItemLevel2`
@@ -2381,82 +2390,124 @@ local active = IsExistBuff(107)
 
 ### `HaveIBBuff`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+状态：实现已核对。作用域：游戏／NPC／道具脚本。
 
 ```lua
-HaveIBBuff(buffId)
+HaveIBBuff(templateId)
 ```
 
-- 参数：buffId：当前技能／技能熟练度效果ID。
-- 返回：剩余时间大于0返回1，否则0。
-- 限制／说明：与 `IsExistBuff` 同一实现、同一参数和返回值。只查询 m_SkillBuffs 中的技能相关限时效果，不涵盖任意战斗状态。
-- 实现：[`LuaIsExistBuff`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:972)。
-
-用法示例：
-
-```lua
-local active = HaveIBBuff(107)
-```
+- 参数：原 `settings/item/001/ibitem.txt` 中已支持的模板编号，例如180小生命瓶、181小内力瓶、107临仙露。
+- 返回：该模板仍有剩余时间为1，否则0。
+- 与 `IsExistBuff` 区别：IB模板编号有独立的持久化命名空间，不能拿经典E5编号代替IB模板。
+- 示例：`if HaveIBBuff(180) == 1 then Msg2Player("生命瓶仍在生效。") end`。
+- 实现：`ScriptFuns.cpp::LuaHaveIBBuff`。
 
 ### `GetIBBuffLeftTimes`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+状态：实现已核对。作用域：游戏／NPC／道具脚本。
 
 ```lua
-GetIBBuffLeftTimes(buffId)
+GetIBBuffLeftTimes(templateId)
 ```
 
-- 参数：buffId：技能相关限时效果ID。
-- 返回：剩余秒数，未生效0。
-- 限制／说明：按系统time(NULL)计算；不是剩余使用次数。
-- 实现：[`LuaGetIBBuffLeftTimes`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:980)。
-
-用法示例：
-
-```lua
-local seconds = GetIBBuffLeftTimes(107)
-```
+- 参数：与 `HaveIBBuff` 相同的IB模板编号。
+- 返回：剩余秒数；未生效为0。不是物品数量，也不是可使用次数。
+- 当前会话使用到期时间计算；存档由C++依据原模板保存在线剩余时间或离线到期时间。
+- 示例：`local seconds = GetIBBuffLeftTimes(107)`。
+- 实现：`ScriptFuns.cpp::LuaGetIBBuffLeftTimes`。
 
 ### `AddBuff`
 
-状态：实现已核对，太岁新增状态待客户端实测。作用域：游戏／NPC脚本；道具事务白名单未开放。
+状态：实现已核对。作用域：游戏／NPC／道具事务。
 
 ```lua
 AddBuff(buffId, seconds, firstValue, secondValue, reserved)
 ```
 
-- 参数：必须5项；seconds为1～360000秒。reserved保留第5位置，当前不读取。时间按同种状态替换，不累计。
-- buff5：firstValue为打怪经验倍率1～5；不会倍增`AddOwnExp`直接奖励。
-- buff12：firstValue为技能熟练增幅百分比1～1000，原太岁传100，即翻倍；与临仙露目前乘算，组合规则尚无正式服样本。
-- buff13／14：firstValue为自然恢复周期附加内力／生命点数1～32767；不修改基础属性，避免穿脱装备或刷新状态重复累加。
-- buff7／23：firstValue为全技能加级值1～5；buff8：firstValue为已学技能ID、secondValue为加级值1～5。当前技能等级增益总和仍封顶+2。
-- 返回：成功1、失败0；事务中失败会报错中止并回滚。事务中的状态先变更服务器记录，提交后刷新属性及E5/F7，失败恢复原记录。
-- 保存：经典状态按绝对到期时间，退出期间仍计时；临仙露保持原配置的在线计时规则。
-- 实现：`Sources/Core/Src/ScriptFuns.cpp::LuaAddBuff`、`KSkillList.cpp`。
+- 必须5个非负整数。seconds通常为1～360000；经典15掉宝状态允许至604800秒。reserved保留，不读取。相同经典状态替换时间，不累计。
+- buff5：firstValue为打怪经验倍率1～5；不倍增 `AddOwnExp` 的直接奖励。
+- buff12：firstValue为熟练度增幅百分比1～1000；100为增加100%。延续原实现，与IB熟练度倍率乘算，组合缺正式服样本。
+- buff13／14：firstValue为每个自然恢复周期额外恢复的内力／生命点数1～32767；死亡时不恢复，上限截断。
+- buff15：firstValue为掉宝概率增幅百分比1～1000。100将两张原掉落表的单次命中概率提高至2倍，最高100%，保留条件物品权重；不额外复制掉落物。secondValue保留原脚本传值，目前无独立已确认语义。
+- buff7／23：firstValue为全技能临时加级值1～5；buff8：firstValue为已学技能ID，secondValue为临时加级值1～5。已启用技能的最终增益仍封顶+2。
+- 返回：成功1，失败0；道具事务内失败会报错中止。提交时刷新技能等级、属性及E5/F7；失败恢复物品、金钱、任务及BUFF快照。
+- 经典状态保存绝对到期时间，退出仍计时。不会扣除道具，Lua应在效果设置成功后调用 `ConsumeUseItem()`。
+- 实现：`ScriptFuns.cpp::LuaAddBuff`、`KSkillList.cpp`。
 
 ```lua
 assert(AddBuff(5, 3600, 2, 0, 1) == 1)
-assert(AddBuff(8, 3600, skillId, 1, 0) == 1)
+assert(ConsumeUseItem() == 1)
 ```
 
 ### `AddIBBuff`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+状态：实现已核对。作用域：游戏／NPC／道具事务。
 
 ```lua
-AddIBBuff(buffId)
+AddIBBuff(templateId [, seconds])
 ```
 
-- 参数：buffId：有原 PLAYER_SKILL_BUFF_RULE 的技能倍率效果ID；当前临仙露组107/271/272。
-- 返回：成功1，失败0。
-- 限制／说明：持续时间和倍率取原规则；同组不同ID互斥，同ID累计时间且受上限限制。不会扣消耗品；脚本先检查并按原消耗流程处理。
-- 实现：[`LuaAddIBBuff`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1049)。
-
-用法示例：
+- templateId：原 `ibitem.txt` 中已加载且属性实现完整的模板编号；当前接受纯正整数88生命回复、92内力回复、181经验增幅、187熟练度增幅的组合。不把其他未支持模板伪装成有效BUFF。
+- seconds：可省略，默认原模板时长；显式指定时为正整数，受原模板总叠加时长限制。原表时长×自身叠加最大数量构成总上限，不另建平行配置。
+- 同模板累计剩余时间；不同模板是否互斥由对应Lua判断。此通用接口不替临仙露等物品写专属条件。
+- 返回成功1；失败0，事务内报错回滚。不会扣道具。提交前不发送新图标，提交后以稳定实例身份更新F7，避免重复图标。
+- 在线／离线计时由原模板决定。回复点数跨模板相加；经验与熟练度类同时生效的IB模板取最强增幅，组合尚待正式服对照。
+- 实现：`ScriptFuns.cpp::LuaAddIBBuff`、`KSkillManager.cpp::LoadItemBuffRules`。
 
 ```lua
-local ok = AddIBBuff(107)
+if CanAddIBBuff(180) == 1 then
+	assert(AddIBBuff(180) == 1)
+	assert(ConsumeUseItem() == 1)
+end
 ```
+
+### `CanAddIBBuff`
+
+状态：新增，原生及实际TLS验证见本轮开发记录。作用域：游戏／NPC／道具事务。
+
+```lua
+CanAddIBBuff(templateId [, seconds])
+```
+
+- 参数与 `AddIBBuff` 相同；仅检查模板已支持、参数整数、剩余时间未超过总叠加上限，以及16个持久BUFF槽中存在同类或空槽。
+- 返回1表示此刻可添加，0表示不可添加；不改变状态、不扣物品。不会判断职业、物品身份或物品专属互斥，Lua需另查。
+- 不是预留或锁定；实际 `AddIBBuff` 会再次验证。
+- 示例：`if CanAddIBBuff(252) ~= 1 then Msg2Player("时间已满或状态栏已满。") return end`。
+- 实现：`ScriptFuns.cpp::LuaCanAddIBBuff`。
+
+### `AddStateBuff`
+
+状态：新增，原生验证通过，客户端图标与画面待实测。作用域：游戏／NPC／道具事务。
+
+```lua
+AddStateBuff(skillId [, peaceOnly])
+```
+
+- skillId：当前 `magicscript.txt` 中原有详细类别0道具引用的真实技能编号。仅接受技能等级1、纯自身限时属性状态，拒绝子弹、伤害、立即作用、混合时长或没有有效属性的技能。
+- 属性和持续时间全部取原 `skills.txt` 及该技能等级Lua；不允许传入任意属性或捏造数值。
+- peaceOnly：省略或0为所有阵营；1为仅新手／PK关阵营生效。仅允许整数0／1；Lua还应在使用前检查阵营。进入PK阵营时暂停属性，时间继续计，返回和平阵营时若未到期则恢复。
+- 返回成功1；失败0，事务内报错回滚。同技能替换原时长；不同变体互斥由Lua调用 `RemoveStateBuff` 管理。
+- 状态与物品同一事务提交；不把技能伪装成已学职业技能。在线计时，重登恢复剩余时长；到期撤销属性。不会扣道具。
+- 实现：`ScriptFuns.cpp::LuaAddStateBuff`、`KSkillList.cpp::AddItemStateBuff`、`KSkills.cpp::ApplyItemState`。
+
+```lua
+assert(AddStateBuff(55, 1) == 1)
+assert(ConsumeUseItem() == 1)
+```
+
+### `RemoveStateBuff`
+
+状态：新增，原生验证通过。作用域：游戏／NPC／道具事务。
+
+```lua
+RemoveStateBuff(skillId)
+```
+
+- skillId：与 `AddStateBuff` 相同的原道具技能编号。
+- 返回移除1、原本不存在0。非法参数或不是原道具引用技能时拒绝，事务内报错回滚。
+- 只移除本接口管理的持久道具状态；不删除职业BUFF、被动技能或其他玩家施加的效果。事务中延迟撤销，提交后更新实际属性及状态协议。
+- 示例：`RemoveStateBuff(52)`，用于原归元丹解除御风类效果。
+- 实现：`ScriptFuns.cpp::LuaRemoveStateBuff`。
 
 ### `RemoveBuff`
 
@@ -2468,7 +2519,7 @@ RemoveBuff(buffId)
 
 - 参数：buffId：技能相关限时效果ID。
 - 返回：成功移除1，未找到／无角色0。
-- 限制／说明：只删除该技能效果列表条目，触发技能等级刷新及Buff同步，不是任意战斗状态删除器。
+- 限制／说明：删除指定持久状态；事务中延迟属性和协议刷新，回滚恢复。经典效果使用原编号；IB状态优先使用对应IB接口，不要在脚本中拼装存档编号。不是任意战斗状态删除器。
 - 实现：[`LuaRemoveBuff`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:988)。
 
 用法示例：
@@ -6842,7 +6893,7 @@ local shape = GetMorphType()
 ```
 
 - 作用域：NPC／玩家脚本；无参数。返回有效变身模板ID，无有效形态时-1。该接口只读，不改变到期时间。
-- 示例：`if GetMorphType() == -1 then ... end`。当前道具事务白名单未开放。
+- 示例：`if GetMorphType() == -1 then ... end`。已开放道具事务，只读且不改变变身状态。
 
 ### `PolyMorph`
 
@@ -6863,7 +6914,7 @@ local last = GetLastSkillIdx()
 ```
 
 - 作用域：NPC／玩家脚本；无参数。返回最后一个非空技能槽下标；无技能时0。是内部槽号，不是技能ID，也不等于已学技能总数。
-- 示例：从1到last循环，配合`IsSkillActivedByIdx`及`GetSkillId`挑选已学技能；当前道具事务白名单未开放。
+- 示例：从1到last循环，配合`IsSkillActivedByIdx`及`GetSkillId`挑选已学技能；已开放道具事务，只读且不改变变身状态。
 
 ### `IsSkillActivedByIdx`
 
@@ -6873,7 +6924,7 @@ local learned = IsSkillActivedByIdx(index)
 
 - 作用域：NPC／玩家脚本。index为内部1起始技能槽号；有效、有技能且学习状态为3时返回1，否则0。
 - 只查询学习权限，不表示技能正在施放、光环打开或冷却结束；不要用于绕过技能冷却。
-- 示例：`if IsSkillActivedByIdx(i) == 1 then local id = GetSkillId(i) end`。当前道具事务白名单未开放。
+- 示例：`if IsSkillActivedByIdx(i) == 1 then local id = GetSkillId(i) end`。已开放道具事务，只读且不改变变身状态。
 
 
 ## 背包与仓库永久扩展（2026-11-12）

@@ -1088,6 +1088,26 @@ void KSkillList::RefreshPlayerSkillLevels()
 			Skill.CurrentSkillLevel = MAX_SKILLLEVEL - 1;
 	}
 	ApplyPlayerPassiveSkills();
+	if (m_nNpcIndex > 0 && m_nNpcIndex < MAX_NPC && Npc[m_nNpcIndex].IsPlayer())
+	{
+		for (int nSkill = 1; nSkill < MAX_SKILL; nSkill++)
+		{
+			if (!g_SkillManager.IsItemStateSkill(nSkill))
+				continue;
+			int nLeft = GetPlayerSkillBuffTime(0x20000 | nSkill);
+			int nLevel = GetPlayerBuffValue(0x20000 | nSkill);
+			KSkill* pSkill = nLeft ? (KSkill*)g_SkillManager.GetSkill(nSkill, nLevel) : NULL;
+			BOOL bPeaceOnly = FALSE;
+			for (int j = 0; j < 16; j++)
+				if (m_SkillBuffs[j].BuffId == (DWORD)(0x20000 | nSkill))
+					bPeaceOnly = m_SkillBuffs[j].SkillId != 0;
+			BOOL bCampAllowed = !bPeaceOnly || Npc[m_nNpcIndex].m_Camp == camp_begin || Npc[m_nNpcIndex].m_Camp == camp_pk_closed;
+			if (bCampAllowed && pSkill && pSkill->GetItemBuffDuration())
+				pSkill->ApplyItemState(m_nNpcIndex, min(nLeft, pSkill->GetItemBuffDuration()));
+			else
+				Npc[m_nNpcIndex].RemoveStateSkillEffect(nSkill);
+		}
+	}
 }
 
 int KSkillList::GetPlayerSkillBuffTime(DWORD dwBuffId)
@@ -1101,9 +1121,41 @@ int KSkillList::GetPlayerSkillBuffTime(DWORD dwBuffId)
 	return 0;
 }
 
-// 经典状态的参数来自原脚本；与临仙露倍率规则共用持久化状态容器。
+// Keep the three already-deployed dew IDs readable; all other IB IDs are namespaced.
+DWORD KSkillList::GetItemBuffStorageId(int nTemplate)
+{
+	return nTemplate == 107 || nTemplate == 271 || nTemplate == 272 ? nTemplate : 0x10000 | nTemplate;
+}
+
+int KSkillList::GetItemBuffTemplateId(DWORD dwStoredId)
+{
+	if (dwStoredId == 107 || dwStoredId == 271 || dwStoredId == 272)
+		return dwStoredId;
+	return (dwStoredId & 0xffff0000) == 0x10000 ? (dwStoredId & 0xffff) : -1;
+}
+
+int KSkillList::GetBuffMaxDuration(DWORD dwStoredId)
+{
+	if ((dwStoredId & 0xffff0000) == 0x20000)
+	{
+		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(dwStoredId & 0xffff, 1);
+		return pSkill ? pSkill->GetItemBuffDuration() : 0;
+	}
+	const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(GetItemBuffTemplateId(dwStoredId));
+	return pRule ? pRule->MaxDuration : (dwStoredId == 15 ? 7 * 86400 : 100 * 3600);
+}
+
 BOOL KSkillList::IsValidPlayerSkillBuffData(DWORD dwBuffId, int nSkillId, int nValue)
 {
+	if ((dwBuffId & 0xffff0000) == 0x20000)
+		return g_SkillManager.IsItemStateSkill(dwBuffId & 0xffff) && (nSkillId == 0 || nSkillId == 1) && nValue == 1 && GetBuffMaxDuration(dwBuffId) > 0;
+	int nTemplate = GetItemBuffTemplateId(dwBuffId);
+	if (nTemplate >= 0)
+	{
+		const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(nTemplate);
+		int nExpectedValue = pRule && g_SkillManager.GetPlayerBuffRule(nTemplate) ? 1 + pRule->SkillExpPercent / 100 : 1;
+		return pRule && nSkillId == 0 && nValue == nExpectedValue;
+	}
 	if (nSkillId < 0 || nSkillId >= MAX_SKILL || (dwBuffId != 8 && nSkillId != 0))
 		return FALSE;
 	switch (dwBuffId)
@@ -1112,14 +1164,68 @@ BOOL KSkillList::IsValidPlayerSkillBuffData(DWORD dwBuffId, int nSkillId, int nV
 	case 12: return nValue >= 1 && nValue <= 1000;
 	case 13:
 	case 14: return nValue >= 1 && nValue <= 32767;
+	case 15: return nValue >= 1 && nValue <= 1000;
 	case 7:
 	case 8:
-	case 23:
-	case 107:
-	case 271:
-	case 272: return nValue >= 1 && nValue <= 5 && (dwBuffId != 8 || nSkillId > 0);
+	case 23: return nValue >= 1 && nValue <= 5 && (dwBuffId != 8 || nSkillId > 0);
 	default: return FALSE;
 	}
+}
+
+BOOL KSkillList::AddItemStateBuff(int nSkillId, int nLevel, BOOL bSync, BOOL bPeaceOnly)
+{
+	if (!g_SkillManager.IsItemStateSkill(nSkillId) || nLevel != 1)
+		return FALSE;
+	int nSeconds = GetBuffMaxDuration(0x20000 | nSkillId);
+	return nSeconds > 0 && AddPlayerSkillBuff(0x20000 | nSkillId, nSeconds, bPeaceOnly ? 1 : 0, nLevel, FALSE, bSync);
+}
+
+BOOL KSkillList::CanAddItemBuff(int nTemplate, int nSeconds)
+{
+	const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(nTemplate);
+	if (!pRule)
+		return FALSE;
+	if (!nSeconds)
+		nSeconds = pRule->Duration;
+	DWORD dwStoredId = GetItemBuffStorageId(nTemplate);
+	if (nSeconds <= 0 || nSeconds > pRule->MaxDuration ||
+		GetPlayerSkillBuffTime(dwStoredId) > pRule->MaxDuration - nSeconds)
+		return FALSE;
+	for (int i = 0; i < 16; i++)
+		if (m_SkillBuffs[i].BuffId == dwStoredId || !m_SkillBuffs[i].BuffId ||
+			m_SkillBuffs[i].EndTime <= (DWORD)time(NULL))
+			return TRUE;
+	return FALSE;
+}
+
+BOOL KSkillList::AddItemBuff(int nTemplate, int nSeconds, BOOL bSync)
+{
+	if (!CanAddItemBuff(nTemplate, nSeconds))
+		return FALSE;
+	const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(nTemplate);
+	int nValue = g_SkillManager.GetPlayerBuffRule(nTemplate) ? 1 + pRule->SkillExpPercent / 100 : 1;
+	return AddPlayerSkillBuff(GetItemBuffStorageId(nTemplate), nSeconds ? nSeconds : pRule->Duration,
+		0, nValue, TRUE, bSync);
+}
+
+int KSkillList::GetItemBuffAttribute(int nAttribute)
+{
+	int nValue = 0;
+	for (int i = 0; i < 16; i++)
+	{
+		const PLAYER_SKILL_BUFF& Buff = m_SkillBuffs[i];
+		if (Buff.EndTime <= (DWORD)time(NULL))
+			continue;
+		const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(GetItemBuffTemplateId(Buff.BuffId));
+		if (!pRule)
+			continue;
+		if (nAttribute == 88) nValue += pRule->LifeReplenish;
+		else if (nAttribute == 92) nValue += pRule->ManaReplenish;
+		// Alternative experience medicines select their strongest effect, never multiply one another.
+		else if (nAttribute == 181) nValue = max(nValue, pRule->ExperiencePercent);
+		else if (nAttribute == 187) nValue = max(nValue, pRule->SkillExpPercent);
+	}
+	return nValue;
 }
 
 int KSkillList::GetPlayerBuffValue(DWORD dwBuffId)
@@ -1135,18 +1241,18 @@ int KSkillList::GetPlayerBuffValue(DWORD dwBuffId)
 
 int KSkillList::GetPlayerExperienceMultiplier()
 {
-	return max(1, GetPlayerBuffValue(5));
+	return GetPlayerExperiencePercent() / 100;
+}
+
+int KSkillList::GetPlayerExperiencePercent()
+{
+	int nClassic = max(1, GetPlayerBuffValue(5)) * 100;
+	return max(nClassic, 100 + GetItemBuffAttribute(181));
 }
 
 int KSkillList::GetSkillExpMultiplier()
 {
-	int nMultiplier = 1;
-	for (int i = 0; i < 16; i++)
-	{
-		const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(m_SkillBuffs[i].BuffId);
-		if (pRule && GetPlayerSkillBuffTime(pRule->BuffId) && pRule->Multiplier > nMultiplier)
-			nMultiplier = pRule->Multiplier;
-	}
+	int nMultiplier = 1 + GetItemBuffAttribute(187) / 100;
 	// 原太岁状态12的参数为熟练度增幅百分比，而非倍率。
 	int nPercent = GetPlayerBuffValue(12);
 	return nMultiplier * (100 + nPercent) / 100;
@@ -1154,7 +1260,7 @@ int KSkillList::GetSkillExpMultiplier()
 
 BOOL KSkillList::AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, int nValue, BOOL bAddTime, BOOL bSync)
 {
-	if (nSeconds <= 0 || nSeconds > 100 * 3600 ||
+	if (nSeconds <= 0 || nSeconds > GetBuffMaxDuration(dwBuffId) ||
 		!IsValidPlayerSkillBuffData(dwBuffId, nSkillId, nValue) ||
 		(dwBuffId == 8 && !IsPlayerSkillLearned(nSkillId)))
 		return FALSE;
@@ -1174,8 +1280,7 @@ BOOL KSkillList::AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, 
 	if (nFree < 0)
 		return FALSE;
 	int nLeft = bAddTime ? GetPlayerSkillBuffTime(dwBuffId) : 0;
-	const PLAYER_SKILL_BUFF_RULE* pRule = g_SkillManager.GetPlayerBuffRule(dwBuffId);
-	int nMaxDuration = pRule ? pRule->MaxDuration : 100 * 3600;
+	int nMaxDuration = GetBuffMaxDuration(dwBuffId);
 	if (nLeft > nMaxDuration - nSeconds)
 		return FALSE;
 	PLAYER_SKILL_BUFF& Buff = m_SkillBuffs[nFree];
@@ -1191,15 +1296,18 @@ BOOL KSkillList::AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, 
 	return TRUE;
 }
 
-BOOL KSkillList::RemovePlayerSkillBuff(DWORD dwBuffId)
+BOOL KSkillList::RemovePlayerSkillBuff(DWORD dwBuffId, BOOL bSync)
 {
 	for (int i = 0; i < 16; i++)
 	{
 		if (m_SkillBuffs[i].BuffId != dwBuffId)
 			continue;
 		memset(&m_SkillBuffs[i], 0, sizeof(m_SkillBuffs[i]));
-		RefreshPlayerSkillLevels();
-		SyncPlayerSkillBuffs();
+		if (bSync)
+		{
+			RefreshPlayerSkillLevels();
+			SyncPlayerSkillBuffs();
+		}
 		return TRUE;
 	}
 	return FALSE;
@@ -1235,7 +1343,7 @@ void KSkillList::SyncPlayerSkillBuffs(BOOL bInitial)
 	// 全量E5不能覆盖已有项；增量先撤销再添加，避免反复叠加客户端技能等级。
 	if (!bInitial)
 	{
-		int Kinds[] = {5, 7, 8, 12, 13, 14, 23};
+		int Kinds[] = {5, 7, 8, 12, 13, 14, 15, 23};
 		for (int i = 0; i < sizeof(Kinds) / sizeof(Kinds[0]); i++)
 		{
 			GAME_SKILL_BUFF_CHANGE Sync;
@@ -1254,7 +1362,7 @@ void KSkillList::SyncPlayerSkillBuffs(BOOL bInitial)
 	{
 		const PLAYER_SKILL_BUFF& Buff = m_SkillBuffs[i];
 		int nLeft = GetPlayerSkillBuffTime(Buff.BuffId);
-		if (!nLeft || g_SkillManager.GetPlayerBuffRule(Buff.BuffId))
+		if (!nLeft || GetItemBuffTemplateId(Buff.BuffId) >= 0 || (Buff.BuffId & 0xffff0000) == 0x20000)
 			continue;
 		GAME_SKILL_BUFF_DATA& Data = Sync.Buffs[Sync.Count++];
 		Data.RemainingSeconds = nLeft;
@@ -1265,31 +1373,34 @@ void KSkillList::SyncPlayerSkillBuffs(BOOL bInitial)
 	Sync.Length = 4 + sizeof(GAME_SKILL_BUFF_DATA) * Sync.Count;
 	g_pServer->PackDataToClient(nClient, &Sync, Sync.Length + 1);
 
-	// IB状态与经典技能加级状态分开同步；实例标识1..3只用于本模块三种临仙露。
-	// 新增记录+2的DWORD须与尾部删除标识一致；+10的BYTE是属性参数，不是实例号。
-	// 同包先删除旧实例再加入当前剩余时间，重饮及其他技能增益变化不会堆叠图标。
-	BYTE Buffer[5 + 3 * sizeof(GAME_IB_BUFF_DATA) + 3 * sizeof(DWORD)];
+	// Use one stable native-template identity per IB state. Legacy dews retain instances 1..3.
+	// Delete these owned identities before adding; otherwise the client allocates duplicate icons.
+	BYTE Buffer[5 + 16 * sizeof(GAME_IB_BUFF_DATA) + MAX_PLAYER_ITEM_BUFF_TEMPLATE * sizeof(DWORD)];
 	memset(Buffer, 0, sizeof(Buffer));
 	Buffer[0] = 0xF7;
-	int BuffIds[] = {107, 271, 272};
 	int nOffset = 5;
-	for (int i = 0; i < 3; i++)
+	for (int i = 0; i < 16; i++)
 	{
-		int nLeft = GetPlayerSkillBuffTime(BuffIds[i]);
-		if (!nLeft)
+		const PLAYER_SKILL_BUFF& Buff = m_SkillBuffs[i];
+		int nTemplate = GetItemBuffTemplateId(Buff.BuffId);
+		int nLeft = GetPlayerSkillBuffTime(Buff.BuffId);
+		if (nTemplate < 0 || !nLeft)
 			continue;
 		GAME_IB_BUFF_DATA Data;
 		memset(&Data, 0, sizeof(Data));
-		Data.TemplateId = BuffIds[i];
+		Data.TemplateId = nTemplate;
 		Data.RemainingSeconds = nLeft;
-		Data.InstanceId = i + 1;
+		Data.InstanceId = nTemplate == 107 ? 1 : nTemplate == 271 ? 2 : nTemplate == 272 ? 3 : 0x10000 + nTemplate;
 		Data.unknown_1 = 1;
 		memcpy(Buffer + nOffset, &Data, sizeof(Data));
 		nOffset += sizeof(Data);
 		Buffer[4]++;
 	}
-	for (DWORD dwInstance = 1; dwInstance <= 3; dwInstance++)
+	for (int nTemplate = 0; nTemplate < MAX_PLAYER_ITEM_BUFF_TEMPLATE; nTemplate++)
 	{
+		if (!g_SkillManager.GetItemBuffRule(nTemplate))
+			continue;
+		DWORD dwInstance = nTemplate == 107 ? 1 : nTemplate == 271 ? 2 : nTemplate == 272 ? 3 : 0x10000 + nTemplate;
 		memcpy(Buffer + nOffset, &dwInstance, sizeof(dwInstance));
 		nOffset += sizeof(dwInstance);
 	}

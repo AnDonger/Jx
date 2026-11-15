@@ -2282,6 +2282,34 @@ int KSkill::GetSkillIdFromName(char * szSkillName)
 // Comments		:
 // Author		: RomanDou
 *****************************************************************************/
+// Only native self-targeted, purely timed attribute effects can enter an item transaction.
+int KSkill::GetItemBuffDuration() const
+{
+	if (m_eSkillStyle != SKILL_SS_InitiativeNpcState || !m_bTargetSelf || m_bTargetEnemy ||
+		m_nStateAttribsNum <= 0 || m_nStateAttribsNum > MAX_SKILL_STATE || m_nImmediateAttribsNum)
+		return 0;
+	int nFrames = m_StateAttribs[0].nValue[1];
+	if (nFrames <= 0 || nFrames > 100 * 3600 * 18)
+		return 0;
+	for (int i = 1; i < m_nStateAttribsNum; i++)
+		if (m_StateAttribs[i].nValue[1] != nFrames)
+			return 0;
+	return (nFrames + 17) / 18;
+}
+
+BOOL KSkill::ApplyItemState(int nLauncher, int nSeconds) const
+{
+	int nDuration = GetItemBuffDuration();
+	if (!nDuration || nSeconds <= 0 || nSeconds > nDuration || nLauncher <= 0 || nLauncher >= MAX_NPC)
+		return FALSE;
+	KMagicAttrib Attribs[MAX_SKILL_STATE];
+	memcpy(Attribs, m_StateAttribs, m_nStateAttribsNum * sizeof(KMagicAttrib));
+	for (int i = 0; i < m_nStateAttribsNum; i++)
+		Attribs[i].nValue[1] = nSeconds * 18;
+	Npc[nLauncher].SetStateSkillEffect(nLauncher, m_nId, m_ulLevel, Attribs, m_nStateAttribsNum, nSeconds * 18);
+	return TRUE;
+}
+
 BOOL KSkill::ApplyStateSkill(int nLauncher) const
 {
 	if (m_eSkillStyle == SKILL_SS_PassivityNpcState)

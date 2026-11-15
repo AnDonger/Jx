@@ -1441,8 +1441,8 @@ void KPlayer::SendCharacterDetails(const char* pszName)
 			case 106: Value = Hero.m_CurrentFreezeTimeReducePercent; break;
 			case 104: Value = Hero.m_CurrentPhysicsResist; break;
 			case 149: Value = Hero.m_ManaShield.nValue[0]; break;
-			case 88: Value = Hero.m_CurrentLifeReplenish; break;
-			case 92: Value = Hero.m_CurrentManaReplenish; break;
+			case 88: Value = Hero.m_CurrentLifeReplenish + Npc[m_nIndex].m_SkillList.GetPlayerBuffValue(14) + Npc[m_nIndex].m_SkillList.GetItemBuffAttribute(88); break;
+			case 92: Value = Hero.m_CurrentManaReplenish + Npc[m_nIndex].m_SkillList.GetPlayerBuffValue(13) + Npc[m_nIndex].m_SkillList.GetItemBuffAttribute(92); break;
 			case 118: Value = Hero.m_CurrentMeleeDmgRetPercent; break;
 			case 117: Value = Hero.m_CurrentMeleeDmgRet; break;
 			case 120: Value = Hero.m_CurrentRangeDmgRetPercent; break;
@@ -2199,8 +2199,8 @@ void	KPlayer::AddSelfExp(int nExp, int nTarLevel)
 	if (nGetExp <= 0)
 		nGetExp = 1;
 	
-	int nExperienceMultiplier = Npc[m_nIndex].m_SkillList.GetPlayerExperienceMultiplier();
-	__int64 nAward = (__int64)nGetExp * nExperienceMultiplier;
+	int nExperiencePercent = Npc[m_nIndex].m_SkillList.GetPlayerExperiencePercent();
+	__int64 nAward = (__int64)nGetExp * nExperiencePercent / 100;
 	if (nAward > (__int64)0x7fffffff - m_nExp)
 		nAward = (__int64)0x7fffffff - m_nExp;
 	nGetExp = (int)nAward;
@@ -3668,9 +3668,28 @@ BOOL	KPlayer::ServerPickUpItem(BYTE* pProtocol, BOOL bPet)
 //-------------------------------------------------------------------------
 //	功能：收到客户端要求使用某个物品(鼠标右键点击)
 //-------------------------------------------------------------------------
+static void TraceItemUse(KPlayer& Role, const char* pszStage, int nItem,
+	const GAME_USE_ITEM_COMMAND* pCommand = NULL)
+{
+	KNpc* pOwner = Role.m_nIndex > 0 && Role.m_nIndex < MAX_NPC ? &Npc[Role.m_nIndex] : NULL;
+	KItem* pItem = nItem > 0 && nItem < MAX_ITEM ? &Item[nItem] : NULL;
+	printf("[ItemUse] role=%s player=%d stage=%s request=%d,%d,%d,%lu,%d item=%d,%lu,%d,%d,%d,%d loaded=%d exchange=%d doing=%d life=%d world=%d region=%d trade=%d\n",
+		Role.m_PlayerName, Role.GetPlayerIndex(), pszStage,
+		pCommand ? pCommand->Place : -1, pCommand ? pCommand->X : -1,
+		pCommand ? pCommand->Y : -1, pCommand ? pCommand->ItemId : 0,
+		pCommand ? pCommand->UseMode : -1, nItem, pItem ? pItem->GetID() : 0,
+		pItem ? pItem->GetGenre() : -1, pItem ? pItem->GetDetailType() : -1,
+		pItem ? pItem->GetParticular() : -1, pItem ? pItem->GetLevel() : -1,
+		Role.m_bFinishLoading, Role.m_bExchangeServer, pOwner ? pOwner->m_Doing : -1,
+		pOwner ? pOwner->m_CurrentLife : -1, pOwner ? pOwner->m_SubWorldIndex : -1,
+		pOwner ? pOwner->m_RegionIndex : -1, Role.CheckTrading());
+	fflush(stdout);
+}
+
 void	KPlayer::EatItem(BYTE* pProtocol)
 {
 	const GAME_USE_ITEM_COMMAND *pEat = (const GAME_USE_ITEM_COMMAND*)pProtocol;
+	TraceItemUse(*this, "request", 0, pEat);
 	
 	if ((pEat->UseMode != 1 && pEat->UseMode != 2) ||
 		(!IsBagItemPlace(pEat->Place) && pEat->Place != pos_immediacy) ||
@@ -3682,6 +3701,19 @@ void	KPlayer::EatItem(BYTE* pProtocol)
 	if (nItem <= 0 || nItem >= MAX_ITEM)
 		return;
 	// 当前客户端模式1为手动使用，模式2为自动回复；自动请求仅允许药品。
+	TraceItemUse(*this, "resolved", nItem, pEat);
+	if (Item[nItem].IsExpired())
+	{
+		TraceItemUse(*this, "expired", nItem, pEat);
+		PLAYER_SCRIPTACTION_SYNC Info = {};
+		Info.m_bUIId = UI_MSGINFO;
+		Info.m_bParam2 = 1;
+		Info.m_nOperateType = SCRIPTACTION_UISHOW;
+		g_StrCpyLen(Info.m_pContent, "该道具已过期，无法使用。", sizeof(Info.m_pContent));
+		Info.m_nBufferLen = strlen(Info.m_pContent);
+		DoScriptAction(&Info);
+		return;
+	}
 	if (pEat->UseMode == 2 && Item[nItem].GetGenre() != item_medicine)
 		return;
 	if (Item[nItem].GetGenre() == item_skillbook)
@@ -3696,18 +3728,7 @@ void	KPlayer::EatItem(BYTE* pProtocol)
 	}
 	if (Item[nItem].GetGenre() == item_magicorscript)
 	{
-		KItem& Data = Item[nItem];
-		int nParticular = Data.GetParticular();
-		BOOL bSkillItem = Data.GetDetailType() == 1 && Data.GetLevel() == 1 &&
-			((nParticular >= 482 && nParticular <= 487) || (nParticular >= 568 && nParticular <= 570) ||
-			 nParticular == 987 || nParticular == 612 || nParticular == 625 ||
-			 nParticular == 508 || nParticular == 512 || nParticular == 1091 ||
-			 nParticular == 942 || nParticular == 943 || nParticular == 1092 ||
-			 nParticular == 944 || nParticular == 945 || nParticular == 1093 || nParticular == 1139);
-		if (bSkillItem)
-			UseSkillBuffItem(nItem);
-		else
-			UseScriptItem(nItem);
+		UseScriptItem(nItem);
 		return;
 	}
 	if (Item[nItem].GetGenre() != item_medicine)
@@ -4536,6 +4557,7 @@ void KPlayer::Revive(int nType)
 	// The death animation may still be playing when the player confirms revival.
 	// Clear death states before restoring maxima and before the destination snapshot.
 	Npc.ExecuteRevive();
+	Npc.m_SkillList.RefreshPlayerSkillLevels();
 	Npc.m_CurrentLife = Npc.m_CurrentLifeMax;
 	Npc.m_CurrentMana = Npc.m_CurrentManaMax;
 	Npc.m_CurrentStamina = Npc.m_CurrentStaminaMax;
@@ -5136,8 +5158,8 @@ void	KPlayer::S2CExecuteScript(char * ScriptName, char * szParam = NULL)
 		ScriptAction.m_nBufferLen = strlen(ScriptName) + 2 + strlen(szParam);
 		sprintf(ScriptAction.m_pContent, "%s|%s", ScriptName, szParam);
 	}
-	ScriptAction.m_wProtocolLong = sizeof(PLAYER_SCRIPTACTION_SYNC) - 300 + ScriptAction.m_nBufferLen - 1;
-	g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&ScriptAction, sizeof(PLAYER_SCRIPTACTION_SYNC) - 300 + ScriptAction.m_nBufferLen);	
+	ScriptAction.m_wProtocolLong = sizeof(PLAYER_SCRIPTACTION_SYNC) - MAX_SCIRPTACTION_BUFFERNUM + ScriptAction.m_nBufferLen - 1;
+	g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&ScriptAction, sizeof(PLAYER_SCRIPTACTION_SYNC) - MAX_SCIRPTACTION_BUFFERNUM + ScriptAction.m_nBufferLen);
 	
 }
 #endif
@@ -6759,175 +6781,7 @@ BOOL KPlayer::UseSkillBook(int nItem)
 	return TRUE;
 }
 
-BOOL KPlayer::UseSkillBuffItem(int nItem)
-{
-	if (nItem <= 0 || nItem >= MAX_ITEM || Item[nItem].GetGenre() != item_magicorscript)
-		return FALSE;
-	BOOL bOwned = FALSE;
-	for (PlayerItem* pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
-	{
-		if (pItem->nIdx == nItem &&
-			(IsBagItemPlace(pItem->nPlace) || pItem->nPlace == pos_immediacy))
-		{
-			bOwned = TRUE;
-			break;
-		}
-	}
-	if (!bOwned)
-		return FALSE;
-	KItem& Data = Item[nItem];
-	if (Data.GetDetailType() != 1 || Data.GetLevel() != 1)
-		return FALSE;
-	int nParticular = Data.GetParticular();
-	if (nParticular == 1139)
-	{
-		// 八景太极丹为一次性增加非被动技能经验；原脚本尚缺，不能猜测数值扣物品。
-		char szText[] = "该物品暂未开放使用。";
-		KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szText, strlen(szText));
-		return FALSE;
-	}
-	int nSeconds = 0;
-	DWORD dwBuff = 0;
-	int nValue = 1;
-	BOOL bAddTime = FALSE;
-	int nRequiredSeries = -1;
-	// 原magicscript.txt和龙魂丹/五行丹/翼神丹原脚本；丹的等级效果为限时+1。
-	if (nParticular >= 482 && nParticular <= 484)
-	{
-		nRequiredSeries = nParticular - 482;
-		nSeconds = 300;
-		dwBuff = 23;
-	}
-	else if (nParticular >= 485 && nParticular <= 487)
-	{
-		nRequiredSeries = nParticular - 485;
-		nSeconds = 1200;
-		dwBuff = 23;
-	}
-	else if (nParticular >= 568 && nParticular <= 570)
-	{
-		nRequiredSeries = nParticular - 568;
-		nSeconds = 3600;
-		dwBuff = 23;
-	}
-	else if (nParticular == 987 || nParticular == 612 || nParticular == 625)
-	{
-		// 青鸾之灵和技能秘籍共用第二个技能增益，只累加剩余时间。
-		nSeconds = nParticular == 987 ? 900 : 1800;
-		dwBuff = 7;
-		bAddTime = TRUE;
-	}
-	else if (nParticular == 508 || nParticular == 512 || nParticular == 1091)
-	{
-		dwBuff = 107;
-		nValue = 2;
-		nSeconds = 3600;
-		bAddTime = TRUE;
-	}
-	else if (nParticular == 942 || nParticular == 943 || nParticular == 1092)
-	{
-		dwBuff = 271;
-		nValue = 5;
-		nSeconds = 3600;
-		bAddTime = TRUE;
-	}
-	else if (nParticular == 944 || nParticular == 945 || nParticular == 1093)
-	{
-		dwBuff = 272;
-		nValue = 3;
-		nSeconds = 3600;
-		bAddTime = TRUE;
-	}
-	else
-		return FALSE;
-	if (nRequiredSeries >= 0 && Npc[m_nIndex].m_Series != nRequiredSeries)
-	{
-		char szText[] = "你不适合使用该物品。";
-		KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szText, strlen(szText));
-		return FALSE;
-	}
-	KSkillList& List = Npc[m_nIndex].m_SkillList;
-	const PLAYER_SKILL_BUFF_RULE* pBuffRule = g_SkillManager.GetPlayerBuffRule(dwBuff);
-	if (pBuffRule)
-	{
-		nSeconds = pBuffRule->Duration;
-		nValue = pBuffRule->Multiplier;
-	}
-	// 临仙露三种倍率互斥，不把同时存在的倍率相乘。
-	if (dwBuff >= 100)
-	{
-		DWORD DewIds[] = {107, 271, 272};
-		for (int i = 0; i < 3; i++)
-		{
-			if (dwBuff != DewIds[i] && List.GetPlayerSkillBuffTime(DewIds[i]))
-			{
-				char szText[] = "已有其他临仙露效果，请等待效果结束后使用。";
-				KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szText, strlen(szText));
-				return FALSE;
-			}
-		}
-	}
 
-	const KBASICPROP_NORMALITEM* pTemplate = ItemGen.GetNormalItemTemplate(Data.GetGenre(),
-		Data.GetDetailType(), nParticular, Data.GetLevel(), Data.m_GeneratorParam.nVersion);
-	if (pTemplate && pTemplate->m_szScript[0] && !g_GetScript(pTemplate->m_szScript))
-		ReLoadScript(pTemplate->m_szScript);
-	if (pTemplate && pTemplate->m_szScript[0] && g_GetScript(pTemplate->m_szScript))
-	{
-		DWORD dwScript = g_FileName2Id((char*)pTemplate->m_szScript);
-		if (!CheckNpcScriptFunction(dwScript, "main"))
-			return FALSE;
-		PLAYER_SKILL_BUFF PreviousBuffs[16];
-		memcpy(PreviousBuffs, List.m_SkillBuffs, sizeof(PreviousBuffs));
-		int nVersion = Data.m_GeneratorParam.nVersion;
-		int nDetail = Data.GetDetailType();
-		int nLevel = Data.GetLevel();
-		if (pTemplate->m_bConsumeOnUse && !m_ItemList.ConsumeItem(nItem, 1))
-			return FALSE;
-		// 原临仙露的main仅弹确认框，由yes回调按原脚本扣除物品。
-		int nPreviousNpc = m_nPeapleIdx;
-		m_nPeapleIdx = 0;
-		BOOL bExecuted = ExecuteScript(dwScript, "main", 0);
-		m_nPeapleIdx = nPreviousNpc;
-		if (bExecuted)
-			return TRUE;
-		memcpy(List.m_SkillBuffs, PreviousBuffs, sizeof(PreviousBuffs));
-		List.RefreshPlayerSkillLevels();
-		List.SyncPlayerSkillBuffs();
-		if (pTemplate->m_bConsumeOnUse)
-		{
-			int nRefund = ItemSet.Add(item_magicorscript, 0, nLevel, 0, nDetail, nParticular, NULL, nVersion);
-			if (nRefund > 0 && !m_ItemList.AddPickupItem(nRefund, -1, -1))
-				ItemSet.Remove(nRefund);
-			g_DebugLog("[SkillItem] Script failed, item restored: player=%d item=%d script=%lu",
-				m_nPlayerIndex, nParticular, dwScript);
-		}
-		return FALSE;
-	}
-
-	PLAYER_SKILL_BUFF PreviousBuffs[16];
-	memcpy(PreviousBuffs, List.m_SkillBuffs, sizeof(PreviousBuffs));
-	if (dwBuff == 23)
-		List.RemovePlayerSkillBuff(8);
-	if (!List.AddPlayerSkillBuff(dwBuff, nSeconds, 0, nValue, bAddTime))
-	{
-		memcpy(List.m_SkillBuffs, PreviousBuffs, sizeof(PreviousBuffs));
-		List.RefreshPlayerSkillLevels();
-		List.SyncPlayerSkillBuffs();
-		return FALSE;
-	}
-	if (!m_ItemList.ConsumeItem(nItem, 1))
-	{
-		memcpy(List.m_SkillBuffs, PreviousBuffs, sizeof(PreviousBuffs));
-		List.RefreshPlayerSkillLevels();
-		List.SyncPlayerSkillBuffs();
-		return FALSE;
-	}
-	char szText[256];
-	sprintf(szText, "技能增益已生效，剩余%d秒。", List.GetPlayerSkillBuffTime(dwBuff));
-	KPlayerChat::SendSystemInfo(1, m_nPlayerIndex, "技能", szText, strlen(szText));
-	return TRUE;
-}
 #endif
 
 #ifdef _SERVER
@@ -7385,7 +7239,7 @@ int KPlayer::FindUseScriptItem()
 			(!IsBagItemPlace(pItem->nPlace) && pItem->nPlace != pos_immediacy))
 			continue;
 		KItem& Data = Item[pItem->nIdx];
-		if (Data.GetID() != m_dwUseItemID || Data.GetStackCount() <= 0)
+		if (Data.GetID() != m_dwUseItemID || Data.GetStackCount() <= 0 || Data.IsExpired())
 			continue;
 		BOOL bConsume = FALSE;
 		const char* pszScript = ItemGen.GetUseItemScript(Data, &bConsume);
@@ -7403,12 +7257,23 @@ BOOL KPlayer::UseScriptItem(int nItem)
 	BOOL bConsumeOnUse = FALSE;
 	const char* pszScript = ItemGen.GetUseItemScript(Item[nItem], &bConsumeOnUse);
 	if (!pszScript || !pszScript[0])
+	{
+		TraceItemUse(*this, "missing_script_reference", nItem);
 		return FALSE;
+	}
 	if (!g_GetScript(pszScript))
 		ReLoadScript(pszScript);
 	DWORD dwScript = g_FileName2Id((char*)pszScript);
-	if (!g_GetScript(dwScript) || !CheckNpcScriptFunction(dwScript, "main", TRUE))
+	if (!g_GetScript(dwScript))
+	{
+		TraceItemUse(*this, "script_load_failed", nItem);
 		return FALSE;
+	}
+	if (!CheckNpcScriptFunction(dwScript, "main", TRUE))
+	{
+		TraceItemUse(*this, "unsupported_main", nItem);
+		return FALSE;
+	}
 	// 新使用替换旧道具菜单上下文；回调不得根据模板另找一张同名符扣除。
 	ClearUseItemContext();
 	m_bWaitingPlayerFeedBack = false;
@@ -7420,6 +7285,7 @@ BOOL KPlayer::UseScriptItem(int nItem)
 	m_nUseItemWorld = Npc[m_nIndex].m_SubWorldIndex;
 	if (FindUseScriptItem() != nItem)
 	{
+		TraceItemUse(*this, "context_rejected", nItem);
 		ClearUseItemContext();
 		return FALSE;
 	}
@@ -7441,6 +7307,7 @@ BOOL KPlayer::UseScriptItem(int nItem)
 	}
 	if (!bResult || !m_bWaitingPlayerFeedBack)
 		ClearUseItemContext();
+	TraceItemUse(*this, bResult ? "script_completed" : "script_failed", 0);
 	return bResult;
 }
 #endif
