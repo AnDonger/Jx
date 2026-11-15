@@ -67,6 +67,8 @@ public:
 	BOOL GetReforgeRule(int* pnBaseRate, int* pnLuckMin, int* pnLuckMax);
 	const KBASICPROP_EQUIPMENT* GetEquipmentTemplate(int nDetail, int nParticular, int nLevel, int nVersion);
 	int GetGreenMagicAttribCount(int nGreenId, int nVersion);
+	BOOL UsesClassMagicWeights(int nVersion = -1);
+	const KGREEN_ADDON* GetGreenAddon(int nGreenId, int nVersion);
 	BOOL PrepareReforge(const KItem& Source, int nParticular, int nLevel, BOOL bImprove, BOOL bFull, KItem* pResult);
 	void SetRandomSeed(UINT uSeed);
 	int GetRandomNumber(int nMin, int nMax);
@@ -93,7 +95,7 @@ public:
 private:
 	BOOL InitGemRules();
 	KLibOfBPT* GetVersionLibrary(int nVersion);
-	BOOL Gen_MagicAttrib(int, const int*, int, int, KItemNormalAttrib*, int nVersion, KLibOfBPT*, int nClass);
+	BOOL Gen_MagicAttrib(int, const int*, int, int, KItemNormalAttrib*, int nVersion, KLibOfBPT*, int nClass, int nEquipmentLevel);
 	const KMAGICATTRIB_TABFILE* GetMARecord(int) const;
 	BOOL GMA_GetAvaliableMA(int);
 	BOOL GMA_GetLevelAndDropRate(int);

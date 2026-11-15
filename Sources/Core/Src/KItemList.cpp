@@ -1354,6 +1354,9 @@ BOOL KItemList::Equip(int nIdx, int nPlace /* = -1 */)
 	case itempart_weapon:
 		Npc[nNpcIdx].m_WeaponType = g_ItemChangeRes.GetWeaponRes(Item[nIdx].GetDetailType(), Item[nIdx].GetParticular(), Item[nIdx].GetLevel(), Item[nIdx].m_GeneratorParam.nVersion);
 		break;
+	case itempart_pendant:
+		Npc[nNpcIdx].m_ShoulderType = g_ItemChangeRes.GetPendantRes(Item[nIdx].GetParticular(), Item[nIdx].GetLevel(), Item[nIdx].m_GeneratorParam.nVersion);
+		break;
 	case itempart_horse:
 		Npc[nNpcIdx].m_HorseType = g_ItemChangeRes.GetHorseRes(Item[nIdx].GetParticular(), Item[nIdx].GetLevel(), Item[nIdx].m_GeneratorParam.nVersion);
 		if (Npc[nNpcIdx].m_HorseType >= 0)
@@ -1374,7 +1377,7 @@ BOOL KItemList::Equip(int nIdx, int nPlace /* = -1 */)
 	m_Items[nItemListIdx].nX = nEquipPlace;
 	m_Items[nItemListIdx].nY = 0;
 
-//#ifdef _SERVER	because client need to show to menu
+#ifndef _SERVER
 	int nActive = GetEquipEnhance(nEquipPlace);
 	if (Item[nIdx].GetDurability() != 0)
 	{
@@ -1389,9 +1392,11 @@ BOOL KItemList::Equip(int nIdx, int nPlace /* = -1 */)
 #endif
 		Player[m_PlayerIdx].SetNpcDamageAttrib();
 	}
-//#endif
+#endif
 #ifdef _SERVER
-	Npc[nNpcIdx].m_SkillList.ApplyPlayerPassiveSkills();
+	Player[m_PlayerIdx].UpdataCurData();
+	Player[m_PlayerIdx].SetNpcDamageAttrib();
+	Player[m_PlayerIdx].SyncEquipmentAttributes();
 #endif
 	return TRUE;
 }
@@ -1468,6 +1473,7 @@ BOOL KItemList::UnEquip(int nIdx, int nPos/* = -1*/)
 			return FALSE;
 		i = nPos;
 	}
+#ifndef _SERVER
 	// 移除该装备对NPC的属性调整
 	int nActive = GetEquipEnhance(i);
 	// 下马时坐骑属性已经移除，卸下物品不能再扣一次。
@@ -1476,6 +1482,7 @@ BOOL KItemList::UnEquip(int nIdx, int nPos/* = -1*/)
 	// 移除该装备可能对它激活的装备的影响。
 	if (Item[nIdx].GetDurability() != 0)
 		InfectionNextEquip(i, FALSE);
+#endif
 	// 这句话一定要放在上一句后，保证计算该装备激活的装备激活属性个数计算的正确性
 	m_EquipItem[i] = 0;
 	// 换装
@@ -1489,6 +1496,9 @@ BOOL KItemList::UnEquip(int nIdx, int nPos/* = -1*/)
 		break;
 	case itempart_weapon:
 		Npc[nNpcIdx].m_WeaponType = g_ItemChangeRes.GetWeaponRes(0, 0, 0);
+		break;
+	case itempart_pendant:
+		Npc[nNpcIdx].m_ShoulderType = 0;
 		break;
 	case itempart_horse:
 		Npc[nNpcIdx].m_HorseType = -1;
@@ -1506,7 +1516,9 @@ BOOL KItemList::UnEquip(int nIdx, int nPos/* = -1*/)
 		Player[m_PlayerIdx].SetNpcDamageAttrib();
 	}	
 #ifdef _SERVER
-	Npc[nNpcIdx].m_SkillList.ApplyPlayerPassiveSkills();
+	Player[m_PlayerIdx].UpdataCurData();
+	Player[m_PlayerIdx].SetNpcDamageAttrib();
+	Player[m_PlayerIdx].SyncEquipmentAttributes();
 #endif
 	return TRUE;
 }

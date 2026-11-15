@@ -188,6 +188,7 @@ BOOL KLibOfBPT::Init(int nVersion)
 
 	// 客户端按版本读取套装附加表；修理计数包括未激活的套装附加条目。
 	ZeroMemory(m_nGreenMagicCount, sizeof(m_nGreenMagicCount));
+	ZeroMemory(m_GreenAddon, sizeof(m_GreenAddon));
 	char szGreenPath[128];
 	sprintf(szGreenPath, "\\settings\\item\\%03d\\greenaddon.txt", nVersion);
 	KTabFile GreenTable;
@@ -199,11 +200,17 @@ BOOL KLibOfBPT::Init(int nVersion)
 			GreenTable.GetInteger(nRow, 2, 0, &nGreenId);
 			if (nGreenId < 1 || nGreenId > 100)
 				continue;
+			KGREEN_ADDON& Addon = m_GreenAddon[nGreenId - 1];
+			Addon.bLoaded = TRUE;
+			GreenTable.GetInteger(nRow, 23, -1, &Addon.nGroup);
+			GreenTable.GetInteger(nRow, 24, -1, &Addon.nRelatedSet);
 			int nCount = 0;
 			for (int i = 0; i < 10; i++)
 			{
 				int nType = -1;
 				GreenTable.GetInteger(nRow, 3 + i * 2, -1, &nType);
+				Addon.Attrib[i].nAttribType = nType;
+				GreenTable.GetInteger(nRow, 4 + i * 2, 0, &Addon.Attrib[i].nValue[0]);
 				if (nType >= 28 && nType <= 342)
 					nCount++;
 			}
@@ -213,6 +220,31 @@ BOOL KLibOfBPT::Init(int nVersion)
 	else
 	{
 		g_DebugLog("[Item] Optional original green addon table unavailable: %s", szGreenPath);
+	}
+
+	// 当前客户端普通蓝装的抽取阈值与条数限制，按物品资源版本读取原表。
+	for (int nSlot = 0; nSlot < 5; nSlot++)
+		for (int nPart = 0; nPart < 2; nPart++)
+			m_nModernMagicRateLimit[nSlot][nPart] = 999;
+	ZeroMemory(m_nModernMagicCount, sizeof(m_nModernMagicCount));
+	char szMagicPath[160];
+	sprintf(szMagicPath, "\\settings\\item\\%03d\\ratelimit.txt", nVersion);
+	KTabFile RateTable;
+	if (RateTable.Load(szMagicPath))
+	{
+		for (int nSlot = 0; nSlot < 5; nSlot++)
+			for (int nPart = 0; nPart < 2; nPart++)
+				RateTable.GetInteger(nSlot + 2, nPart + 2, 999,
+					&m_nModernMagicRateLimit[nSlot][nPart]);
+	}
+	sprintf(szMagicPath, "\\settings\\item\\%03d\\蓝装魔法属性掉落限制表.txt", nVersion);
+	KTabFile CountTable;
+	if (CountTable.Load(szMagicPath))
+	{
+		for (int nGroup = 0; nGroup < 4; nGroup++)
+			for (int nLevel = 0; nLevel < 10; nLevel++)
+				CountTable.GetInteger(nGroup + 2, nLevel + 2, 0,
+					&m_nModernMagicCount[nGroup][nLevel]);
 	}
 
 	// 构造魔法属性表
@@ -355,6 +387,39 @@ BOOL KLibOfBPT::InitMAIT()
 	出口:	原始的魔法属性表被分类, 分类后的数据存入m_CMAT数组中
 			m_CMAT[i]中给出了适用于第i种装备的全部魔法属性
 ******************************************************************************/
+const KGREEN_ADDON* KLibOfBPT::GetGreenAddon(int nGreenId) const
+{
+	if (nGreenId < 1 || nGreenId > 100 || !m_GreenAddon[nGreenId - 1].bLoaded)
+		return NULL;
+	return &m_GreenAddon[nGreenId - 1];
+}
+
+int KLibOfBPT::GetModernMagicRateLimit(int nSlot, int nPart) const
+{
+	if (nSlot < 0 || nSlot >= 5 || nPart < 0 || nPart >= 2)
+		return 999;
+	int nValue = m_nModernMagicRateLimit[nSlot][nPart];
+	return nValue >= 0 && nValue <= 999 ? nValue : 999;
+}
+
+int KLibOfBPT::GetModernMagicCount(int nType, int nEquipmentLevel) const
+{
+	int nGroup = -1;
+	switch (nType)
+	{
+	case 0: case 2: nGroup = 0; break;
+	case 5: case 6: case 7: nGroup = 1; break;
+	case 9: nGroup = 2; break;
+	case 10: nGroup = 3; break;
+	default: return 0;
+	}
+	int nLevel = nEquipmentLevel < 1 ? 1 : nEquipmentLevel;
+	if (nLevel > 10)
+		nLevel = 10;
+	int nCount = m_nModernMagicCount[nGroup][nLevel - 1];
+	return nCount < 0 ? 0 : (nCount > 5 ? 5 : nCount);
+}
+
 int KLibOfBPT::GetGreenMagicAttribCount(int nGreenId) const
 {
 	return nGreenId >= 1 && nGreenId <= 100 ? m_nGreenMagicCount[nGreenId - 1] : 0;

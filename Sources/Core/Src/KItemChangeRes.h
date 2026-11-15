@@ -24,11 +24,13 @@ private:
 	KTabFile	m_Armor;
 	KTabFile	m_Helm;
 	KTabFile	m_Horse;
+	KTabFile	m_Pendant;
 	KTabFile	m_MeleeEquipment;
 	KTabFile	m_RangeEquipment;
 	KTabFile	m_ArmorEquipment;
 	KTabFile	m_HelmEquipment;
 	KTabFile	m_HorseEquipment;
+	KTabFile	m_PendantEquipment;
 public:
 	KItemChangeRes();
 	~KItemChangeRes();
@@ -36,6 +38,7 @@ public:
 	int			GetWeaponRes(int nDetail, int nParti, int nLevel, int nVersion = -1);
 	int			GetArmorRes(int nParti, int nLevel, int nVersion = -1);
 	int			GetHelmRes(int nParti, int nLevel, int nVersion = -1);
+	int GetPendantRes(int nParti, int nLevel, int nVersion = -1);
 	int			GetHorseRes(int nParti, int nLevel, int nVersion = -1);
 };
 

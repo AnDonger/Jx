@@ -524,6 +524,15 @@ protected:
 	void ReleaseMemory();
 };
 
+// 原 greenaddon.txt：前三件激活前五条，五件激活全部十条。
+struct KGREEN_ADDON
+{
+	BOOL bLoaded;
+	KMagicAttrib Attrib[10];
+	int nGroup;
+	int nRelatedSet;
+};
+
 class KLibOfBPT
 {
 public:
@@ -534,6 +543,9 @@ public:
 protected:
 	// 原 greenaddon.txt 中十条套装附加属性的有效条数，按资源版本分别保存。
 	int					m_nGreenMagicCount[100];
+	KGREEN_ADDON m_GreenAddon[100];
+	int m_nModernMagicRateLimit[5][2];
+	int m_nModernMagicCount[4][10];
 	KBPT_Medicine			m_BPTMedicine;
 	KBPT_MedMaterial		m_BPTMedMaterial;
 	KBPT_NormalItem		m_BPTMagicScript;
@@ -568,6 +580,9 @@ protected:
 public:
 	BOOL Init(int nVersion = -1);
 	int GetGreenMagicAttribCount(int nGreenId) const;
+	const KGREEN_ADDON* GetGreenAddon(int nGreenId) const;
+	int GetModernMagicRateLimit(int nSlot, int nPart) const;
+	int GetModernMagicCount(int nType, int nEquipmentLevel) const;
 
 	const KMAGICATTRIB_TABFILE* GetMARecord(IN int) const;
 	const int					GetMARecordNumber() const;

@@ -291,6 +291,7 @@ public:
 	void			LevelUp();								// 升一级
 	void			AddLeadExp(int nExp);					// 增加统率力经验
 	void			UpdataCurData();
+	void ReCalcEquipmentSet();
 	void			ReCalcEquip();							// 重新计算身上的装备
 	void			ReCalcState();							// 重新计算身上的状态
 
@@ -429,6 +430,11 @@ public:
 	void			ProcessUser();
 	BOOL			SendSyncData(int &nStep, unsigned int &nParam);	// 发送同步数据
 	BOOL			SendSyncData_Skill();					// 发送同步数据 - 技能
+	void SyncEquipmentAttributes();
+	int m_nSyncedAttackSpeed;
+	int m_nSyncedCastSpeed;
+	int m_nSyncedLifeMax;
+	int m_nSyncedManaMax;
 	void			SendCurNormalSyncData();				// 发送平时给自己的同步数据
 	void			SetChatForbiddenFlag(int nFlag)
 	{

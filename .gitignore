@@ -118,3 +118,13 @@ Resources/settings/ibshop.txt
 
 # Lua-owned permanent backpack and warehouse expansion.
 !Resources/script/背包仓库扩展.lua
+
+# Confirmed original cloak appearance resources.
+!Resources/settings/item/000/PendantRes.txt
+!Resources/settings/item/001/PendantRes.txt
+
+# Confirmed original modern equipment generation resources.
+!Resources/settings/item/000/ratelimit.txt
+!Resources/settings/item/000/蓝装魔法属性掉落限制表.txt
+!Resources/settings/item/001/ratelimit.txt
+!Resources/settings/item/001/蓝装魔法属性掉落限制表.txt

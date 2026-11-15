@@ -75,6 +75,19 @@ KLibOfBPT* KItemGenerator::GetVersionLibrary(int nVersion)
 	return pLibrary;
 }
 
+BOOL KItemGenerator::UsesClassMagicWeights(int nVersion)
+{
+	KLibOfBPT* pLibrary = GetVersionLibrary(nVersion);
+	const KMAGICATTRIB_TABFILE* pFormat = pLibrary ? pLibrary->GetMARecord(0) : NULL;
+	return pFormat && pFormat->m_bClassWeights;
+}
+
+const KGREEN_ADDON* KItemGenerator::GetGreenAddon(int nGreenId, int nVersion)
+{
+	KLibOfBPT* pLibrary = GetVersionLibrary(nVersion);
+	return pLibrary ? pLibrary->GetGreenAddon(nGreenId) : NULL;
+}
+
 int KItemGenerator::GetGreenMagicAttribCount(int nGreenId, int nVersion)
 {
 	KLibOfBPT* pLibrary = GetVersionLibrary(nVersion);
@@ -316,7 +329,7 @@ BOOL KItemGenerator::Gen_Equipment(IN int nDetailType,
 	for (int n = 0; n < 6; n++)
 		if (pEqu->m_aryPropReq[n].nType == magic_requireseries)
 			nClass = pEqu->m_aryPropReq[n].nPara;
-	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion, pLibrary, nClass);
+	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion, pLibrary, nClass, nLevel);
 	if (bEC)
 		pItem->SetAttrib_MA(sMA);
 
@@ -334,7 +347,7 @@ BOOL KItemGenerator::Gen_Equipment(IN int nDetailType,
 // Add by Freeway Chen in 2003.5.30
 BOOL KItemGenerator::Gen_MagicAttrib(
     int nType, const int* pnaryMALevel, int nSeriesReq, int nLucky,
-	KItemNormalAttrib* pnaryMA, int nGameVersion, KLibOfBPT* pLibrary, int nClass
+	KItemNormalAttrib* pnaryMA, int nGameVersion, KLibOfBPT* pLibrary, int nClass, int nEquipmentLevel
 )
 {
     int nResult = false;
@@ -349,6 +362,51 @@ BOOL KItemGenerator::Gen_MagicAttrib(
     _ASSERT(pnaryMA);
 	if (!pnaryMALevel || !pnaryMA || nType < 0 || nType >= MATF_CBDR)
 		return FALSE;
+
+	const KMAGICATTRIB_TABFILE* pFormat = pLibrary->GetMARecord(0);
+	if (pFormat && pFormat->m_bClassWeights)
+	{
+		// GUI IDA 0x75BA20：现代原表按职业/部位分类，不使用旧前后缀及五行索引。
+		// 每轮两个随机阈值、候选索引、三个参数的抽取顺序必须与客户端一致。
+		ZeroMemory(pnaryMA, sizeof(KItemNormalAttrib) * 6);
+		if (nClass == -1)
+			nClass = 0;
+		if (nClass < 0 || nClass >= 3)
+			return FALSE;
+		int nCount = pLibrary->GetModernMagicCount(nType, nEquipmentLevel);
+		for (i = 0; i < nCount && pnaryMALevel[i] != 0; i++)
+		{
+			SelectedMagicTable.Clear();
+			int nRate1 = GetRandomNumber(0, pLibrary->GetModernMagicRateLimit(i, 0));
+			int nRate2 = GetRandomNumber(0, pLibrary->GetModernMagicRateLimit(i, 1));
+			int nThreshold = nRate1 * 1000 + nRate2;
+			for (int nRow = 0; nRow < pLibrary->GetMARecordNumber(); nRow++)
+			{
+				const KMAGICATTRIB_TABFILE* pCandidate = pLibrary->GetMARecord(nRow);
+				if (!pCandidate || !pCandidate->m_bClassWeights ||
+					pCandidate->m_nLevel != pnaryMALevel[0] ||
+					pCandidate->m_ClassDropRate[nClass][nType] <= nThreshold)
+					continue;
+				int nPrevious = 0;
+				for (; nPrevious < i; nPrevious++)
+					if (pnaryMA[nPrevious].nAttribType == pCandidate->m_MagicAttrib.nPropKind)
+						break;
+				if (nPrevious == i)
+					SelectedMagicTable.Insert(nRow);
+			}
+			if (SelectedMagicTable.GetCount() == 0)
+				break;
+			int nSelected = GetRandomNumber(0, SelectedMagicTable.GetCount() - 1);
+			const KMAGICATTRIB_TABFILE* pSelected = pLibrary->GetMARecord(SelectedMagicTable.Get(nSelected));
+			pnaryMA[i].nAttribType = pSelected->m_MagicAttrib.nPropKind;
+			for (int nParam = 0; nParam < 3; nParam++)
+				pnaryMA[i].nValue[nParam] = GetRandomNumber(
+					pSelected->m_MagicAttrib.aryRange[nParam].nMin,
+					pSelected->m_MagicAttrib.aryRange[nParam].nMax) *
+					pSelected->m_ParamMultiplier[nClass][nParam];
+		}
+		return TRUE;
+	}
 
     for (i = 0; i < 6; i++) 
     {
@@ -834,7 +892,7 @@ BOOL KItemGenerator::Gen_ExistEquipment(IN int nDetailType,
 	for (int n = 0; n < 6; n++)
 		if (pEqu->m_aryPropReq[n].nType == magic_requireseries)
 			nClass = pEqu->m_aryPropReq[n].nPara;
-	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion, pLibrary, nClass);
+	bEC = Gen_MagicAttrib(nDetailType, pnaryMALevel, nSeriesReq, nLucky, sMA, nGameVersion, pLibrary, nClass, nLevel);
 	if (bEC)
 		pItem->SetAttrib_MA(sMA);
 

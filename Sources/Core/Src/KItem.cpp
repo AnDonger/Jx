@@ -71,7 +71,9 @@ void KItem::ApplyMagicAttribToNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 */) 
 	_ASSERT(this != NULL);
 	_ASSERT(nMagicActive >= 0);
 
-	int nCount = nMagicActive;
+	// 新版职业权重魔法表六项均按原顺序应用，不沿用旧五行隐藏后缀。
+	BOOL bModern = GetGenre() == item_equip && ItemGen.UsesClassMagicWeights(m_GeneratorParam.nVersion);
+	int nCount = bModern ? 3 : nMagicActive;
 	int i;
 
 	// 基础属性调整NPC
@@ -84,9 +86,17 @@ void KItem::ApplyMagicAttribToNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 */) 
 			g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, pAttrib);
 		}
 	}
+	// 客户端73E9E0：指定高阶套装的第五条须改造至9次才生效。
+	int nDetail = GetDetailType();
+	int nParticular = m_CommonAttrib.nParticularType;
+	BOOL bUpgradeGate = bModern &&
+		(((nDetail == 2 || nDetail == 9) && nParticular >= 62 && nParticular <= 73) ||
+		 ((nDetail == 5 || nDetail == 6 || nDetail == 7) && nParticular >= 38 && nParticular <= 49));
 	// 魔法属性调整NPC
 	for (i = 0; i < sizeof(m_aryMagicAttrib)/sizeof(m_aryMagicAttrib[0]); i++)
 	{
+		if (i == 4 && bUpgradeGate && (m_dwUpgradeData & 0xff) < 9)
+			continue;
 		const KItemNormalAttrib* pAttrib;
 		pAttrib = &(m_aryMagicAttrib[i]);
 
@@ -120,7 +130,9 @@ void KItem::RemoveMagicAttribFromNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 *
 	_ASSERT(this != NULL);
 	_ASSERT(nMagicActive >= 0);
 
-	int nCount = nMagicActive;
+	// 新版职业权重魔法表六项均按原顺序应用，不沿用旧五行隐藏后缀。
+	BOOL bModern = GetGenre() == item_equip && ItemGen.UsesClassMagicWeights(m_GeneratorParam.nVersion);
+	int nCount = bModern ? 3 : nMagicActive;
 	int	i;
 	
 	// 基础属性调整NPC
@@ -139,8 +151,16 @@ void KItem::RemoveMagicAttribFromNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 *
 		}
 	}
 
+	int nDetail = GetDetailType();
+	int nParticular = m_CommonAttrib.nParticularType;
+	BOOL bUpgradeGate = bModern &&
+		(((nDetail == 2 || nDetail == 9) && nParticular >= 62 && nParticular <= 73) ||
+		 ((nDetail == 5 || nDetail == 6 || nDetail == 7) && nParticular >= 38 && nParticular <= 49));
+
 	for (i = 0; i < sizeof(m_aryMagicAttrib)/sizeof(m_aryMagicAttrib[0]); i++)
 	{
+		if (i == 4 && bUpgradeGate && (m_dwUpgradeData & 0xff) < 9)
+			continue;
 		const KItemNormalAttrib* pAttrib;
 		pAttrib = &(m_aryMagicAttrib[i]);
 
@@ -1032,6 +1052,13 @@ int KItem::GetRepairMagicAttribCount() const
 
 int KItem::GetRepairPrice()
 {
+	// 当前原表189为无法修复标记，数值为0也有效；NPC与宠物共用此校验。
+	for (int i = 0; i < sizeof(m_aryBaseAttrib) / sizeof(m_aryBaseAttrib[0]); i++)
+		if (m_aryBaseAttrib[i].nAttribType == 189)
+			return 0;
+	for (int i = 0; i < sizeof(m_aryMagicAttrib) / sizeof(m_aryMagicAttrib[0]); i++)
+		if (m_aryMagicAttrib[i].nAttribType == 189)
+			return 0;
 	const REPAIR_ITEM_PARAM& Param = ItemSet.m_sRepairParam;
 	if (GetGenre() != item_equip || m_nCurrentDur < 0 ||
 		Param.nMagicScale <= 0 || Param.nPriceScale < 0 || m_CommonAttrib.nPrice < 0)

@@ -340,6 +340,7 @@ public:
 	int					m_HelmType;					// Npc的头盔类型
 	int					m_ArmorType;				// Npc的盔甲类型
 	int					m_WeaponType;				// Npc的武器类型
+	int m_ShoulderType;				// 披风外观，使用原 PendantRes 映射
 	int					m_HorseType;				// Npc的骑马类型
 	BOOL				m_bRideHorse;				// Npc是否骑马
 

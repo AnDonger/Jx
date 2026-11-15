@@ -33,6 +33,7 @@
 #include "MsgGenreDef.h"
 #include "KItemSet.h"
 #include "KItemGenerator.h"
+#include "KNpcAttribModify.h"
 #include "KTaskFuns.h"
 #include "Text.h"
 #include <time.h>
@@ -103,6 +104,8 @@ void	KPlayer::Release()
 {
 #ifdef _SERVER
 	m_dwLastCampChangeTime = 0;
+	m_nSyncedAttackSpeed = m_nSyncedCastSpeed = -32768;
+	m_nSyncedLifeMax = m_nSyncedManaMax = -1;
 	ZeroMemory(&m_Pet, sizeof(m_Pet));
 	ZeroMemory(&m_InventoryExpansion, sizeof(m_InventoryExpansion));
 	m_nInventoryPurchaseKind = 0;
@@ -947,8 +950,39 @@ BOOL KPlayer::SendSyncData_Skill()
 	return FALSE;
 }
 
+void KPlayer::SyncEquipmentAttributes()
+{
+	if (!g_pServer || !m_bFinishLoading || m_nNetConnectIdx < 0 ||
+		m_nIndex <= 0 || m_nIndex >= MAX_NPC)
+		return;
+	KNpc& Hero = Npc[m_nIndex];
+	int Values[] = { Hero.m_CurrentAttackSpeed, Hero.m_CurrentCastSpeed, Hero.m_CurrentManaMax };
+	int* Previous[] = { &m_nSyncedAttackSpeed, &m_nSyncedCastSpeed, &m_nSyncedManaMax };
+	const BYTE Subtypes[] = { 0x4F, 0x50, 0x4E };
+	for (int i = 0; i < 3; i++)
+	{
+		int Value = i < 2 ? max(-32768, min(32767, Values[i])) : max(0, min(65535, Values[i]));
+		if (*Previous[i] == Value)
+			continue;
+		BYTE Packet[] = { 0xF8, 5, 0, Subtypes[i], 0, 0 };
+		WORD Encoded = (WORD)Value;
+		memcpy(Packet + 4, &Encoded, sizeof(Encoded));
+		if (SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, Packet, sizeof(Packet))))
+			*Previous[i] = Value;
+	}
+	if (m_nSyncedLifeMax != Hero.m_CurrentLifeMax)
+	{
+		BYTE Packet[] = { 0xF8, 11, 0, 0x21, 0, 0, 0, 0, 0, 0, 0, 0 };
+		memcpy(Packet + 4, &Hero.m_dwID, 4);
+		memcpy(Packet + 8, &Hero.m_CurrentLifeMax, 4);
+		if (SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, Packet, sizeof(Packet))))
+			m_nSyncedLifeMax = Hero.m_CurrentLifeMax;
+	}
+}
+
 void	KPlayer::SendCurNormalSyncData()
 {
+	SyncEquipmentAttributes();
 	GAME_CURPLAYER_NORMAL_SYNC	sSync;
 	memset(&sSync, 0, sizeof(sSync));
 	
@@ -2472,6 +2506,58 @@ void KPlayer::ReCalcEquip()
 			continue;
 		int nActive = m_ItemList.GetEquipEnhance(i);
 		Item[nIdx].ApplyMagicAttribToNPC(&Npc[m_nIndex], nActive);
+	}
+	ReCalcEquipmentSet();
+}
+
+void KPlayer::ReCalcEquipmentSet()
+{
+	int SetIds[itempart_num] = {};
+	int Versions[itempart_num] = {};
+	for (int i = 0; i < itempart_num; i++)
+	{
+		int nItem = m_ItemList.m_EquipItem[i];
+		if (nItem <= 0 || nItem >= MAX_ITEM || Item[nItem].GetDurability() == 0 ||
+			(i == itempart_horse && !Npc[m_nIndex].m_bRideHorse))
+			continue;
+		Versions[i] = Item[nItem].m_GeneratorParam.nVersion;
+		const KBASICPROP_EQUIPMENT* pTemplate = ItemGen.GetEquipmentTemplate(
+			Item[nItem].GetDetailType(), Item[nItem].GetParticular(), Item[nItem].GetLevel(), Versions[i]);
+		if (pTemplate && ItemGen.GetGreenAddon(pTemplate->m_nSeries, Versions[i]))
+			SetIds[i] = pTemplate->m_nSeries;
+	}
+
+	// 当前客户端74CCF0/74AAD0：同套或同附加ID合并计数，三件和五件两档。
+	// 同组旧套至少三件时使用旧套属性，否则沿用先找到的套装表。
+	for (int i = 0; i < itempart_num; i++)
+	{
+		const KGREEN_ADDON* pAddon = ItemGen.GetGreenAddon(SetIds[i], Versions[i]);
+		if (!pAddon)
+			continue;
+		int nCount = 0;
+		int nOriginalCount = 0;
+		const KGREEN_ADDON* pOriginal = NULL;
+		for (int j = i; j < itempart_num; j++)
+		{
+			const KGREEN_ADDON* pOther = ItemGen.GetGreenAddon(SetIds[j], Versions[i]);
+			if (!pOther || (SetIds[j] != SetIds[i] &&
+				(pAddon->nGroup == -1 || pOther->nGroup != pAddon->nGroup)))
+				continue;
+			nCount++;
+			if (pAddon->nGroup != -1 && pOther->nRelatedSet == -1)
+			{
+				nOriginalCount++;
+				pOriginal = pOther;
+			}
+		}
+		if (nCount < 3)
+			continue;
+		if (nOriginalCount >= 3)
+			pAddon = pOriginal;
+		int nAttribCount = nCount >= 5 ? 10 : 5;
+		for (int n = 0; n < nAttribCount; n++)
+			g_NpcAttribModify.ModifyEquipmentAttrib(&Npc[m_nIndex], &pAddon->Attrib[n]);
+		break;
 	}
 }
 
@@ -6309,8 +6395,9 @@ void	KPlayer::SetBaseSpeedAndRadius()
 {
 	Npc[m_nIndex].m_WalkSpeed = BASE_WALK_SPEED;
 	Npc[m_nIndex].m_RunSpeed = BASE_RUN_SPEED;
-	Npc[m_nIndex].m_AttackSpeed = BASE_ATTACK_SPEED;
-	Npc[m_nIndex].m_CastSpeed = BASE_CAST_SPEED;
+	// 当前客户端782030/77F7A0：出招速度是加成百分比，基础为0。
+	Npc[m_nIndex].m_AttackSpeed = 0;
+	Npc[m_nIndex].m_CastSpeed = 0;
 	Npc[m_nIndex].m_VisionRadius = BASE_VISION_RADIUS;
 	Npc[m_nIndex].m_HitRecover = BASE_HIT_RECOVER;
 }

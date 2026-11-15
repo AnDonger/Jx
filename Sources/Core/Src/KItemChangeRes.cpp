@@ -108,6 +108,8 @@ BOOL KItemChangeRes::Init(int nVersion)
 	LoadItemChangeTable(&m_ArmorEquipment, "armor.txt", nVersion);
 	LoadItemChangeTable(&m_HelmEquipment, "helm.txt", nVersion);
 	LoadItemChangeTable(&m_HorseEquipment, "horse.txt", nVersion);
+	LoadItemChangeTable(&m_Pendant, "PendantRes.txt", nVersion);
+	LoadItemChangeTable(&m_PendantEquipment, "pendant.txt", nVersion);
 	return bResult;
 }
 
@@ -192,5 +194,20 @@ int KItemChangeRes::GetHorseRes(int nParti, int nLevel, int nVersion)
 	int nRow = FindItemChangeRow(&m_HorseEquipment, equip_horse, nParti, nLevel, TRUE);
 	if (nRow > 0)
 		m_Horse.GetInteger(nRow, 2, 2, &nRet);
+	return nRet - 2;
+}
+
+int KItemChangeRes::GetPendantRes(int nParti, int nLevel, int nVersion)
+{
+	KItemChangeRes* pResources = GetVersionResources(nVersion);
+	if (!pResources || nLevel == 0)
+		return 0;
+	if (pResources != this)
+		return pResources->GetPendantRes(nParti, nLevel);
+
+	int nRet = 2;
+	int nRow = FindItemChangeRow(&m_PendantEquipment, equip_pendant, nParti, nLevel, TRUE);
+	if (nRow > 0)
+		m_Pendant.GetInteger(nRow, 2, 2, &nRet);
 	return nRet - 2;
 }

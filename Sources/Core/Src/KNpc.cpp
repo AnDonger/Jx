@@ -175,6 +175,7 @@ void KNpc::Init()
 	m_JumpStep = 0;
 	m_JumpDir = 0;			
 	m_MapZ = 0;					// Npc的高度
+	m_ShoulderType = 0;
 	m_HelmType = 1;				// Npc的头盔类型
 	m_ArmorType = 1;			// Npc的盔甲类型
 	m_WeaponType = 1;			// Npc的武器类型
@@ -1904,7 +1905,7 @@ int KNpc::DoOrdinSkill(KSkill * pSkill, int nX, int nY)
 		if (ClientDoing == cdo_none) 
 			m_Frames.nTotalFrame = 0;
 		else
-			m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / (100 + max(-99, m_CurrentAttackSpeed)));
+			m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / max(10, 100 + m_CurrentAttackSpeed));
 		
 #ifndef _SERVER
 		if (g_Random(3))
@@ -1919,7 +1920,7 @@ int KNpc::DoOrdinSkill(KSkill * pSkill, int nX, int nY)
 		if (ClientDoing == cdo_none) 
 			m_Frames.nTotalFrame = 0;
 		else
-			m_Frames.nTotalFrame = m_CastFrame * 100 / (m_CurrentCastSpeed + 100);
+			m_Frames.nTotalFrame = max(1, m_CastFrame * 100 / max(10, 100 + m_CurrentCastSpeed));
 		m_Doing  = do_magic;
 	}
 	
@@ -1947,7 +1948,7 @@ void KNpc::DoAttack()
 #endif
 
 	m_ProcessAI = 0;
-	m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / (100 + max(-99, m_CurrentAttackSpeed)));
+	m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / max(10, 100 + m_CurrentAttackSpeed));
 	m_Frames.nCurrentFrame = 0;
 	m_Doing = do_attack;
 }
@@ -2033,7 +2034,7 @@ BOOL KNpc::DoBlurAttack()// DoSpecail1
 		m_DataRes.SetBlur(TRUE);
 #endif
 
-	m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / (100 + max(-99, m_CurrentAttackSpeed)));
+	m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / max(10, 100 + m_CurrentAttackSpeed));
 	m_Frames.nCurrentFrame = 0;
 	m_Doing = do_special1;
 	return TRUE;
@@ -2048,7 +2049,7 @@ void KNpc::DoMagic()
 #ifndef _SERVER
 	m_ClientDoing = cdo_magic;
 #endif
-	m_Frames.nTotalFrame = m_CastFrame * 100 / (m_CurrentCastSpeed + 100);
+	m_Frames.nTotalFrame = max(1, m_CastFrame * 100 / max(10, 100 + m_CurrentCastSpeed));
 	m_Frames.nCurrentFrame = 0;
 	m_Doing = do_magic;
 }
@@ -3686,6 +3687,7 @@ BOOL KNpc::SendMorphSync(int nClient)
 	Sync.ArmorType = (BYTE)((m_ArmorType & 31) << 3);
 	Sync.WeaponType = (WORD)((m_WeaponType & 1023) << 6);
 	Sync.HorseType = (BYTE)((m_HorseType & 31) << 3);
+	Sync.ShoulderType = (BYTE)((m_ShoulderType & 31) << 3);
 	Sync.RankID = (BYTE)m_btRankId;
 	Sync.m_btSomeFlag = (BYTE)(Player[m_nPlayerIdx].m_cPK.GetNormalPKState() & 3);
 	if (m_FightMode) Sync.m_btSomeFlag |= 0x04;
@@ -3784,6 +3786,7 @@ BOOL KNpc::SendSyncData(int nClient)
 		PlayerSync.CastSpeed		= (SHORT)m_CurrentCastSpeed;
 		PlayerSync.HelmType			= (BYTE)((m_HelmType & 31) << 3);
 		PlayerSync.HorseType		= (BYTE)((m_HorseType & 31) << 3);
+		PlayerSync.ShoulderType = (BYTE)((m_ShoulderType & 31) << 3);
 		PlayerSync.RunSpeed			= (BYTE)m_CurrentRunSpeed;
 		PlayerSync.WalkSpeed		= (BYTE)m_CurrentWalkSpeed;
 		PlayerSync.WeaponType		= (WORD)((m_WeaponType & 1023) << 6);
@@ -3885,6 +3888,7 @@ void KNpc::NormalSync()
 		PlayerSync.ArmorType	= (BYTE)((m_ArmorType & 31) << 3);
 		PlayerSync.WeaponType	= (WORD)((m_WeaponType & 1023) << 6);
 		PlayerSync.HorseType	= (BYTE)((m_HorseType & 31) << 3);
+		PlayerSync.ShoulderType = (BYTE)((m_ShoulderType & 31) << 3);
 		PlayerSync.RankID		= (BYTE)m_btRankId;
 
 		// Current client 0x4B: two PK bits, then fight, sleep, guild and ride flags.
@@ -4798,7 +4802,7 @@ BOOL	KNpc::DoRunAttack()
 		}
 		m_Dir = g_GetDirIndex(x, y, tx, ty);
 #endif
-		m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / (100 + max(-99, m_CurrentAttackSpeed)));
+		m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / max(10, 100 + m_CurrentAttackSpeed));
 		m_Frames.nCurrentFrame = 0;
 		m_Doing = do_runattack;
 		break;
@@ -4920,7 +4924,7 @@ BOOL KNpc::DoJumpAttack()
 		}
 		m_Dir = g_GetDirIndex(x, y, tx, ty);
 #endif
-		m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / (100 + max(-99, m_CurrentAttackSpeed)));
+		m_Frames.nTotalFrame = max(1, m_AttackFrame * 100 / max(10, 100 + m_CurrentAttackSpeed));
 		m_Frames.nCurrentFrame = 0;
 		m_Doing = do_jumpattack;
 		break;
