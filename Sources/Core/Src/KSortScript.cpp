@@ -14,7 +14,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <dirent.h>
-#else 
+#else
 #include <io.h>
 #include <direct.h>
 #endif
@@ -191,6 +191,9 @@ static BOOL IsItemTransactionFunction(const std::string& Function)
 		"GetWorldPos", "GetFightState", "GetCamp", "GetPK", "GetUseItemInfo", "ConsumeUseItem", "TeleportWithItem",
 		"GetPetType", "GetPetHonor", "GetPetColor", "GetPetName", "IsPetReleased",
 		"GenPet", "DelPet", "SetPetType", "SetPetHonor", "ReleasePet",
+		"IsPetPromote", "GetPetTalent", "GetPetLevel", "IsPetAttrFull", "GetImmortalPetInfo", "SetImmortalPetInfo",
+		"HasPetAppearance", "AddPetAppearance", "SelectPetAppearance", "SetPetName", "GetPetAttributeSource", "SetPetAttributeSources",
+		"SetIBBuff", "RemoveIBBuff", "ReadTabFile", "ReadIniValue", "HaveNormalItemInQuick",
 		"GetPetFuncAuthority", "SetPetFuncAuthority",
 		"assert", "error", "type", "tonumber", "tostring", "getn", "tinsert", "tremove",
 		"format", "strlen", "strsub", "strfind", "strlower", "strupper", "gsub",
@@ -218,6 +221,19 @@ static BOOL IsPlayerCallbackFunction(const std::string& Function, int nScope)
 	{
 		if (Function == Names[i])
 			return TRUE;
+	}
+	if (nScope == 4)
+	{
+		static const char* EventNames[] =
+		{
+			"GetPetAttributeSource", "GetImmortalPetInfo", "SetImmortalPetInfo", "IsPetPromote", "GetPlayerEventInfo", "QueuePlayerRecovery", "GetPlayerType", "SetTargetIBBuff", "ReadIniValue",
+			"GetTask", "SetTask", "GetTaskTemp", "SetTaskTemp", "SystemTime", "GetFightState",
+			"HaveIBBuff", "CanAddIBBuff", "GetIBBuffLeftTimes", "AddIBBuff", "SetIBBuff", "RemoveIBBuff",
+			"AddNormalItem", "HaveNormalItem", "Msg2Player", "WriteLog", "ReadTabFile",
+			"random", "ceil", "getn", "strfind", "strsub"
+		};
+		for (int i = 0; i < sizeof(EventNames) / sizeof(EventNames[0]); i++)
+			if (Function == EventNames[i]) return TRUE;
 	}
 	return nScope == 3 && (Function == "RepairItem" || Function == "Msg2Player");
 }
@@ -282,7 +298,7 @@ int	operator<(KSortScriptNode ScriptLeft, KSortScriptNode ScriptRight)
 	{
 		return ScriptLeft.GetScriptID() < ScriptRight.GetScriptID();
 	};
-	
+
 	int operator==(KSortScriptNode ScriptLeft, KSortScriptNode ScriptRight)
 	{
 		return ScriptLeft.GetScriptID() == ScriptRight.GetScriptID();
@@ -314,7 +330,7 @@ unsigned long g_IniScriptEngine()
 	g_NpcScriptCalls.clear();
 #endif
 	return LoadAllScript("\\script");
-		
+
 }
 
 
@@ -332,7 +348,7 @@ const KScript * g_GetScript(DWORD dwScriptId)
 const KScript * g_GetScript(const char * szRelativeScriptFile)
 {
 	DWORD dwScriptId = g_FileName2Id((LPSTR)szRelativeScriptFile);
-	
+
 	return g_GetScript(dwScriptId);
 }
 
@@ -373,7 +389,7 @@ static BOOL LoadScriptToSortListA(char * szRelativeFile)
 		g_DebugLog("[脚本]严重错误!脚本数量超限制%d！请立即解决！！", MAX_SCRIPT_IN_SET);
 		return FALSE;
 	}
-	
+
 	ScriptNode.SetScriptIndex(nCurrentScriptNum++);
 	g_ScriptBinTree.Insert(ScriptNode);
 	return TRUE;
@@ -390,8 +406,8 @@ static BOOL LoadScriptToSortList(char * szFileName)
 	}
 
 	int nFileNameLen = strlen(szFileName);
-	
-	char szRootPath[MAX_PATH];	
+
+	char szRootPath[MAX_PATH];
 	g_GetRootPath(szRootPath);
 //	char szRelativePath[MAX_PATH];
 	char *szRelativePath;
@@ -441,7 +457,7 @@ void	LoadScriptInDirectory(LPSTR lpszRootDir, LPSTR lpszSubDir)
 			LoadScriptInDirectory(szRealDir, FindData.name);
 		}
 		else
-		{	
+		{
 			nFlag = 0;
 			for (int i = 0; i < (int)strlen(FindData.name);  i++)
 			{
@@ -460,7 +476,7 @@ void	LoadScriptInDirectory(LPSTR lpszRootDir, LPSTR lpszSubDir)
 			else
 			{
 				char szExt[50];
-				if (strlen(FindData.name) >= 4) 
+				if (strlen(FindData.name) >= 4)
 				{
 					strcpy(szExt, FindData.name + strlen(FindData.name) - 4);
 					_strupr(szExt);
@@ -471,7 +487,7 @@ void	LoadScriptInDirectory(LPSTR lpszRootDir, LPSTR lpszSubDir)
 			}
 		}
 		if(_findnext(dir, &FindData)) break;
-	} 
+	}
 	_findclose(dir);
 	chdir(lpszRootDir);
 #else
@@ -483,7 +499,7 @@ void	LoadScriptInDirectory(LPSTR lpszRootDir, LPSTR lpszSubDir)
      if(dp) {
           while(ep = readdir(dp)) {
             if(strcmp(ep->d_name, ".") == 0 || strcmp(ep->d_name, "..") == 0) continue;
-            
+
             if(ep->d_type ==4) {
                 LoadScriptInDirectory(szRealDir, ep->d_name);
             }

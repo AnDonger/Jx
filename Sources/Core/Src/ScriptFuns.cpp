@@ -187,10 +187,21 @@ struct KPlayerScriptAction
 	DWORD ItemID;
 	DWORD RepairID;
 	BOOL AllowRepair;
+	BOOL IsEvent;
+	int TargetNpc;
+	int Damage;
 	std::vector<std::string> Notices;
 };
 
 static KPlayerScriptAction* g_PlayerScriptAction[MAX_PLAYER] = {NULL};
+
+struct KNpcScriptTargetBuff
+{
+	int NpcIndex;
+	DWORD NpcID;
+	int Template;
+	int Seconds;
+};
 
 struct KNpcScriptExchange
 {
@@ -207,6 +218,9 @@ struct KNpcScriptExchange
 	int Money[room_num];
 	int Depth;
 	int Experience;
+	std::vector<KNpcScriptTargetBuff> TargetBuffs;
+	int RestoreLife;
+	int RestoreMana;
 	BOOL Failed;
 	BOOL HasTeleport;
 	BOOL ConsumedUseItem;
@@ -244,6 +258,8 @@ KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
 		return;
 	}
 	pState = new KNpcScriptExchange;
+	pState->RestoreLife = 0;
+	pState->RestoreMana = 0;
 	pState->Task = Player[m_nPlayer].m_cTask;
 	pState->Pet = Player[m_nPlayer].m_Pet;
 	pState->Expansion = Player[m_nPlayer].m_InventoryExpansion;
@@ -356,6 +372,7 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 		pState->Failed = TRUE;
 	if (pState->Failed)
 	{
+		Role.m_Pet = pState->Pet;
 		KSkillList& Skills = Npc[Role.m_nIndex].m_SkillList;
 		if (memcmp(Skills.m_SkillBuffs, pState->Buffs, sizeof(pState->Buffs)))
 		{
@@ -450,7 +467,39 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 		{
 			Skills.RefreshPlayerSkillLevels();
 			Skills.SyncPlayerSkillBuffs();
+			Role.SendCurNormalSyncData();
 			Role.m_ulLastSaveTime = 0;
+		}
+		for (size_t i = 0; i < pState->TargetBuffs.size(); i++)
+		{
+			const KNpcScriptTargetBuff& Effect = pState->TargetBuffs[i];
+			KNpc& Target = Npc[Effect.NpcIndex];
+			if (Target.m_dwID != Effect.NpcID || Target.m_CurrentLife <= 0 || Target.m_Doing == do_death)
+				continue;
+			if (Target.IsPlayer())
+				Target.m_SkillList.SetItemBuff(Effect.Template, Effect.Seconds, TRUE);
+			else
+			{
+				const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(Effect.Template);
+				KMagicAttrib Attributes[18];
+				for (int j = 0; j < pRule->AttributeCount; j++)
+				{
+					Attributes[j] = pRule->Attributes[j];
+					Attributes[j].nAttribType = GetInternalMagicAttribId(Attributes[j].nAttribType);
+				}
+				Target.SetStateSkillEffect(Role.m_nIndex, KSkillList::GetItemBuffStorageId(Effect.Template), 1,
+					Attributes, pRule->AttributeCount, Effect.Seconds * 18);
+			}
+		}
+		if (pState->RestoreLife || pState->RestoreMana)
+		{
+			KNpc& Owner = Npc[Role.m_nIndex];
+			if (Owner.m_CurrentLife > 0 && Owner.m_Doing != do_death)
+			{
+				Owner.m_CurrentLife = (int)min((__int64)Owner.m_CurrentLifeMax, (__int64)Owner.m_CurrentLife + Owner.AdjustRecoveryAmount(pState->RestoreLife, FALSE));
+				Owner.m_CurrentMana = (int)min((__int64)Owner.m_CurrentManaMax, (__int64)Owner.m_CurrentMana + Owner.AdjustRecoveryAmount(pState->RestoreMana, TRUE));
+				Role.SendCurNormalSyncData();
+			}
 		}
 		if (pState->Experience > 0)
 			Role.DirectAddExp(pState->Experience);
@@ -714,6 +763,28 @@ int LuaReadTabFile(Lua_State* L)
 		}
 		lua_rawseti(L, nResult, nRow);
 	}
+	return 1;
+}
+
+// Read an existing resource INI value; no path escape, writes or database access.
+int LuaReadIniValue(Lua_State* L)
+{
+	const char* pszPath = Lua_ValueToString(L, 1);
+	const char* pszSection = Lua_ValueToString(L, 2);
+	const char* pszKey = Lua_ValueToString(L, 3);
+	int nCount = Lua_GetTopIndex(L);
+	const char* pszDefault = nCount == 4 ? Lua_ValueToString(L, 4) : "";
+	KIniFile File;
+	char szValue[512] = {};
+	if ((nCount != 3 && nCount != 4) || !pszPath || !pszSection || !pszKey || !pszDefault ||
+		strnicmp(pszPath, "\\settings\\", 10) || strchr(pszPath, '/') || strlen(pszPath) >= MAX_PATH || strstr(pszPath, "..") || strchr(pszPath, ':') ||
+		strlen(pszSection) > 127 || strlen(pszKey) > 127 || strlen(pszDefault) >= sizeof(szValue) || !File.Load((char*)pszPath))
+	{
+		Lua_PushNil(L);
+		return 1;
+	}
+	File.GetString((char*)pszSection, (char*)pszKey, (char*)pszDefault, szValue, sizeof(szValue) - 1);
+	Lua_PushString(L, szValue);
 	return 1;
 }
 
@@ -1618,6 +1689,32 @@ int LuaAddIBBuff(Lua_State* L)
 	if (!bAdded)
 		RejectNpcScriptItem(L, nPlayer);
 	Lua_PushNumber(L, bAdded ? 1 : 0);
+	return 1;
+}
+
+int LuaSetIBBuff(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nBuff = 0, nSeconds = 0;
+	int nPlayer = pSkills ? Npc[pSkills->m_nNpcIndex].GetPlayerIdx() : 0;
+	BOOL bDone = pSkills && ReadItemBuffArguments(L, nBuff, nSeconds) && pSkills->SetItemBuff(nBuff, nSeconds, !nPlayer || !g_NpcScriptExchange[nPlayer]);
+	if (!bDone) RejectNpcScriptItem(L, nPlayer);
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+int LuaRemoveIBBuff(Lua_State* L)
+{
+	KSkillList* pSkills = GetPlayerScriptSkills(L);
+	int nBuff = 0, nSeconds = 0;
+	int nPlayer = pSkills ? Npc[pSkills->m_nNpcIndex].GetPlayerIdx() : 0;
+	if (!pSkills || Lua_GetTopIndex(L) != 1 || !ReadItemBuffArguments(L, nBuff, nSeconds))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	Lua_PushNumber(L, pSkills->RemovePlayerSkillBuff(KSkillList::GetItemBuffStorageId(nBuff), !nPlayer || !g_NpcScriptExchange[nPlayer]) ? 1 : 0);
 	return 1;
 }
 
@@ -2768,6 +2865,9 @@ BOOL g_CallPlayerScript(int nPlayer, DWORD dwScript, const char* pszFunction,
 	Action.ItemID = dwParameter;
 	Action.RepairID = 0;
 	Action.AllowRepair = bItemAction;
+	Action.IsEvent = FALSE;
+	Action.TargetNpc = 0;
+	Action.Damage = 0;
 	g_PlayerScriptAction[nPlayer] = &Action;
 	Lua_State* L = pScript->m_LuaState;
 	int nTop = Lua_GetTopIndex(L);
@@ -2817,6 +2917,59 @@ BOOL g_CallPlayerScript(int nPlayer, DWORD dwScript, const char* pszFunction,
 	return TRUE;
 }
 
+// Server-owned event context: never changes the active NPC dialogue or item callback.
+BOOL g_CallPetEventScript(int nPlayer, DWORD dwScript, const char* pszFunction, int nTarget, int nDamage)
+{
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || !pszFunction ||
+		g_PlayerScriptAction[nPlayer] || g_NpcScriptExchange[nPlayer] ||
+		nTarget < 0 || nTarget >= MAX_NPC || nDamage < 0)
+		return FALSE;
+	KLuaScript* pScript = (KLuaScript*)g_GetScript(dwScript);
+	char szMissing[128];
+	if (!pScript || !pScript->m_LuaState ||
+		!g_CheckNpcScriptFunction(dwScript, pszFunction, szMissing, sizeof(szMissing), 4))
+		return FALSE;
+	KPlayerScriptAction Action;
+	Action.ItemID = 0;
+	Action.RepairID = 0;
+	Action.AllowRepair = FALSE;
+	Action.IsEvent = TRUE;
+	Action.TargetNpc = nTarget;
+	Action.Damage = nDamage;
+	g_PlayerScriptAction[nPlayer] = &Action;
+	Lua_State* L = pScript->m_LuaState;
+	int nTop = Lua_GetTopIndex(L);
+	const char* Names[] = {SCRIPT_PLAYERINDEX, SCRIPT_PLAYERID, SCRIPT_SUBWORLDINDEX};
+	for (int i = 0; i < 3; i++)
+		Lua_GetGlobal(L, Names[i]);
+	KPlayer& Role = Player[nPlayer];
+	Lua_PushNumber(L, nPlayer);
+	Lua_SetGlobal(L, SCRIPT_PLAYERINDEX);
+	Lua_PushNumber(L, Role.m_dwID);
+	Lua_SetGlobal(L, SCRIPT_PLAYERID);
+	Lua_PushNumber(L, Role.m_nIndex > 0 && Role.m_nIndex < MAX_NPC ? Npc[Role.m_nIndex].m_SubWorldIndex : -1);
+	Lua_SetGlobal(L, SCRIPT_SUBWORLDINDEX);
+	BOOL bSuccess = FALSE;
+	{
+		KNpcScriptTransaction Transaction(nPlayer);
+		bSuccess = pScript->CallFunction((char*)pszFunction, 0, "nn", (double)nTarget, (double)nDamage);
+		if (bSuccess && !Transaction.HasFailed())
+			Transaction.Commit();
+		else
+			bSuccess = FALSE;
+	}
+	for (int i = 0; i < 3; i++)
+	{
+		Lua_PushValue(L, nTop + i + 1);
+		Lua_SetGlobal(L, Names[i]);
+	}
+	Lua_SetTopIndex(L, nTop);
+	g_PlayerScriptAction[nPlayer] = NULL;
+	if (!bSuccess)
+		g_DebugLog("[PlayerEvent] Rolled back player=%d script=%lu function=%s", nPlayer, dwScript, pszFunction);
+	return bSuccess;
+}
+
 int LuaSaleEx(Lua_State* L)
 {
 	int nTop = Lua_GetTopIndex(L);
@@ -2848,6 +3001,241 @@ int LuaGetPetType(Lua_State* L)
 {
 	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
 	Lua_PushNumber(L, pPlayer ? pPlayer->m_Pet.Type : 0);
+	return 1;
+}
+
+int LuaHasPetAppearance(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	int nType = 0;
+	Lua_PushNumber(L, pPlayer && Lua_GetTopIndex(L) == 1 && ReadScriptInteger(L, 1, 1, 127, &nType) && pPlayer->HasPetAppearance(nType) ? 1 : 0);
+	return 1;
+}
+
+int LuaAddPetAppearance(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	int nType = 0;
+	BOOL bDone = pPlayer && Lua_GetTopIndex(L) == 1 && ReadScriptInteger(L, 1, 1, 127, &nType) && pPlayer->AddPetAppearance(nType);
+	if (!bDone) RejectNpcScriptItem(L, GetPlayerIndex(L));
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+int LuaSelectPetAppearance(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	int nType = 0, nCount = Lua_GetTopIndex(L);
+	BOOL bName = nCount == 1 || (nCount == 2 && lua_type(L, 2) == LUA_TSTRING && strlen(lua_tostring(L, 2)) == lua_strlen(L, 2));
+	BOOL bDone = pPlayer && bName && ReadScriptInteger(L, 1, 1, 127, &nType) && pPlayer->SelectPetAppearance(nType, nCount == 2 ? lua_tostring(L, 2) : NULL);
+	if (!bDone) RejectNpcScriptItem(L, GetPlayerIndex(L));
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+int LuaSetPetName(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	BOOL bDone = pPlayer && Lua_GetTopIndex(L) == 1 && lua_type(L, 1) == LUA_TSTRING &&
+		strlen(lua_tostring(L, 1)) == lua_strlen(L, 1) && pPlayer->SetPetName(lua_tostring(L, 1));
+	if (!bDone) RejectNpcScriptItem(L, GetPlayerIndex(L));
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+int LuaGetPetAttributeSource(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	int nSource = 0;
+	Lua_PushNumber(L, pPlayer && Lua_GetTopIndex(L) == 1 && ReadScriptInteger(L, 1, 1, 2, &nSource) ? pPlayer->m_Pet.AttributeSources[nSource - 1] : 0);
+	return 1;
+}
+
+int LuaSetPetAttributeSources(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	int nFirst = 0, nSecond = 0;
+	BOOL bDone = pPlayer && Lua_GetTopIndex(L) == 2 && ReadScriptInteger(L, 1, 1, 127, &nFirst) &&
+		ReadScriptInteger(L, 2, 0, 127, &nSecond) && pPlayer->SetPetAttributeSources(nFirst, nSecond);
+	if (!bDone) RejectNpcScriptItem(L, GetPlayerIndex(L));
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+int LuaGetPlayerEventInfo(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	KPlayerScriptAction* pAction = pPlayer ? g_PlayerScriptAction[pPlayer->GetPlayerIndex()] : NULL;
+	if (!pAction || !pAction->IsEvent || Lua_GetTopIndex(L) != 0)
+	{
+		Lua_PushNil(L);
+		return 1;
+	}
+	KNpc& Owner = Npc[pPlayer->m_nIndex];
+	lua_newtable(L);
+	int nTable = Lua_GetTopIndex(L);
+	SetScriptItemInteger(L, nTable, "Damage", pAction->Damage);
+	SetScriptItemInteger(L, nTable, "OwnerLevel", Owner.m_Level);
+	SetScriptItemInteger(L, nTable, "TargetLevel", pAction->TargetNpc > 0 ? Npc[pAction->TargetNpc].m_Level : 0);
+	SetScriptItemInteger(L, nTable, "Life", Owner.m_CurrentLife);
+	SetScriptItemInteger(L, nTable, "MaxLife", Owner.m_CurrentLifeMax);
+	SetScriptItemInteger(L, nTable, "Mana", Owner.m_CurrentMana);
+	SetScriptItemInteger(L, nTable, "MaxMana", Owner.m_CurrentManaMax);
+	SetScriptItemInteger(L, nTable, "Alive", Owner.m_CurrentLife > 0 && Owner.m_Doing != do_death ? 1 : 0);
+	SetScriptItemInteger(L, nTable, "Fighting", Owner.m_FightMode ? 1 : 0);
+	SetScriptItemInteger(L, nTable, "Controlled", Owner.m_FreezeState.nTime || Owner.m_StunState.nTime || Owner.m_ConfuseState.nTime ? 1 : 0);
+	SetScriptItemInteger(L, nTable, "TargetPlayer", pAction->TargetNpc > 0 && Npc[pAction->TargetNpc].IsPlayer() ? 1 : 0);
+	SetScriptItemInteger(L, nTable, "TargetMonster", pAction->TargetNpc > 0 && Npc[pAction->TargetNpc].m_Kind == kind_normal ? 1 : 0);
+	return 1;
+}
+
+// Only the server event's real enemy may receive a timed native IB effect.
+int LuaSetTargetIBBuff(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	int nPlayer = pPlayer ? pPlayer->GetPlayerIndex() : 0;
+	KPlayerScriptAction* pAction = nPlayer ? g_PlayerScriptAction[nPlayer] : NULL;
+	int nBuff = 0, nSeconds = 0;
+	BOOL bDone = pAction && pAction->IsEvent && pAction->TargetNpc > 0 &&
+		ReadItemBuffArguments(L, nBuff, nSeconds);
+	const PLAYER_ITEM_BUFF_RULE* pRule = bDone ? g_SkillManager.GetItemBuffRule(nBuff) : NULL;
+	if (!pRule || pRule->Permanent) bDone = FALSE;
+	if (bDone)
+	{
+		if (!nSeconds) nSeconds = pRule->Duration;
+		KNpc& Target = Npc[pAction->TargetNpc];
+		bDone = nSeconds > 0 && nSeconds <= min(86400, pRule->MaxDuration) && Target.m_CurrentLife > 0 &&
+			Target.m_Doing != do_death && Target.m_SubWorldIndex == Npc[pPlayer->m_nIndex].m_SubWorldIndex &&
+			NpcSet.GetRelation(pPlayer->m_nIndex, pAction->TargetNpc) == relation_enemy;
+		// Each target has one pending state; later requests cannot bypass the capacity preflight.
+		for (size_t i = 0; bDone && i < g_NpcScriptExchange[nPlayer]->TargetBuffs.size(); i++)
+			if (g_NpcScriptExchange[nPlayer]->TargetBuffs[i].NpcIndex == pAction->TargetNpc)
+				bDone = FALSE;
+		if (bDone && Target.IsPlayer())
+		{
+			PLAYER_SKILL_BUFF Saved[16];
+			memcpy(Saved, Target.m_SkillList.m_SkillBuffs, sizeof(Saved));
+			bDone = Target.m_SkillList.SetItemBuff(nBuff, nSeconds, FALSE);
+			memcpy(Target.m_SkillList.m_SkillBuffs, Saved, sizeof(Saved));
+		}
+		else if (bDone)
+			bDone = Target.m_Kind == kind_normal && pRule->AttributeCount > 0 && pRule->AttributeCount < MAX_SKILL_STATE &&
+				!pRule->LifeReplenish && !pRule->ManaReplenish && !pRule->ExperiencePercent && !pRule->SkillExpPercent;
+		if (bDone)
+		{
+			KNpcScriptTargetBuff Effect;
+			Effect.NpcIndex = pAction->TargetNpc;
+			Effect.NpcID = Target.m_dwID;
+			Effect.Template = nBuff;
+			Effect.Seconds = nSeconds;
+			g_NpcScriptExchange[nPlayer]->TargetBuffs.push_back(Effect);
+		}
+	}
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+int LuaQueuePlayerRecovery(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	int nLife = 0, nMana = 0;
+	int nPlayer = pPlayer ? pPlayer->GetPlayerIndex() : 0;
+	BOOL bDone = nPlayer && Lua_GetTopIndex(L) == 2 && ReadScriptInteger(L, 1, 0, 1000000000, &nLife) &&
+		ReadScriptInteger(L, 2, 0, 1000000000, &nMana) &&
+		g_NpcScriptExchange[nPlayer]->RestoreLife <= 1000000000 - nLife &&
+		g_NpcScriptExchange[nPlayer]->RestoreMana <= 1000000000 - nMana;
+	if (!bDone) RejectNpcScriptItem(L, nPlayer);
+	else
+	{
+		g_NpcScriptExchange[nPlayer]->RestoreLife += nLife;
+		g_NpcScriptExchange[nPlayer]->RestoreMana += nMana;
+	}
+	Lua_PushNumber(L, bDone ? 1 : 0);
+	return 1;
+}
+
+// 仙兽成长规则由Lua读取原资源决定，C++只提供合法状态与事务写入。
+int LuaGetImmortalPetInfo(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	if (!pPlayer || Lua_GetTopIndex(L) != 0 || !pPlayer->IsPetPromote())
+	{
+		Lua_PushNil(L);
+		return 1;
+	}
+	const PLAYER_IMMORTAL_PET_DATA& State = pPlayer->m_Pet.Immortal;
+	lua_newtable(L);
+	int nTable = Lua_GetTopIndex(L);
+	SetScriptItemInteger(L, nTable, "MaxRebirth", 255);
+	SetScriptItemInteger(L, nTable, "Talent", State.Talent);
+	SetScriptItemInteger(L, nTable, "Rebirth", (int)State.Rebirth);
+	SetScriptItemInteger(L, nTable, "Level", (int)State.Level);
+	SetScriptItemInteger(L, nTable, "Exp", (int)State.Exp);
+	SetScriptItemInteger(L, nTable, "NextExp", (int)State.NextExp);
+	SetScriptItemInteger(L, nTable, "Strength", (int)State.Strength);
+	SetScriptItemInteger(L, nTable, "Dexterity", (int)State.Dexterity);
+	SetScriptItemInteger(L, nTable, "Constitution", (int)State.Constitution);
+	SetScriptItemInteger(L, nTable, "Intellect", (int)State.Intellect);
+	return 1;
+}
+
+int LuaSetImmortalPetInfo(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, TRUE);
+	int Values[9] = {};
+	BOOL bDone = pPlayer && Lua_GetTopIndex(L) == 9;
+	for (int i = 0; bDone && i < 9; i++)
+		bDone = ReadScriptInteger(L, i + 1, i == 2 ? 1 : 0, i == 0 ? 2 : (i == 1 ? 255 : 0x7fffffff), &Values[i]);
+	PLAYER_IMMORTAL_PET_DATA State = {};
+	if (bDone)
+	{
+		State.Enabled = TRUE;
+		State.Talent = (BYTE)Values[0];
+		State.Rebirth = Values[1];
+		State.Level = Values[2];
+		State.Exp = Values[3];
+		State.NextExp = Values[4];
+		State.Strength = Values[5];
+		State.Dexterity = Values[6];
+		State.Constitution = Values[7];
+		State.Intellect = Values[8];
+		bDone = pPlayer->SetImmortalPetState(State);
+	}
+	if (!bDone)
+	{
+		RejectNpcScriptItem(L, GetPlayerIndex(L));
+		lua_error(L, "Immortal pet update requires a valid transaction and state");
+		return 0;
+	}
+	Lua_PushNumber(L, 1);
+	return 1;
+}
+
+int LuaIsPetPromote(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	Lua_PushNumber(L, pPlayer ? pPlayer->IsPetPromote() : 0);
+	return 1;
+}
+
+int LuaGetPetTalent(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	Lua_PushNumber(L, pPlayer ? pPlayer->GetPetTalent() : 0);
+	return 1;
+}
+
+int LuaGetPetLevel(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	Lua_PushNumber(L, pPlayer ? pPlayer->GetPetLevel() : 0);
+	return 1;
+}
+
+int LuaIsPetAttrFull(Lua_State* L)
+{
+	KPlayer* pPlayer = GetScriptPetPlayer(L, FALSE);
+	Lua_PushNumber(L, pPlayer ? pPlayer->IsPetAttrFull() : 0);
 	return 1;
 }
 
@@ -3271,7 +3659,8 @@ int	LuaMsgToPlayer(Lua_State * L)
 		{
 #ifdef _SERVER
 			KPlayerScriptAction* pAction = g_PlayerScriptAction[nPlayerIndex];
-			if (pAction)
+			// 宠物事件采用当前事务的通知队列，提交后发送，失败则丢弃。
+			if (pAction && !pAction->IsEvent)
 			{
 				if (!pAction->AllowRepair || !pAction->RepairID || strlen(szMsg) > 512 ||
 					pAction->Notices.size() >= 8)
@@ -7545,6 +7934,24 @@ TLua_Funcs GameScriptFuns[] =
 	{"KillNpc",			LuaKillNpc},				//KillNpc(NpcDWID)
 	{"KillPlayer",		LuaKillPlayer},				//KillPlayer();
 	{"SaleEx", LuaSaleEx},
+	{"HasPetAppearance", LuaHasPetAppearance},
+	{"AddPetAppearance", LuaAddPetAppearance},
+	{"SelectPetAppearance", LuaSelectPetAppearance},
+	{"SetPetName", LuaSetPetName},
+	{"GetPetAttributeSource", LuaGetPetAttributeSource},
+	{"SetPetAttributeSources", LuaSetPetAttributeSources},
+	{"GetPlayerEventInfo", LuaGetPlayerEventInfo},
+	{"QueuePlayerRecovery", LuaQueuePlayerRecovery},
+	{"SetIBBuff", LuaSetIBBuff},
+	{"RemoveIBBuff", LuaRemoveIBBuff},
+	{"ReadIniValue", LuaReadIniValue},
+	{"SetTargetIBBuff", LuaSetTargetIBBuff},
+	{"GetImmortalPetInfo", LuaGetImmortalPetInfo},
+	{"SetImmortalPetInfo", LuaSetImmortalPetInfo},
+	{"IsPetPromote", LuaIsPetPromote},
+	{"GetPetTalent", LuaGetPetTalent},
+	{"GetPetLevel", LuaGetPetLevel},
+	{"IsPetAttrFull", LuaIsPetAttrFull},
 	{"GetPetType", LuaGetPetType},
 	{"GetPetHonor", LuaGetPetHonor},
 	{"GetPetColor", LuaGetPetColor},

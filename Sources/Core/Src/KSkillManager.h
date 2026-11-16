@@ -45,6 +45,9 @@ struct PLAYER_ITEM_BUFF_RULE
 	int ManaReplenish;
 	int ExperiencePercent;
 	int SkillExpPercent;
+	BOOL Permanent;
+	int AttributeCount;
+	KMagicAttrib Attributes[18];
 };
 
 const int MAX_PLAYER_ITEM_BUFF_TEMPLATE = 1024;

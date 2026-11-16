@@ -1,6 +1,103 @@
 # 当前 Lua 可用函数说明（Lua函数表）
 
 
+## 2026-11-17 仙兽培养与聚灵接口
+
+业务位于原 `script/瑶池/寿星.lua` 和 `script/宠物技能.lua`，不允许Lua直接访问数据库。C++负责真实状态校验、通知、存档及事务回滚。
+
+### `GetImmortalPetInfo`
+
+`GetImmortalPetInfo()`：返回当前仙兽状态表；未成仙返回nil。字段为Talent（0普通、1优秀、2极品）、Rebirth（0～255）、Level、Exp、NextExp、Strength、Dexterity、Constitution、Intellect、MaxRebirth（当前255）。纯查询，不收费、不创建仙兽；NPC及玩家事件作用域可用。示例：`local pet = GetImmortalPetInfo(); if pet then Msg2Player(format("仙兽等级%d", pet.Level)) end`。读取的是当前真实累计属性，不是模板成长值。
+
+### `SetImmortalPetInfo`
+
+`SetImmortalPetInfo(talent, rebirth, level, exp, nextExp, strength, dexterity, constitution, intellect)`：九个参数必须是整数；talent为0～2、rebirth为0～255，level为有效正整数，其余不得为负并受底层整数范围校验。写当前已存在宠物的完整仙兽状态，成功返回1，参数或状态非法、事务外调用均报错。NPC／物品事务及服务器玩家事件事务允许；不暴露给客户端任意指定状态。资质概率、材料、35级上限、每级经验和成长分配由对应Lua核对，不能把底层整数校验当业务授权。成功同步完整仙兽状态、重算主人属性并纳入C++存档；脚本失败恢复本次宠物、货币、材料、任务和Buff。示例（只在已校验业务事务内）：`SetImmortalPetInfo(0, 0, 1, 0, 1000, 0, 0, 0, 0)`。提资应读取并保留其余已有字段，不能用初始化示例覆盖累计培养进度。
+
+### 玩家事件字段和提交边界
+
+`GetPlayerEventInfo()`新增OwnerLevel（主人等级）、TargetLevel（本次真实目标等级；没有目标为0），只读。示例：`local e = GetPlayerEventInfo(); if e and e.TargetMonster == 1 and e.TargetLevel >= 100 then ... end`。
+
+普通怪经验归属路径先调用`PetOnKill`处理聚灵，再以独立事务调用`PetOnKillRewards`处理宠物赠品；赠品满包失败不能撤销已提交的聚灵。事件中的`Msg2Player`在成功提交后发送，失败丢弃；拾取只读及修理计划作用域仍保持原限制。召唤兽归属及毒DOT路径未泛化覆盖。
+
+寿星永久任务1774／1775按北京时间日期记录免费／额外修炼；宠物技能永久任务2030／2031／2032记录李靖／申公豹／石矶每日次数。对应业务须先读取原值核对，不可在其他脚本复用这些编号。临时任务2540用于宠物太乙效果计时；寿星菜单保留2520等原临时上下文。
+
+## 2026-11-16 灵宠收藏与玩家事件接口
+
+本节为本轮源码接口说明；测试结果另见本轮仙兽灵宠开发记录。Lua不访问数据库，收藏、当前外观、组合来源、仙兽状态与Buff仍由C++存档。以下写接口在物品/NPC事务内执行；报错时恢复本次物品、货币、任务、完整宠物状态和Buff。新增玩家事件入口也建立事务，目标Buff与生命内力回复延迟到成功提交后执行。
+
+### `HasPetAppearance`
+
+`HasPetAppearance(type)`：type为1～127内实际存在的原宠物类型。已收藏返回1，未收藏或无效参数返回0。只读，不代表当前正在使用该类型。示例：`if HasPetAppearance(38) == 1 then ... end`。
+
+### `AddPetAppearance`
+
+`AddPetAppearance(type)`：收藏有效原类型，已收藏时仍成功，不覆盖当前宠物。成功1；无事务、无效类型或其他失败报错回滚。尚无宠物时应先通过原`GenPet`建立宠物及亲密度，再收藏。物品兑换应在同次事务校验并扣除真实材料。示例：`AddPetAppearance(38)`。
+
+### `SelectPetAppearance`
+
+`SelectPetAppearance(type [, name])`：选择已收藏类型；保留亲密度、已学与启用技能、客户端配置、召收及仙兽培养状态。省略name保留原名字；提供name时校验名字。成功1，失败报错回滚。组合类型切换后应由Lua用下述接口核对并恢复真实来源。示例：`SelectPetAppearance(38)`。
+
+### `SetPetName`
+
+`SetPetName(name)`：当前真实宠物更名，必须非空GBK字符串且小于原宠物名字数组容量，不得含内嵌NUL。需要事务；成功1，失败报错回滚。示例：`SetPetName("绿飞飞")`。
+
+### `GetPetAttributeSource`
+
+`GetPetAttributeSource(index)`：index仅1或2，返回组合保存的原灵宠类型；无来源或非法参数返回0。只读。示例：`local source = GetPetAttributeSource(1)`。当前普通宠物效果可直接按GetPetType识别，不能把组合外观当两个来源均已实现的证明。
+
+### `SetPetAttributeSources`
+
+`SetPetAttributeSources(first, second)`：first为1～127有效类型，second为0或有效类型；实际还校验类型有效、来源已收藏且两个来源不能相同；具体组合关系由对应业务Lua核对。只能在事务内写，成功1，非法或未收藏来源失败回滚。示例：组合74实际收藏了普通胡喜媚66和哪吒48后，`SetPetAttributeSources(66, 48)`。不得用未拥有的尊享版代替普通版。
+
+### `IsPetPromote`
+
+`IsPetPromote()`：当前宠物是否有合法仙兽状态，返回1/0。仅查询，不执行破石成仙、不收费。
+
+### `GetPetTalent`
+
+`GetPetTalent()`：返回仙兽资质0普通、1优秀、2极品；没有仙兽时返回原只读默认值0，应先用IsPetPromote区分。
+
+### `GetPetLevel`
+
+`GetPetLevel()`：返回仙兽聚灵等级；无仙兽返回0。培养写入使用本表GetImmortalPetInfo／SetImmortalPetInfo，费用及条件由寿星Lua核对。
+
+### `IsPetAttrFull`
+
+`IsPetAttrFull()`：按普通330、优秀660、极品1000的四属性总上限判断大成，返回1/0。不能据此推算各级经验或每次重生的属性分配。
+
+### `GetPlayerEventInfo`
+
+`GetPlayerEventInfo()`：仅服务器派发的当前玩家事件内返回表，其他调用返回nil。字段Damage为本次各伤害类型汇总后的实际伤害；Life/MaxLife、Mana/MaxMana为当前主人生命内力；Alive、Fighting、Controlled、TargetPlayer、TargetMonster为0/1。Fighting为角色战斗模式，Controlled当前覆盖冻结/眩晕/混乱。表只读，无任意目标写权限。示例：`local info = GetPlayerEventInfo()`。
+
+### `QueuePlayerRecovery`
+
+`QueuePlayerRecovery(life, mana)`：仅玩家事件事务，参数为0～1000000000整数，同次累积不可超过该上限。成功1，非法参数或无上下文失败回滚。事务成功后只对活主人恢复，受生命/内力恢复削减属性334/335影响，最大不超过当前上限，并同步客户端；脚本失败则不回复。示例：`QueuePlayerRecovery(50, 10)`。
+
+### `SetTargetIBBuff`
+
+`SetTargetIBBuff(id [, seconds])`：仅服务器事件绑定的实际敌对目标，不接收Lua自选目标。须同图、存活、原Buff模板有效且非永久；seconds为整数，默认模板时长，上限为86400和模板MaxDuration的较小值。玩家目标检查Buff容量，怪物目标要求支持通用属性且无特殊回复/经验字段。成功排队返回1；目标不合条件返回0，不产生副作用。事件成功提交后才应用，失败丢弃。当前每个目标同次事务最多一个待生效Buff，以保证容量预检和提交一致；不要以此接口实现跨图或群体任意施法。示例：`if SetTargetIBBuff(378, 5) == 1 then SetIBBuff(379, 30) end`。
+
+### `SetIBBuff`
+
+`SetIBBuff(id [, seconds])`：原IB模板增益，参数规则沿用AddIBBuff；区别为替换剩余时长，不累加。time_type=2原永久模板使用永久标记，收回相关宠物时由业务Lua撤销。事务内成功1，非法模板、容量不足等失败回滚。例：`SetIBBuff(354, 5)`重复触发只刷新到5秒。
+
+### `RemoveIBBuff`
+
+`RemoveIBBuff(id)`：删除IB命名空间中该模板的当前状态，成功1，不存在0；只接受一个有效原模板编号，非法参数失败回滚。与RemoveBuff的普通技能编号不同。例：`RemoveIBBuff(353)`。
+
+### `ReadIniValue`
+
+`ReadIniValue("\\settings\\skill\\skillchaoscfg.ini", section, key [, default])`：只读Resources原settings下的INI值，返回字符串，读取失败或非法路径返回nil。必须以\settings\开头；拒绝冒号、正斜线和..，路径短于MAX_PATH，section/key最多127字节，default最多511字节。省略default为空字符串；不会执行脚本、创建文件或查询数据库。数值应由Lua再tonumber并校验范围。例：`tonumber(ReadIniValue("\\settings\\skill\\skillchaoscfg.ini", "main", "DongYueDaDiProb", "0"))`。
+
+### 服务器事件与限制
+
+在pet.ini既有FunctionScript指定的宠物技能.lua中定义PetOnChanged、PetOnTick、PetOnAttack、PetOnDamage、PetOnKill、PetOnKillRewards。事件名是Lua自定义回调，不是可由客户端任意调用的引擎API。Tick间隔20个服务器tick，状态变化延后至下一tick；攻击/受击按一次结算聚合，伤害0不应给吸收奖励。普通怪死亡按原经验归属玩家派发Kill。暂未接召唤兽主人归属和毒DOT；不能声称这些路径也会触发。
+
+事件作用域允许收藏只读、事件信息、原表只读、任务、IB增益、延迟回复和目标Buff等已覆盖事务接口；不允许传送、任意属性写、数据库、外部IO及NPC窗口。已有拾取/清理的只读作用域和修理计划作用域保持原限制。仙兽写入仅通过本表受事务保护的SetImmortalPetInfo；寿星Lua负责培养条件与收费。
+
+
+
+
 ## 2026-11-16 孔位操作接口补充
 
 以下接口已接入源码，原生及TLS交互已验证，客户端画面待实测；需与原资源规则配合使用，不能由客户端直接指定奖励或种子。
@@ -34,7 +131,7 @@
 
 ## 阅读方法与范围
 
-- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **274个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **366个不同名字**，均有独立条目。
+- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **290个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **382个不同名字**，均有独立条目。
 - “实现已核对”表示已对照当前注册和函数正文，**不表示全部接口已通过新版客户端实测**。带“旧接口”“待适配”“有缺陷”“不可用”的条目保留用于查错；不能把存在名字当成功能已完整适配。
 - 以服务端 `_SERVER` 分支为准，排除注释中的注册项、客户端专用 `PlaySound` / `PlaySprMovie`、未注册的C++辅助函数。原脚本内 `main`、`OnCompound`、公共库中自定义函数不属于引擎全局API；只能在加载了对应脚本后使用其实际定义。
 - 普通NPC／玩家脚本由 `GameScriptFuns` 注册；全局世界脚本由 `WorldScriptFuns` 注册。标准库在创建Lua状态时打开。脚本可覆盖同名全局，使用时还要核对原脚本及 `Include` 内容。
@@ -70,9 +167,9 @@ Lua不得直接连接、查询或修改数据库，不得编写、拼接或执�
 
 当前窗口请求事务提供 `GetSelectedItems` → `DelSelectedItem` / `Pay` / `AddNormalItem` → `CompleteItemOperation` 的调用链。`CompleteItemOperation(0)`表示**概率失败但操作已完成，提交合法消耗**；未完成或Lua报错则回滚，`CompleteItemOperation(1)`之后报错也会回滚。
 
-已有快照覆盖随身背包两页（第二页仅已解锁行，旧第一页6×10原存档坐标在回滚时完整保留）、快捷栏、鼠标物品、各房间现金、玩家任务、普通宠物状态、背包／仓库永久扩展权限和经典／IB技能Buff；`AddOwnExp`在成功后延迟发放；所有脚本UI、`PutMessage` / `Msg2Player`以及`WasteCopperCash`扣铜钱通知在事务成功后延迟发送。`PolyMorph`验证后延迟提交，失败不变身。**不保证任意Lua回调都有事务**：当前所有实际绑定NPC脚本的对白入口与物品窗口入口，以及服务端绑定的背包／仓库扩展系统脚本与其对白回调建立事务。穿戴、仓库、技能学习、阵营、帮会、婚姻、位置、系统文件副作用等未泛化纳入完整快照。`WriteLog`以及某些旧协议通知也不回滚。新业务涉及这些范围时，先补通用事务与存档支持，不能宣称已支持完整回滚。
+已有快照覆盖随身背包两页（第二页仅已解锁行，旧第一页6×10原存档坐标在回滚时完整保留）、快捷栏、鼠标物品、各房间现金、玩家任务、完整宠物状态（含收藏、组合来源和仙兽）、背包／仓库永久扩展权限和经典／IB技能Buff；`AddOwnExp`在成功后延迟发放；所有脚本UI、`PutMessage` / `Msg2Player`以及`WasteCopperCash`扣铜钱通知在事务成功后延迟发送。`PolyMorph`验证后延迟提交，失败不变身。**不保证任意Lua回调都有事务**：当前所有实际绑定NPC脚本的对白入口与物品窗口入口，以及服务端绑定的背包／仓库扩展系统脚本与其对白回调建立事务。穿戴、仓库、技能学习、阵营、帮会、婚姻、位置、系统文件副作用等未泛化纳入完整快照。`WriteLog`以及某些旧协议通知也不回滚。新业务涉及这些范围时，先补通用事务与存档支持，不能宣称已支持完整回滚。
 
-物品模板中的脚本入口及其对白回调新增自动事务，但仅开放 `KSortScript.cpp::IsItemTransactionFunction` 中已覆盖快照的接口和只读／纯计算接口；地图类仅开放下述受限延迟接口 `TeleportWithItem`；`NewWorld`、`SetPos`、`SetRevPos`、`UseTownPortal` 等即时接口，以及技能、Buff、外部IO等仍不在该入口的支持范围。每个回调执行前重新检查调用关系，失败不提交本次道具消耗、现金及宠物变更。NPC脚本入口已扩展到所有地图；其物品、现金、任务、Buff和延迟变身在上述范围内回滚，不能据此认为穿戴、仓库等即时副作用已完整覆盖。
+物品模板中的脚本入口及其对白回调新增自动事务，但仅开放 `KSortScript.cpp::IsItemTransactionFunction` 中已覆盖快照的接口和只读／纯计算接口；地图类仅开放下述受限延迟接口 `TeleportWithItem`；`NewWorld`、`SetPos`、`SetRevPos`、`UseTownPortal` 等即时接口，以及任意即时技能写入、外部IO等仍不在该入口的支持范围。每个回调执行前重新检查调用关系，失败不提交本次道具消耗、现金及宠物变更。NPC脚本入口已扩展到所有地图；其物品、现金、任务、Buff和延迟变身在上述范围内回滚，不能据此认为穿戴、仓库等即时副作用已完整覆盖。
 
 背包／仓库永久购买业务见 `Resources/script/背包仓库扩展.lua`；费用来自归档 `00587-29b2371f.bin`，仓库确认流程参考 `00596-2a5f65da.bin`。扩展系统入口有自动事务，权限变化在提交后同步并通过C++保存，Lua不访问数据库；新增的权限快照不表示仓库内物品操作已纳入NPC物品交换快照。
 

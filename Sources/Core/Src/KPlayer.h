@@ -78,6 +78,23 @@ typedef struct
 	void	Clear() {m_nCurrency = 0; m_nBuyIdx = -1; m_SubWorldID = -1; m_nMpsX = 0; m_nMpsY = 0;}
 } BuySellInfo;
 // 宠物属于角色；不占用地图怪物或固定NPC数组。与旧角色基础记录分开存档。
+// DB/14与DB/8已由当前客户端GUI确认；内部保留DWORD，不压缩为查看他人的摘要格式。
+struct PLAYER_IMMORTAL_PET_DATA
+{
+	BOOL Enabled;
+	DWORD Rebirth;
+	DWORD Level;
+	DWORD Exp;
+	DWORD NextExp;
+	BYTE Talent;
+	BYTE Reserved[3];
+	DWORD Strength;
+	DWORD Dexterity;
+	DWORD Constitution;
+	DWORD Intellect;
+};
+static_assert(sizeof(PLAYER_IMMORTAL_PET_DATA) == 40, "SPG1 v8 immortal pet record");
+
 struct PLAYER_PET_DATA
 {
 	BYTE Type;
@@ -89,7 +106,13 @@ struct PLAYER_PET_DATA
 	WORD Active;
 	DWORD PickMask;
 	DWORD SellMask;
+	// SPG1 v7在原48字节宠物记录后追加收藏；旧记录按原长度迁移。
+	BYTE OwnedTypes[16];
+	BYTE AttributeSources[2];
+	BYTE Reserved[2];
+	PLAYER_IMMORTAL_PET_DATA Immortal;
 };
+static_assert(sizeof(PLAYER_PET_DATA) == 108, "SPG1 v8 pet record");
 
 class KIniFile;
 
@@ -133,6 +156,10 @@ public:
 	int m_nInventoryPurchaseIndex;
 	int m_nInventoryPurchaseWorld;
 	DWORD m_dwPetPickupTime;
+	DWORD m_dwPetEventTime;
+	BOOL m_bPetStateDirty;
+	BOOL m_bImmortalPetInitialized;
+	BOOL m_bImmortalPetWasEnabled;
 	DWORD			m_dwUseItemScriptID;
 	DWORD			m_dwUseItemID;
 	int				m_nUseItemWorld;
@@ -141,6 +168,19 @@ public:
 	BOOL			IsValidPetType(int nType) const;
 	BOOL			CreatePet(const char* pszName, int nType, int nHonor, int nColor);
 	BOOL			SetPetType(int nType);
+	BOOL			HasPetAppearance(int nType) const;
+	BOOL			AddPetAppearance(int nType);
+	BOOL			SelectPetAppearance(int nType, const char* pszName = NULL);
+	BOOL			SetPetName(const char* pszName);
+	BOOL			SetPetAttributeSources(int nFirstType, int nSecondType);
+	BOOL			IsPetPromote() const;
+	int				GetPetTalent() const;
+	int				GetPetLevel() const;
+	BOOL			IsPetAttrFull() const;
+	BOOL			IsValidImmortalPetState(const PLAYER_IMMORTAL_PET_DATA& State) const;
+	BOOL			SetImmortalPetState(const PLAYER_IMMORTAL_PET_DATA& State);
+	void			ApplyImmortalPetAttributes();
+	void			SendImmortalPetData(int nClient, BOOL bFull);
 	BOOL			SetPetReleased(int nReleased);
 	BOOL			SetPetHonor(int nHonor);
 	BOOL			SetPetAuthority(int nFunction, int nEnabled);
@@ -151,6 +191,7 @@ public:
 	BOOL			SetPetFunctionActive(int nFunction, int nEnabled);
 	BOOL			SetPetFilter(int nSubtype, DWORD dwMask);
 	void			SyncPetState();
+	BOOL			CallPetEvent(const char* pszFunction, int nTargetNpc = 0, int nDamage = 0);
 	BOOL			UseScriptItem(int nItem);
 	int				m_nStoreBoxObjectID;		// 当前获准交互的储物箱世界ID，不存盘
 	PLAYER_EXCHANGE_POS		m_sExchangePos;

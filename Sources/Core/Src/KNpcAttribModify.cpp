@@ -467,7 +467,7 @@ void KNpcAttribModify::LifeReplenishV(KNpc* pNpc, void* pData)
 void KNpcAttribModify::LifeV(KNpc* pNpc, void* pData)
 {
 	KMagicAttrib* pMagic = (KMagicAttrib *)pData;
-	pNpc->m_CurrentLife += pMagic->nValue[0];
+	pNpc->m_CurrentLife += pNpc->AdjustRecoveryAmount(pMagic->nValue[0], FALSE);
 	g_DebugLog("[数值]%s生命增加了%d点", pNpc->Name, pMagic->nValue[0]);
 }
 
@@ -528,7 +528,7 @@ void KNpcAttribModify::ManaReplenishV(KNpc* pNpc, void* pData)
 void KNpcAttribModify::ManaV(KNpc* pNpc, void* pData)
 {
 	KMagicAttrib* pMagic = (KMagicAttrib *)pData;
-	pNpc->m_CurrentMana += pMagic->nValue[0];
+	pNpc->m_CurrentMana += pNpc->AdjustRecoveryAmount(pMagic->nValue[0], TRUE);
 	g_DebugLog("[数值]%s内力增加了%d点", pNpc->Name, pMagic->nValue[0]);
 }
 
@@ -982,7 +982,21 @@ void KNpcAttribModify::CurrentAttrib(KNpc* pNpc, void* pData)
 		return;
 	int nValue = pMagic->nValue[0];
 	pNpc->m_CurrentAdditionalAttrib[nType] += nValue;
-	if (nType == 151)
+	if (nType == 317 && nValue > 0 && pNpc->m_CurrentAdditionalAttrib[nType] > 0)
+	{
+		// 原免控属性同时解除现有冻结、眩晕与混乱；负向撤销不再清理。
+		ZeroMemory(&pNpc->m_FreezeState, sizeof(pNpc->m_FreezeState));
+		ZeroMemory(&pNpc->m_StunState, sizeof(pNpc->m_StunState));
+		if (pNpc->m_ConfuseState.nTime > 0)
+			pNpc->m_CurrentCamp = pNpc->m_Camp;
+		ZeroMemory(&pNpc->m_ConfuseState, sizeof(pNpc->m_ConfuseState));
+	}
+	if (nType == 337)
+	{
+		pNpc->m_CurrentWalkSpeed -= pNpc->m_WalkSpeed * nValue / 100;
+		pNpc->m_CurrentRunSpeed -= pNpc->m_RunSpeed * nValue / 100;
+	}
+	else if (nType == 151)
 		pNpc->m_CurrentDefend += pNpc->m_Defend * nValue / 100;
 	else if (nType == 182)
 	{

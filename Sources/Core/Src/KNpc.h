@@ -614,6 +614,7 @@ public:
 	void				AddCurStaminaMax(int nStamina);
 	void				AddBaseManaMax(int nMana);	// 增加基本最大内力点
 	void				AddCurManaMax(int nMana);
+	int					AdjustRecoveryAmount(int nAmount, BOOL bMana) const;
 //	void				ResetLifeReplenish();		// 重新计算生命回复速度
 //	void				CalcCurLifeMax();			// 计算当前最大生命点
 //	void				CalcCurStaminaMax();		// 计算当前最大体力点

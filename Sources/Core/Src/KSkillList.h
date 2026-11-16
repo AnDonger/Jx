@@ -165,6 +165,8 @@ public:
 	int GetPlayerExperienceMultiplier();
 	int GetPlayerExperiencePercent();
 	int GetItemBuffAttribute(int nAttribute);
+	void ApplyItemBuffAttributes();
+	BOOL SetItemBuff(int nTemplate, int nSeconds = 0, BOOL bSync = TRUE);
 	static DWORD GetItemBuffStorageId(int nTemplate);
 	static int GetItemBuffTemplateId(DWORD dwStoredId);
 	static int GetBuffMaxDuration(DWORD dwStoredId);

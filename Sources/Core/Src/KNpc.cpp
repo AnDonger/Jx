@@ -643,6 +643,14 @@ void KNpc::ProcCommand(int nAI)
 	m_Command.CmdKind = do_none;
 }
 
+int KNpc::AdjustRecoveryAmount(int nAmount, BOOL bMana) const
+{
+	if (nAmount <= 0)
+		return nAmount;
+	int nReduce = min(100, max(0, m_CurrentAdditionalAttrib[bMana ? 335 : 334]));
+	return (int)((__int64)nAmount * (100 - nReduce) / 100);
+}
+
 BOOL KNpc::ProcessState()
 {
 	int nRet = FALSE;
@@ -662,14 +670,14 @@ BOOL KNpc::ProcessState()
 			int nLifeAdd = m_CurrentLifeMax * 3 / 1000;
 			if (nLifeAdd <= 0)
 				nLifeAdd = 1;
-			m_CurrentLife += nLifeAdd;
+			m_CurrentLife += AdjustRecoveryAmount(nLifeAdd, FALSE);
 			if (m_CurrentLife > m_CurrentLifeMax)
 				m_CurrentLife = m_CurrentLifeMax;
 
 			int nManaAdd = m_CurrentManaMax * 3 / 1000;
 			if (nManaAdd <= 0)
 				nManaAdd = 1;
-			m_CurrentMana += nManaAdd;
+			m_CurrentMana += AdjustRecoveryAmount(nManaAdd, TRUE);
 			if (m_CurrentMana > m_CurrentManaMax)
 				m_CurrentMana = m_CurrentManaMax;
 
@@ -681,10 +689,10 @@ BOOL KNpc::ProcessState()
 		if (!(m_LoopFrames % GAME_REPLENISH_TIME) && m_CurrentLife > 0 &&
 			m_Doing != do_death && m_Doing != do_revive)
 		{
-			m_CurrentLife += m_CurrentLifeReplenish + (IsPlayer() ? m_SkillList.GetPlayerBuffValue(14) + m_SkillList.GetItemBuffAttribute(88) : 0);
+			m_CurrentLife += AdjustRecoveryAmount(m_CurrentLifeReplenish + (IsPlayer() ? m_SkillList.GetPlayerBuffValue(14) + m_SkillList.GetItemBuffAttribute(88) : 0), FALSE);
 			if (m_CurrentLife > m_CurrentLifeMax)
 				m_CurrentLife = m_CurrentLifeMax;
-			m_CurrentMana += m_CurrentManaReplenish + (IsPlayer() ? m_SkillList.GetPlayerBuffValue(13) + m_SkillList.GetItemBuffAttribute(92) : 0);
+			m_CurrentMana += AdjustRecoveryAmount(m_CurrentManaReplenish + (IsPlayer() ? m_SkillList.GetPlayerBuffValue(13) + m_SkillList.GetItemBuffAttribute(92) : 0), TRUE);
 			if (m_CurrentMana > m_CurrentManaMax)
 				m_CurrentMana = m_CurrentManaMax;
 		}
@@ -879,7 +887,7 @@ BOOL KNpc::ProcessState()
 		// 连续用药会合并并延长药效，恢复节拍不能跟着剩余时间重置。
 		if (!(m_LoopFrames % GAME_UPDATE_TIME))
 		{
-			m_CurrentLife += m_LifeState.nValue[0];
+			m_CurrentLife += AdjustRecoveryAmount(m_LifeState.nValue[0], FALSE);
 			if (m_CurrentLife > m_CurrentLifeMax)
 			{
 				m_CurrentLife = m_CurrentLifeMax;
@@ -893,7 +901,7 @@ BOOL KNpc::ProcessState()
 		// 与生命药使用同一独立帧节拍，避免密集用药一直推迟恢复。
 		if (!(m_LoopFrames % GAME_UPDATE_TIME))
 		{
-			m_CurrentMana += m_ManaState.nValue[0];
+			m_CurrentMana += AdjustRecoveryAmount(m_ManaState.nValue[0], TRUE);
 			if (m_CurrentMana > m_CurrentManaMax)
 			{
 				m_CurrentMana = m_CurrentManaMax;
@@ -1027,6 +1035,16 @@ void KNpc::DoDeath(int nMode/* = 0*/)
 		nPlayer = m_cDeathCalcExp.CalcExp();
 	}
 
+	if (m_Kind == kind_normal && nPlayer > 0 && nPlayer < MAX_PLAYER &&
+		Player[nPlayer].m_nIndex > 0 && Player[nPlayer].m_nIndex < MAX_NPC &&
+		NpcSet.GetRelation(Player[nPlayer].m_nIndex, m_Index) == relation_enemy)
+	{
+		Player[nPlayer].CallPetEvent("PetOnKill", m_Index, 0);
+		// 可选击杀奖励单独提交，失败不撤销已取得的修炼进度。
+		Player[nPlayer].CallPetEvent("PetOnKillRewards", m_Index, 0);
+	}
+	if (IsPlayer() && m_nPlayerIdx > 0 && m_nPlayerIdx < MAX_PLAYER)
+		Player[m_nPlayerIdx].m_bPetStateDirty = TRUE;
 	int nOldExp = IsPlayer() ? Player[m_nPlayerIdx].m_nExp : 0;
 	//丢物品
 	DeathPunish(nMode, nPlayer);
@@ -1542,6 +1560,14 @@ void KNpc::OnRevive()
 
 void KNpc::DoRun()
 {
+#ifdef _SERVER
+	if (m_CurrentAdditionalAttrib[288] > 0 && !m_CurrentAdditionalAttrib[317])
+	{
+		DoStand();
+		m_ProcessAI = 1;
+		return;
+	}
+#endif
 	_ASSERT(m_RegionIndex >= 0);
 
 	if (m_CurrentRunSpeed)
@@ -1620,6 +1646,14 @@ void KNpc::DoRun()
 
 void KNpc::OnRun()
 {
+#ifdef _SERVER
+	if (m_CurrentAdditionalAttrib[288] > 0 && !m_CurrentAdditionalAttrib[317])
+	{
+		DoStand();
+		m_ProcessAI = 1;
+		return;
+	}
+#endif
 	WaitForFrame();
 	ServeMove(m_CurrentRunSpeed);
 }
@@ -2119,6 +2153,14 @@ void KNpc::Goto(int nMpsX, int nMpsY)
 
 void KNpc::DoWalk()
 {
+#ifdef _SERVER
+	if (m_CurrentAdditionalAttrib[288] > 0 && !m_CurrentAdditionalAttrib[317])
+	{
+		DoStand();
+		m_ProcessAI = 1;
+		return;
+	}
+#endif
 	_ASSERT(m_RegionIndex >= 0);
 
 	if (m_CurrentWalkSpeed)
@@ -2232,6 +2274,14 @@ void KNpc::OnPlayerTalk()
 
 void KNpc::OnWalk()
 {
+#ifdef _SERVER
+	if (m_CurrentAdditionalAttrib[288] > 0 && !m_CurrentAdditionalAttrib[317])
+	{
+		DoStand();
+		m_ProcessAI = 1;
+		return;
+	}
+#endif
 #ifndef	_SERVER
 	// 处理客户端的动画换帧等……
 #endif
@@ -2540,6 +2590,9 @@ int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL 
 	}
 	nDamage = (int)((__int64)nDamage * (100 - min(100, nRes)) / 100);
 	int nReduce = m_CurrentAdditionalAttrib[nType == damage_physics ? 339 : 340];
+	// 原属性modify_pkrate仅降低来自玩家的伤害，元素类别共用此扣血路径。
+	if (Attacker.IsPlayer())
+		nReduce += m_CurrentAdditionalAttrib[290];
 	if (Attacker.IsPlayer() && IsPlayer())
 	{
 		nDamage = (int)((__int64)nDamage * (100 + max(0, Attacker.m_CurrentAdditionalAttrib[342])) / 100);
@@ -2586,7 +2639,7 @@ int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL 
 
 	if (nDamage > 0)
 	{
-		m_CurrentMana += (int)((__int64)m_CurrentDamage2Mana * nActualDamage / 100);
+		m_CurrentMana += AdjustRecoveryAmount((int)((__int64)m_CurrentDamage2Mana * nActualDamage / 100), TRUE);
 		if (m_CurrentMana > m_CurrentManaMax)
 		{
 			m_CurrentMana = m_CurrentManaMax;
@@ -2653,15 +2706,16 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 		int nLifeSteal = min(100, max(0, pDamage[DAMAGE_ATTRIB_STEAL_LIFE].nValue[0]));
 		int nManaSteal = min(100, max(0, pDamage[DAMAGE_ATTRIB_STEAL_MANA].nValue[0]));
 		int nStaminaSteal = min(100, max(0, pDamage[DAMAGE_ATTRIB_STEAL_STAMINA].nValue[0]));
-		Launcher.m_CurrentLife = min(Launcher.m_CurrentLifeMax, Launcher.m_CurrentLife + (int)((__int64)nPhysicalDamage * nLifeSteal / 100));
-		Launcher.m_CurrentMana = min(Launcher.m_CurrentManaMax, Launcher.m_CurrentMana + (int)((__int64)nPhysicalDamage * nManaSteal / 100));
+		Launcher.m_CurrentLife = min(Launcher.m_CurrentLifeMax, Launcher.m_CurrentLife + Launcher.AdjustRecoveryAmount((int)((__int64)nPhysicalDamage * nLifeSteal / 100), FALSE));
+		Launcher.m_CurrentMana = min(Launcher.m_CurrentManaMax, Launcher.m_CurrentMana + Launcher.AdjustRecoveryAmount((int)((__int64)nPhysicalDamage * nManaSteal / 100), TRUE));
 		Launcher.m_CurrentStamina = min(Launcher.m_CurrentStaminaMax, Launcher.m_CurrentStamina + (int)((__int64)nPhysicalDamage * nStaminaSteal / 100));
 	}
 	pTemp++;
 	int nColdDamage = CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_cold, bIsMelee, bDoHurt, FALSE,
 		g_RandPercent(min(100, max(0, Launcher.m_CurrentAdditionalAttrib[263] + Launcher.m_CurrentAdditionalAttrib[266] -
 		m_CurrentAdditionalAttrib[270] - m_CurrentAdditionalAttrib[273]))));
-	if (nColdDamage > 0 && m_CurrentLife > 0 && m_Doing != do_death && m_FreezeState.nTime <= 0 && !m_CurrentAdditionalAttrib[319])
+	if (nColdDamage > 0 && m_CurrentLife > 0 && m_Doing != do_death && m_FreezeState.nTime <= 0 &&
+		!m_CurrentAdditionalAttrib[317])
 	{
 		m_FreezeState.nTime = max(0, pTemp->nValue[1] * (100 - min(100, max(0, m_CurrentFreezeTimeReducePercent))) / 100 - max(0, m_CurrentAdditionalAttrib[148]) * 18);
 	}
@@ -2716,7 +2770,8 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 		CalcDamage(nLauncher, nFatalDamage, nFatalDamage, damage_magic, bIsMelee, bDoHurt);
 	}
 	if (m_CurrentLife > 0 && m_Doing != do_death && m_StunState.nTime <= 0 &&
-		pDamage[DAMAGE_ATTRIB_STUN].nValue[1] > 0 && !m_CurrentAdditionalAttrib[318] && !m_CurrentAdditionalAttrib[319] &&
+		pDamage[DAMAGE_ATTRIB_STUN].nValue[1] > 0 && !m_CurrentAdditionalAttrib[316] &&
+		!m_CurrentAdditionalAttrib[317] &&
 		g_RandPercent(min(100, max(0, pDamage[DAMAGE_ATTRIB_STUN].nValue[0]))))
 	{
 		m_StunState.nTime = max(0, pDamage[DAMAGE_ATTRIB_STUN].nValue[1] *
@@ -2732,6 +2787,15 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 		}
 	}
 
+	int nActualLifeLoss = max(0, nLife - m_CurrentLife);
+	if (nActualLifeLoss > 0)
+	{
+		int nAttackerPlayer = Launcher.IsPlayer() ? Launcher.GetPlayerIdx() : 0;
+		if (nAttackerPlayer > 0 && nAttackerPlayer < MAX_PLAYER)
+			Player[nAttackerPlayer].CallPetEvent("PetOnAttack", m_Index, nActualLifeLoss);
+		if (IsPlayer() && m_nPlayerIdx > 0 && m_nPlayerIdx < MAX_PLAYER)
+			Player[m_nPlayerIdx].CallPetEvent("PetOnDamage", nLauncher, nActualLifeLoss);
+	}
 	return TRUE;
 }
 #endif
@@ -3370,6 +3434,14 @@ BOOL KNpc::Cost(NPCATTRIB nType, int nCost, BOOL bOnlyCheckCanCast)
 
 void KNpc::DoJump()
 {
+#ifdef _SERVER
+	if (m_CurrentAdditionalAttrib[288] > 0 && !m_CurrentAdditionalAttrib[317])
+	{
+		DoStand();
+		m_ProcessAI = 1;
+		return;
+	}
+#endif
 	_ASSERT(m_RegionIndex >= 0);
 	if (m_RegionIndex < 0)
 		return;
@@ -3419,6 +3491,15 @@ void KNpc::DoJump()
 
 BOOL KNpc::OnJump()
 {
+#ifdef _SERVER
+	if (m_CurrentAdditionalAttrib[288] > 0 && !m_CurrentAdditionalAttrib[317])
+	{
+		DoStand();
+		m_Height = 0;
+		m_ProcessAI = 1;
+		return FALSE;
+	}
+#endif
 	ServeJump(m_CurrentJumpSpeed);
 	if (WaitForFrame())
 	{
@@ -4496,6 +4577,13 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 {
 	if (nLevel <= 0 || nSkillID <= 0 || !pData || nDataNum <= 0)
 		return;
+	BOOL bItemState = FALSE;
+#ifdef _SERVER
+	bItemState = !IsPlayer() && (nSkillID & 0xffff0000) == 0x10000 && nTime > 0 &&
+		g_SkillManager.GetItemBuffRule(nSkillID & 0xffff) != NULL;
+#endif
+	if (!bItemState && (nSkillID >= MAX_SKILL || nLevel >= MAX_SKILLLEVEL))
+		return;
 	_ASSERT(nDataNum < MAX_SKILL_STATE);
 	if (nDataNum >= MAX_SKILL_STATE)
 		nDataNum = MAX_SKILL_STATE;
@@ -4580,9 +4668,9 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 	pNode->m_SkillID = nSkillID;
 	pNode->m_Level = nLevel;
 	pNode->m_LeftTime = nTime;
-	_ASSERT(nSkillID < MAX_SKILL && nLevel < MAX_SKILLLEVEL);
+	_ASSERT(bItemState || (nSkillID < MAX_SKILL && nLevel < MAX_SKILLLEVEL));
 	
-	KSkill * pOrdinSkill = (KSkill *)g_SkillManager.GetSkill(nSkillID, nLevel);
+	KSkill * pOrdinSkill = bItemState ? NULL : (KSkill *)g_SkillManager.GetSkill(nSkillID, nLevel);
 	if (pOrdinSkill)
         pNode->m_StateGraphics = pOrdinSkill->GetStateSpecailId();
 	else
@@ -4617,6 +4705,16 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 		pTemp++;
 	}
 	m_StateSkillList.AddTail(pNode);
+#ifdef _SERVER
+	if (m_CurrentAdditionalAttrib[288] > 0 && !m_CurrentAdditionalAttrib[317] &&
+		(m_Doing == do_run || m_Doing == do_walk || m_Doing == do_jump ||
+		 m_Doing == do_runattack || m_Doing == do_jumpattack))
+	{
+		DoStand();
+		m_Height = 0;
+		m_ProcessAI = 1;
+	}
+#endif
 }
 
 /*!*****************************************************************************

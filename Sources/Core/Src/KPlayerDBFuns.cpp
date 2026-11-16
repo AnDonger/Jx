@@ -78,11 +78,11 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	PLAYER_SKILL_EXT_HEADER Header;
 	memcpy(&Header, pData, sizeof(Header));
 	DWORD dwRecordSize = Header.Version >= 3 ? sizeof(PLAYER_SKILL_EXT_RECORD_V3) : sizeof(PLAYER_SKILL_EXT_RECORD);
-	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 6) ||
+	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 8) ||
 		Header.SkillCount != pRole->nFightSkillCount || Header.SkillCount >= MAX_NPCSKILL || Header.BuffCount > 16 ||
 		dwLength != sizeof(Header) + Header.SkillCount * dwRecordSize +
 		Header.BuffCount * sizeof(PLAYER_SKILL_BUFF) +
-		(Header.Version >= 2 ? sizeof(PLAYER_PET_DATA) : 0) +
+		(Header.Version >= 2 ? (Header.Version >= 8 ? sizeof(PLAYER_PET_DATA) : (Header.Version >= 7 ? 68 : 48)) : 0) +
 		(Header.Version >= 4 ? sizeof(PLAYER_MORPH_DATA) : 0) +
 		(Header.Version >= 5 ? sizeof(PLAYER_INVENTORY_EXPANSION) : 0) +
 		(Header.Version >= 6 ? sizeof(DWORD) : 0))
@@ -122,7 +122,8 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 		memcpy(&Buff, pData, sizeof(Buff));
 		pData += sizeof(Buff);
 		const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(KSkillList::GetItemBuffTemplateId(Buff.BuffId));
-		if ((pRule && !pRule->OfflineTime) || (Buff.BuffId & 0xffff0000) == 0x20000)
+		BOOL bPermanent = pRule && pRule->Permanent && Buff.EndTime == MAXDWORD;
+		if (!bPermanent && ((pRule && !pRule->OfflineTime) || (Buff.BuffId & 0xffff0000) == 0x20000))
 		{
 			// 在线计时的存档字段保存剩余秒数，重登重新建立当前会话到期时间。
 			if (Buff.EndTime > (DWORD)KSkillList::GetBuffMaxDuration(Buff.BuffId))
@@ -130,7 +131,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 			Buff.EndTime += dwNow;
 		}
 		if (!KSkillList::IsValidPlayerSkillBuffData(Buff.BuffId, Buff.SkillId, Buff.Value) ||
-			(Buff.EndTime > dwNow && Buff.EndTime - dwNow > (DWORD)KSkillList::GetBuffMaxDuration(Buff.BuffId)))
+			(!bPermanent && Buff.EndTime > dwNow && Buff.EndTime - dwNow > (DWORD)KSkillList::GetBuffMaxDuration(Buff.BuffId)))
 			return FALSE;
 		if (Buff.BuffId == 8)
 		{
@@ -149,20 +150,45 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	ZeroMemory(&Pet, sizeof(Pet));
 	if (Header.Version >= 2)
 	{
-		memcpy(&Pet, pData, sizeof(Pet));
-		pData += sizeof(Pet);
+		DWORD dwPetSize = Header.Version >= 8 ? sizeof(Pet) : (Header.Version >= 7 ? 68 : 48);
+		memcpy(&Pet, pData, dwPetSize);
+		pData += dwPetSize;
+		if (Pet.Type > 127)
+			return FALSE;
+		if (Header.Version < 7 && Pet.Type)
+		{
+			Pet.OwnedTypes[Pet.Type / 8] |= (BYTE)(1 << (Pet.Type % 8));
+			Pet.AttributeSources[0] = Pet.Type;
+		}
+		if (!Player.IsValidImmortalPetState(Pet.Immortal))
+			return FALSE;
+		if ((Pet.OwnedTypes[0] & 1) || Pet.Reserved[0] || Pet.Reserved[1])
+			return FALSE;
+		for (int i = 1; i <= 127; i++)
+			if ((Pet.OwnedTypes[i / 8] & (1 << (i % 8))) && !Player.IsValidPetType(i))
+				return FALSE;
 		if (Pet.Type)
 		{
 			if (!Player.IsValidPetType(Pet.Type) || Pet.Honor > 100 || Pet.Released > 1 ||
 				(Pet.Released && !Pet.Honor) || !Pet.Name[0] || !memchr(Pet.Name, 0, sizeof(Pet.Name)) ||
-				(Pet.Authority & ~31) || (Pet.Active & ~Pet.Authority))
+				(Pet.Authority & ~31) || (Pet.Active & ~Pet.Authority) ||
+				!(Pet.OwnedTypes[Pet.Type / 8] & (1 << (Pet.Type % 8))) ||
+				!Pet.AttributeSources[0] || Pet.AttributeSources[0] == Pet.AttributeSources[1])
 				return FALSE;
 		}
 		else
 		{
 			PLAYER_PET_DATA Empty;
 			ZeroMemory(&Empty, sizeof(Empty));
+			memcpy(Empty.OwnedTypes, Pet.OwnedTypes, sizeof(Empty.OwnedTypes));
 			if (memcmp(&Pet, &Empty, sizeof(Pet)))
+				return FALSE;
+		}
+		for (int i = 0; i < 2; i++)
+		{
+			int nSource = Pet.AttributeSources[i];
+			if (nSource && (nSource > 127 ||
+				!(Pet.OwnedTypes[nSource / 8] & (1 << (nSource % 8)))))
 				return FALSE;
 		}
 	}
@@ -254,7 +280,7 @@ static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_
 		if (List.m_SkillBuffs[i].BuffId && List.m_SkillBuffs[i].EndTime > dwNow)
 			dwBuffCount++;
 	}
-	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 6, List.GetCount(), dwBuffCount};
+	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 8, List.GetCount(), dwBuffCount};
 	DWORD dwSize = sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD_V3) +
 		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet) + sizeof(PLAYER_MORPH_DATA) + sizeof(Expansion) + sizeof(LastCampChangeTime);
 	if (dwSize > dwCapacity)
@@ -278,7 +304,8 @@ static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_
 		if (!Buff.BuffId || Buff.EndTime <= dwNow)
 			continue;
 		const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(KSkillList::GetItemBuffTemplateId(Buff.BuffId));
-		if ((pRule && !pRule->OfflineTime) || (Buff.BuffId & 0xffff0000) == 0x20000)
+		BOOL bPermanent = pRule && pRule->Permanent && Buff.EndTime == MAXDWORD;
+		if (!bPermanent && ((pRule && !pRule->OfflineTime) || (Buff.BuffId & 0xffff0000) == 0x20000))
 			Buff.EndTime -= dwNow;
 		memcpy(pData, &Buff, sizeof(Buff));
 		pData += sizeof(Buff);

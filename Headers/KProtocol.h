@@ -609,6 +609,26 @@ struct GAME_PET_SYNC
 
 static_assert(sizeof(GAME_PET_SYNC) == 23, "DB pet prefix");
 
+// 当前客户端DB/14全量、DB/8增量；38字节消息，不含外层2字节帧头。
+struct GAME_IMMORTAL_PET_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE Subtype;
+	BYTE Enabled;
+	DWORD Rebirth;
+	DWORD Level;
+	DWORD Exp;
+	DWORD NextExp;
+	BYTE Talent;
+	DWORD Strength;
+	DWORD Dexterity;
+	DWORD Constitution;
+	DWORD Intellect;
+};
+static_assert(sizeof(GAME_IMMORTAL_PET_SYNC) == 38, "DB/14,8 immortal pet state");
+static_assert(offsetof(GAME_IMMORTAL_PET_SYNC, Strength) == 22, "DB immortal attributes offset");
+
 // 20261108正式服91/45拾取、91/46出售：名称和颜色串分别以零结尾。
 struct GAME_PET_ITEM_NOTICE_SYNC
 {
@@ -2534,6 +2554,70 @@ typedef struct
 	DWORD			m_dwNpcID;
 	SViewItemInfo	m_sInfo[11];	// 旧查看装备协议固定11项，不随服务端内部部位扩容。
 } VIEW_EQUIP_SYNC;				// s2c_viewequip
+
+// 当前客户端 A0：固定13槽，每槽299字节；按线上封包及GUI IDA接收端核对。
+typedef struct
+{
+	DWORD ID;
+	BYTE Genre;
+	WORD Detail;
+	WORD Particular;
+	BYTE Series;
+	BYTE Level;
+	BYTE GenerationFlags;
+	BYTE MagicLevels[6];
+	WORD Version;
+	DWORD RandomSeed;
+	DWORD UpgradeData;
+	BYTE StateFlags;
+	BYTE unknown_29;
+	DWORD ValidityStartTime;
+	GAME_ITEM_SOCKET_SYNC_DATA Sockets[4];
+	DWORD GemSeeds[4];
+	DWORD GrowthSpiritData;
+	DWORD unknown_70;
+	BYTE unknown_74[16];
+	BYTE unknown_90[208];
+	BYTE BindingMode;
+} GAME_VIEW_EQUIP_RECORD;
+
+typedef struct
+{
+	BYTE Talent;
+	BYTE unknown_1;
+	WORD Constitution;
+	WORD Strength;
+	WORD Intellect;
+	WORD Dexterity;
+	BYTE PetType;
+	BYTE Enabled;
+	BYTE Rebirth;
+	BYTE unknown_13;
+} GAME_VIEW_PET_SUMMARY;
+
+typedef struct
+{
+	BYTE ProtocolType;
+	DWORD NpcID;
+	BYTE unknown_05;
+	BYTE unknown_06;
+	SHORT Level;
+	BYTE unknown_09[17];
+	char unknown_name_26[18];
+	GAME_VIEW_EQUIP_RECORD Equipment[13];
+	BYTE unknown_3931;
+	char PlayerName[32];
+	char unknown_name_3964[32];
+	GAME_VIEW_PET_SUMMARY Pet;
+	BYTE PlayerSeries;
+} GAME_VIEW_EQUIP_SYNC;
+
+static_assert(sizeof(GAME_VIEW_EQUIP_RECORD) == 299, "current A0 item size");
+static_assert(sizeof(GAME_VIEW_PET_SUMMARY) == 14, "current A0 pet summary size");
+static_assert(sizeof(GAME_VIEW_EQUIP_SYNC) == 4011, "current A0 packet size");
+static_assert(offsetof(GAME_VIEW_EQUIP_SYNC, Equipment) == 44, "current A0 item offset");
+static_assert(offsetof(GAME_VIEW_EQUIP_SYNC, Pet) == 3996, "current A0 pet offset");
+
 
 typedef struct//该结构是所统计的玩家的基本数据
 {

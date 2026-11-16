@@ -1,6 +1,7 @@
  
 #include "KCore.h"
 #include "KSkillManager.h"
+#include "KMagicAttrib.h"
 #include "MyAssert.H"
 #include "KThiefSkill.h"
 
@@ -370,9 +371,9 @@ BOOL KSkillManager::LoadItemBuffRules()
 		File.GetInteger(nRow, 14, -1, &nOffline);
 		File.GetInteger(nRow, 16, -1, &nMode);
 		if (Rule.Duration <= 0 || nMaxCount <= 0 || nMaxCount > 10000 || nMode != 0 ||
-			(nOffline != 0 && nOffline != 1) || (__int64)Rule.Duration * nMaxCount > 0x7fffffff)
+			(nOffline != 0 && nOffline != 1 && nOffline != 2) || (__int64)Rule.Duration * nMaxCount > 0x7fffffff)
 			continue;
-		BOOL bSupported = TRUE, bHasEffect = FALSE;
+		BOOL bSupported = TRUE;
 		for (int nColumn = 31; nColumn <= 66; nColumn += 2)
 		{
 			char szValue[128] = {};
@@ -383,7 +384,12 @@ BOOL KSkillManager::LoadItemBuffRules()
 				continue;
 			char* pEnd = NULL;
 			long nValue = strtol(szValue, &pEnd, 10);
-			if (pEnd == szValue || *pEnd || nValue <= 0 || nValue > 32767)
+			if (nAttribute == 317 && !szValue[0])
+			{
+				nValue = 1;
+				pEnd = szValue + 1;
+			}
+			if (pEnd == szValue || *pEnd || nValue < -32767 || nValue > 32767)
 			{
 				bSupported = FALSE;
 				break;
@@ -394,14 +400,23 @@ BOOL KSkillManager::LoadItemBuffRules()
 			case 92: Rule.ManaReplenish += nValue; break;
 			case 181: Rule.ExperiencePercent += nValue; break;
 			case 187: Rule.SkillExpPercent += nValue; break;
-			default: bSupported = FALSE; break;
+			default:
+				// Recovery and experience above have dedicated consumers, not equipment mappings.
+				if (GetInternalMagicAttribId(nAttribute) == INVALID_ATTRIB)
+				{
+					bSupported = FALSE;
+					break;
+				}
+				Rule.Attributes[Rule.AttributeCount].nAttribType = nAttribute;
+				Rule.Attributes[Rule.AttributeCount++].nValue[0] = nValue;
+				break;
 			}
-			bHasEffect = TRUE;
 		}
-		if (!bSupported || !bHasEffect)
+		if (!bSupported)
 			continue;
-		Rule.MaxDuration = Rule.Duration * nMaxCount;
-		Rule.OfflineTime = nOffline;
+		Rule.Permanent = nOffline == 2;
+		Rule.MaxDuration = Rule.Permanent ? 0x7fffffff : Rule.Duration * nMaxCount;
+		Rule.OfflineTime = nOffline == 1;
 		Rule.Loaded = TRUE;
 		if (m_ItemBuffRules[nId].Loaded)
 			return FALSE;

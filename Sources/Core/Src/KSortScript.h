@@ -56,6 +56,8 @@ extern BOOL ReLoadScript(const char * szRelativePathScript);
 extern BOOL g_CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, char *pszMissing, int nSize, int nScope = 0);
 extern BOOL g_CallPlayerScript(int nPlayer, DWORD dwScript, const char* pszFunction,
 	DWORD dwParameter, int* pnResult, BOOL bItemAction = FALSE);
+extern BOOL g_CallPetEventScript(int nPlayer, DWORD dwScript, const char* pszFunction,
+	int nTargetNpc, int nDamage);
 
 // NPC材料交换失败时恢复物品、现金和任务，经验奖励在成功后结算。
 class KNpcScriptTransaction

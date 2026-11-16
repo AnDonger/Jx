@@ -112,6 +112,10 @@ void	KPlayer::Release()
 	m_nInventoryPurchaseIndex = 0;
 	m_nInventoryPurchaseWorld = -1;
 	m_dwPetPickupTime = 0;
+	m_dwPetEventTime = 0;
+	m_bPetStateDirty = TRUE;
+	m_bImmortalPetInitialized = FALSE;
+	m_bImmortalPetWasEnabled = FALSE;
 	m_dwUseItemScriptID = 0;
 	m_dwUseItemID = 0;
 	m_nUseItemWorld = -1;
@@ -260,6 +264,19 @@ void	KPlayer::Active()
 	
 	ActivePetPickup();
 	ActivePetRepair();
+	DWORD dwPetTime = g_SubWorldSet.GetGameTime();
+	if (m_bFinishLoading && dwPetTime - m_dwPetEventTime >= 20)
+	{
+		m_dwPetEventTime = dwPetTime;
+		if (m_bPetStateDirty)
+		{
+			// 回调提交可能再次改变宠物，先清标记以保留该次变更。
+			m_bPetStateDirty = FALSE;
+			if (!CallPetEvent("PetOnChanged"))
+				m_bPetStateDirty = TRUE;
+		}
+		CallPetEvent("PetOnTick");
+	}
 	this->m_cChat.TimerAdd();
 	
 	// 仇杀倒计时
@@ -2487,6 +2504,10 @@ void	KPlayer::UpdataCurData()
 	Npc[m_nIndex].m_CurrentPoisonTimeReducePercent = 0;
 	Npc[m_nIndex].m_CurrentStunTimeReducePercent = 0;
 	ReCalcEquip();
+#ifdef _SERVER
+	ApplyImmortalPetAttributes();
+	Npc[m_nIndex].m_SkillList.ApplyItemBuffAttributes();
+#endif
 	ReCalcState();
 #ifdef _SERVER
 	// 装备变更也会改变被动技能有效等级，替换旧状态时先撤销其完整数值。
@@ -4476,40 +4497,63 @@ void	KPlayer::SyncTradeState()
 //	功能：发送自己装备在身上的装备信息给别人看
 //-------------------------------------------------------------------------
 #ifdef _SERVER
-void	KPlayer::SendEquipItemInfo(int nTargetPlayer)
+void KPlayer::SendEquipItemInfo(int nTargetPlayer)
 {
-	if (nTargetPlayer <= 0 || nTargetPlayer >= MAX_PLAYER || Player[nTargetPlayer].m_nIndex <= 0)
+	if (!g_pServer || m_nIndex <= 0 || m_nIndex >= MAX_NPC ||
+		nTargetPlayer <= 0 || nTargetPlayer >= MAX_PLAYER || Player[nTargetPlayer].m_nIndex <= 0 ||
+		Player[nTargetPlayer].m_nNetConnectIdx < 0)
 		return;
-	
-	int				nIdx, i, j;
-	SViewItemInfo	*pInfo;
-	VIEW_EQUIP_SYNC	sView;
-	
-	sView.ProtocolType = s2c_viewequip;
-	sView.m_dwNpcID = Npc[m_nIndex].m_dwID;
-	for (i = 0; i < sizeof(sView.m_sInfo) / sizeof(sView.m_sInfo[0]); i++)
+
+	GAME_VIEW_EQUIP_SYNC Sync = {};
+	Sync.ProtocolType = s2c_viewequip;
+	Sync.NpcID = Npc[m_nIndex].m_dwID;
+	Sync.Level = (SHORT)Npc[m_nIndex].m_Level;
+	Sync.PlayerSeries = (BYTE)Npc[m_nIndex].m_Series;
+	g_StrCpyLen(Sync.PlayerName, m_PlayerName, sizeof(Sync.PlayerName));
+	for (int nPart = 0; nPart < itempart_num; nPart++)
 	{
-		nIdx = m_ItemList.m_EquipItem[i];
-		pInfo = &sView.m_sInfo[i];
-		if (nIdx <= 0)
-		{
-			memset(pInfo, 0, sizeof(SViewItemInfo));
+		int nSlot = KItemList::EquipmentPartToClientSlot(nPart);
+		int nItem = m_ItemList.m_EquipItem[nPart];
+		if (nSlot < 0 || nSlot >= 13 || nItem <= 0 || nItem >= MAX_ITEM || !Item[nItem].GetID())
 			continue;
+		KItem& Source = Item[nItem];
+		GAME_VIEW_EQUIP_RECORD& Target = Sync.Equipment[nSlot];
+		Target.ID = Source.GetID();
+		Target.Genre = (BYTE)Source.GetGenre();
+		Target.Detail = (WORD)Source.GetDetailType();
+		Target.Particular = (WORD)Source.GetParticular();
+		Target.Series = (BYTE)Source.GetSeries();
+		Target.Level = (BYTE)Source.GetLevel();
+		Target.GenerationFlags = Source.m_btGenerationFlags;
+		Target.Version = Source.m_GeneratorParam.nVersion;
+		Target.RandomSeed = Source.m_GeneratorParam.uRandomSeed;
+		Target.UpgradeData = Source.m_dwUpgradeData;
+		Target.StateFlags = Source.m_btStateFlags;
+		Target.ValidityStartTime = Source.GetValidityStartTime();
+		Target.BindingMode = Source.m_btBindingMode;
+		for (int i = 0; i < 6; i++)
+			Target.MagicLevels[i] = (BYTE)Source.m_GeneratorParam.nGeneratorLevel[i];
+		for (int i = 0; i < 4; i++)
+		{
+			const KItemSocket* pSocket = Source.GetSocket(i);
+			Target.Sockets[i].GemID = pSocket->GemID;
+			Target.Sockets[i].TypeID = pSocket->TypeID;
+			Target.GemSeeds[i] = pSocket->Seed;
 		}
-		pInfo->m_nID			= Item[nIdx].GetID();
-		pInfo->m_btGenre		= Item[nIdx].GetGenre();
-		pInfo->m_btDetail		= Item[nIdx].GetDetailType();
-		pInfo->m_btParticur		= Item[nIdx].GetParticular();
-		pInfo->m_btSeries		= Item[nIdx].GetSeries();
-		pInfo->m_btLevel		= Item[nIdx].GetLevel();
-		pInfo->m_btLuck			= Item[nIdx].m_GeneratorParam.nLuck;
-		pInfo->m_dwRandomSeed	= Item[nIdx].m_GeneratorParam.uRandomSeed;
-		pInfo->m_wVersion		= Item[nIdx].m_GeneratorParam.nVersion;
-		for (j = 0; j < 6; j++)
-			pInfo->m_btMagicLevel[j] = (BYTE)Item[nIdx].m_GeneratorParam.nGeneratorLevel[j];
 	}
-	
-	g_pServer->PackDataToClient(Player[nTargetPlayer].m_nNetConnectIdx, (BYTE*)&sView, sizeof(sView));
+	Sync.Pet.PetType = m_Pet.Type;
+	if (IsPetPromote())
+	{
+		const PLAYER_IMMORTAL_PET_DATA& State = m_Pet.Immortal;
+		Sync.Pet.Enabled = 1;
+		Sync.Pet.Talent = State.Talent;
+		Sync.Pet.Rebirth = (BYTE)State.Rebirth;
+		Sync.Pet.Strength = (WORD)State.Strength;
+		Sync.Pet.Dexterity = (WORD)State.Dexterity;
+		Sync.Pet.Constitution = (WORD)State.Constitution;
+		Sync.Pet.Intellect = (WORD)State.Intellect;
+	}
+	g_pServer->PackDataToClient(Player[nTargetPlayer].m_nNetConnectIdx, &Sync, sizeof(Sync));
 }
 #endif
 
@@ -6950,7 +6994,7 @@ BOOL KPlayer::OpenItemCompound(BOOL bNewWindow, const char* pszFunction, int nMo
 #endif
 
 #ifdef _SERVER
-int KPlayer::CallPetFunction(const char* pszFunction, DWORD dwParameter, BOOL bItemAction) const
+static DWORD GetPetFunctionScript()
 {
 	// 挂接配置指定的独立宠物技能脚本；资源缺失或Lua失败时不回退到硬编码规则。
 	static DWORD dwScript = 0;
@@ -6972,11 +7016,35 @@ int KPlayer::CallPetFunction(const char* pszFunction, DWORD dwParameter, BOOL bI
 		else
 			g_DebugLog("[PetScript] Missing or invalid FunctionScript in settings/pet.ini");
 	}
+	return dwScript;
+}
+
+int KPlayer::CallPetFunction(const char* pszFunction, DWORD dwParameter, BOOL bItemAction) const
+{
+	DWORD dwScript = GetPetFunctionScript();
 	int nResult = 0;
 	if (!dwScript || !g_CallPlayerScript(m_nPlayerIndex, dwScript, pszFunction,
 		dwParameter, &nResult, bItemAction))
 		return 0;
 	return nResult;
+}
+
+BOOL KPlayer::CallPetEvent(const char* pszFunction, int nTargetNpc, int nDamage)
+{
+	if (!pszFunction || !m_bFinishLoading || m_nNetConnectIdx < 0 || m_bExchangeServer ||
+		m_nPlayerIndex <= 0 || m_nPlayerIndex >= MAX_PLAYER || m_nIndex <= 0 ||
+		m_nIndex >= MAX_NPC || CheckTrading())
+		return FALSE;
+	KNpc& Owner = Npc[m_nIndex];
+	if (!Owner.IsPlayer() || Owner.GetPlayerIdx() != m_nPlayerIndex ||
+		Owner.m_SubWorldIndex < 0 || Owner.m_RegionIndex < 0 || Owner.m_bExchangeServer ||
+		nTargetNpc < 0 || nTargetNpc >= MAX_NPC || nDamage < 0)
+		return FALSE;
+	if (nTargetNpc && (Npc[nTargetNpc].m_RegionIndex < 0 ||
+		Npc[nTargetNpc].m_SubWorldIndex != Owner.m_SubWorldIndex))
+		return FALSE;
+	DWORD dwScript = GetPetFunctionScript();
+	return dwScript && g_CallPetEventScript(m_nPlayerIndex, dwScript, pszFunction, nTargetNpc, nDamage);
 }
 
 BOOL KPlayer::IsPetFunctionActive(int nFunction) const
@@ -7092,7 +7160,9 @@ BOOL KPlayer::IsValidPetType(int nType) const
 		return FALSE;
 	int nTemplate = 0;
 	Pets.GetInteger(nType + 1, "index", 0, &nTemplate);
-	return nTemplate > 0;
+	char szType[64];
+	Pets.GetString(nType + 1, "Type", "", szType, sizeof(szType));
+	return nTemplate > 0 && szType[0] && strcmp(szType, "废") != 0;
 }
 
 BOOL KPlayer::CreatePet(const char* pszName, int nType, int nHonor, int nColor)
@@ -7100,7 +7170,12 @@ BOOL KPlayer::CreatePet(const char* pszName, int nType, int nHonor, int nColor)
 	if (m_Pet.Type || !pszName || !pszName[0] || strlen(pszName) >= sizeof(m_Pet.Name) ||
 		!IsValidPetType(nType) || nHonor < 1 || nHonor > 100 || nColor < 0 || nColor > 255)
 		return FALSE;
+	BYTE OwnedTypes[sizeof(m_Pet.OwnedTypes)];
+	memcpy(OwnedTypes, m_Pet.OwnedTypes, sizeof(OwnedTypes));
 	ZeroMemory(&m_Pet, sizeof(m_Pet));
+	memcpy(m_Pet.OwnedTypes, OwnedTypes, sizeof(OwnedTypes));
+	m_Pet.OwnedTypes[nType / 8] |= (BYTE)(1 << (nType % 8));
+	m_Pet.AttributeSources[0] = (BYTE)nType;
 	m_Pet.Type = (BYTE)nType;
 	m_Pet.Honor = (BYTE)nHonor;
 	m_Pet.Color = (BYTE)nColor;
@@ -7135,7 +7210,154 @@ BOOL KPlayer::SetPetType(int nType)
 	if (!m_Pet.Type || !IsValidPetType(nType))
 		return FALSE;
 	m_Pet.Type = (BYTE)nType;
+	m_Pet.OwnedTypes[nType / 8] |= (BYTE)(1 << (nType % 8));
+	m_Pet.AttributeSources[0] = (BYTE)nType;
+	m_Pet.AttributeSources[1] = 0;
 	return TRUE;
+}
+
+BOOL KPlayer::HasPetAppearance(int nType) const
+{
+	return nType > 0 && nType <= 127 &&
+		(m_Pet.OwnedTypes[nType / 8] & (1 << (nType % 8))) != 0;
+}
+
+BOOL KPlayer::AddPetAppearance(int nType)
+{
+	if (!IsValidPetType(nType))
+		return FALSE;
+	m_Pet.OwnedTypes[nType / 8] |= (BYTE)(1 << (nType % 8));
+	return TRUE;
+}
+
+BOOL KPlayer::SetPetName(const char* pszName)
+{
+	if (!m_Pet.Type || !pszName || !pszName[0] || strlen(pszName) >= sizeof(m_Pet.Name))
+		return FALSE;
+	char szName[sizeof(m_Pet.Name)] = {};
+	strcpy(szName, pszName);
+	memcpy(m_Pet.Name, szName, sizeof(m_Pet.Name));
+	return TRUE;
+}
+
+BOOL KPlayer::SelectPetAppearance(int nType, const char* pszName)
+{
+	if (!m_Pet.Type || !HasPetAppearance(nType) || !IsValidPetType(nType) ||
+		(pszName && (!pszName[0] || strlen(pszName) >= sizeof(m_Pet.Name))))
+		return FALSE;
+	SetPetType(nType);
+	if (pszName)
+		SetPetName(pszName);
+	return TRUE;
+}
+
+BOOL KPlayer::SetPetAttributeSources(int nFirstType, int nSecondType)
+{
+	if (!m_Pet.Type || nFirstType <= 0 || !HasPetAppearance(nFirstType) ||
+		!IsValidPetType(nFirstType) || nSecondType < 0 ||
+		(nSecondType && (nSecondType == nFirstType || !HasPetAppearance(nSecondType) ||
+			!IsValidPetType(nSecondType))))
+		return FALSE;
+	m_Pet.AttributeSources[0] = (BYTE)nFirstType;
+	m_Pet.AttributeSources[1] = (BYTE)nSecondType;
+	return TRUE;
+}
+
+BOOL KPlayer::IsPetPromote() const
+{
+	return m_Pet.Type && m_Pet.Immortal.Enabled;
+}
+
+int KPlayer::GetPetTalent() const
+{
+	return IsPetPromote() ? m_Pet.Immortal.Talent : 0;
+}
+
+int KPlayer::GetPetLevel() const
+{
+	return IsPetPromote() ? (int)m_Pet.Immortal.Level : 0;
+}
+
+BOOL KPlayer::IsPetAttrFull() const
+{
+	if (!IsPetPromote())
+		return FALSE;
+	static const DWORD Caps[3] = {330, 660, 1000};
+	const PLAYER_IMMORTAL_PET_DATA& State = m_Pet.Immortal;
+	return State.Talent < 3 && State.Strength + State.Dexterity + State.Constitution + State.Intellect >= Caps[State.Talent];
+}
+
+BOOL KPlayer::IsValidImmortalPetState(const PLAYER_IMMORTAL_PET_DATA& State) const
+{
+	if (!State.Enabled)
+	{
+		PLAYER_IMMORTAL_PET_DATA Empty = {};
+		return memcmp(&State, &Empty, sizeof(State)) == 0;
+	}
+	if (State.Enabled != TRUE || State.Talent > 2 || State.Reserved[0] || State.Reserved[1] ||
+		State.Reserved[2] || !State.Level || State.Level > 0x7fffffff || State.Rebirth > 255 ||
+		State.Exp > 0x7fffffff || State.NextExp > 0x7fffffff || (State.Exp && State.Exp > State.NextExp))
+		return FALSE;
+	static const DWORD Caps[3] = {330, 660, 1000};
+	ULONGLONG ullTotal = (ULONGLONG)State.Strength + State.Dexterity + State.Constitution + State.Intellect;
+	return ullTotal <= Caps[State.Talent];
+}
+
+BOOL KPlayer::SetImmortalPetState(const PLAYER_IMMORTAL_PET_DATA& State)
+{
+	if (!m_Pet.Type || !IsValidImmortalPetState(State))
+		return FALSE;
+	m_Pet.Immortal = State;
+	return TRUE;
+}
+
+void KPlayer::ApplyImmortalPetAttributes()
+{
+	if (!IsPetPromote() || !m_Pet.Released || !m_Pet.Honor)
+		return;
+	// 与装备的四项基础属性走同一套派生数值重算，不重复增加状态。
+	const PLAYER_IMMORTAL_PET_DATA& State = m_Pet.Immortal;
+	ChangeCurStrength((int)State.Strength);
+	ChangeCurDexterity((int)State.Dexterity);
+	ChangeCurVitality((int)State.Constitution);
+	ChangeCurEngergy((int)State.Intellect);
+}
+
+void KPlayer::SendImmortalPetData(int nClient, BOOL bFull)
+{
+	if (!g_pServer || nClient < 0 || nClient != m_nNetConnectIdx || !m_bFinishLoading)
+		return;
+	if (!IsPetPromote() && m_bImmortalPetWasEnabled)
+	{
+		// DB/8 disabled分支不移除旧值，删除时先用确证的DB/12清缓存。
+		BYTE Clear[] = {0xDB, 3, 0, 12};
+		g_pServer->PackDataToClient(nClient, Clear, sizeof(Clear));
+	}
+	GAME_IMMORTAL_PET_SYNC Sync = {};
+	Sync.ProtocolType = 0xDB;
+	Sync.Length = sizeof(Sync) - 1;
+	// DB/14首次直接应用；此后必须使用DB/8按旧值扣除、新值增加。
+	Sync.Subtype = m_bImmortalPetInitialized ? 8 : 14;
+	const PLAYER_IMMORTAL_PET_DATA& State = m_Pet.Immortal;
+	Sync.Enabled = IsPetPromote() ? 1 : 0;
+	if (Sync.Enabled)
+	{
+		Sync.Rebirth = State.Rebirth;
+		Sync.Level = State.Level;
+		Sync.Exp = State.Exp;
+		Sync.NextExp = State.NextExp;
+		Sync.Talent = State.Talent;
+		if (m_Pet.Released && m_Pet.Honor)
+		{
+			Sync.Strength = State.Strength;
+			Sync.Dexterity = State.Dexterity;
+			Sync.Constitution = State.Constitution;
+			Sync.Intellect = State.Intellect;
+		}
+	}
+	g_pServer->PackDataToClient(nClient, &Sync, sizeof(Sync));
+	m_bImmortalPetInitialized = TRUE;
+	m_bImmortalPetWasEnabled = Sync.Enabled != 0;
 }
 
 BOOL KPlayer::SetPetReleased(int nReleased)
@@ -7173,7 +7395,12 @@ BOOL KPlayer::SetPetAuthority(int nFunction, int nEnabled)
 
 void KPlayer::DeletePet()
 {
+	BYTE OwnedTypes[sizeof(m_Pet.OwnedTypes)];
+	memcpy(OwnedTypes, m_Pet.OwnedTypes, sizeof(OwnedTypes));
+	if (m_Pet.Type)
+		OwnedTypes[m_Pet.Type / 8] &= (BYTE)~(1 << (m_Pet.Type % 8));
 	ZeroMemory(&m_Pet, sizeof(m_Pet));
+	memcpy(m_Pet.OwnedTypes, OwnedTypes, sizeof(OwnedTypes));
 }
 
 void KPlayer::SendPetFunctionData()
@@ -7286,12 +7513,18 @@ void KPlayer::SendPetSyncData(int nClient, BOOL bFull)
 		Buffer[sizeof(*pSync)] = 0;
 		g_pServer->PackDataToClient(nClient, Buffer, pSync->Length + 1);
 	}
-	if (bFull && nClient == m_nNetConnectIdx)
-		SendPetFunctionData();
+	if (nClient == m_nNetConnectIdx)
+	{
+		if (bFull)
+			SendPetFunctionData();
+		SendImmortalPetData(nClient, bFull);
+	}
 }
 
 void KPlayer::SyncPetState()
 {
+	// 仅排队；事务析构同步期间不能重入Lua。
+	m_bPetStateDirty = TRUE;
 	if (!g_pServer || m_nIndex <= 0 || m_nIndex >= MAX_NPC)
 		return;
 	for (int i = 1; i < MAX_PLAYER; i++)

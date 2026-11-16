@@ -10,6 +10,7 @@
 #endif
 #include "KSkills.h"
 #include "KPlayer.h"
+#include "KNpcAttribModify.h"
 #include <time.h>
 #include <limits.h>
 
@@ -1063,6 +1064,12 @@ void KSkillList::UpdateAuraSkillExp()
 
 void KSkillList::RefreshPlayerSkillLevels()
 {
+	if (m_nNpcIndex > 0 && m_nNpcIndex < MAX_NPC && Npc[m_nNpcIndex].IsPlayer())
+	{
+		int nPlayer = Npc[m_nNpcIndex].GetPlayerIdx();
+		if (nPlayer > 0 && nPlayer < MAX_PLAYER)
+			Player[nPlayer].UpdataCurData();
+	}
 	DWORD dwNow = (DWORD)time(NULL);
 	for (int i = 1; i < MAX_NPCSKILL; i++)
 	{
@@ -1116,7 +1123,7 @@ int KSkillList::GetPlayerSkillBuffTime(DWORD dwBuffId)
 	for (int i = 0; i < 16; i++)
 	{
 		if (m_SkillBuffs[i].BuffId == dwBuffId && m_SkillBuffs[i].EndTime > dwNow)
-			return m_SkillBuffs[i].EndTime - dwNow;
+			return m_SkillBuffs[i].EndTime == MAXDWORD ? INT_MAX : (int)min((DWORD)INT_MAX, m_SkillBuffs[i].EndTime - dwNow);
 	}
 	return 0;
 }
@@ -1189,7 +1196,7 @@ BOOL KSkillList::CanAddItemBuff(int nTemplate, int nSeconds)
 		nSeconds = pRule->Duration;
 	DWORD dwStoredId = GetItemBuffStorageId(nTemplate);
 	if (nSeconds <= 0 || nSeconds > pRule->MaxDuration ||
-		GetPlayerSkillBuffTime(dwStoredId) > pRule->MaxDuration - nSeconds)
+		(!pRule->Permanent && GetPlayerSkillBuffTime(dwStoredId) > pRule->MaxDuration - nSeconds))
 		return FALSE;
 	for (int i = 0; i < 16; i++)
 		if (m_SkillBuffs[i].BuffId == dwStoredId || !m_SkillBuffs[i].BuffId ||
@@ -1206,6 +1213,29 @@ BOOL KSkillList::AddItemBuff(int nTemplate, int nSeconds, BOOL bSync)
 	int nValue = g_SkillManager.GetPlayerBuffRule(nTemplate) ? 1 + pRule->SkillExpPercent / 100 : 1;
 	return AddPlayerSkillBuff(GetItemBuffStorageId(nTemplate), nSeconds ? nSeconds : pRule->Duration,
 		0, nValue, TRUE, bSync);
+}
+
+BOOL KSkillList::SetItemBuff(int nTemplate, int nSeconds, BOOL bSync)
+{
+	const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(nTemplate);
+	if (!pRule) return FALSE;
+	int nValue = g_SkillManager.GetPlayerBuffRule(nTemplate) ? 1 + pRule->SkillExpPercent / 100 : 1;
+	return AddPlayerSkillBuff(GetItemBuffStorageId(nTemplate), nSeconds ? nSeconds : pRule->Duration, 0, nValue, FALSE, bSync);
+}
+
+void KSkillList::ApplyItemBuffAttributes()
+{
+	if (m_nNpcIndex <= 0 || m_nNpcIndex >= MAX_NPC || !Npc[m_nNpcIndex].IsPlayer()) return;
+	DWORD dwNow = (DWORD)time(NULL);
+	for (int i = 0; i < 16; i++)
+	{
+		const PLAYER_SKILL_BUFF& Buff = m_SkillBuffs[i];
+		if (Buff.EndTime <= dwNow) continue;
+		const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(GetItemBuffTemplateId(Buff.BuffId));
+		if (!pRule) continue;
+		for (int j = 0; j < pRule->AttributeCount; j++)
+			g_NpcAttribModify.ModifyEquipmentAttrib(&Npc[m_nNpcIndex], &pRule->Attributes[j]);
+	}
 }
 
 int KSkillList::GetItemBuffAttribute(int nAttribute)
@@ -1279,13 +1309,15 @@ BOOL KSkillList::AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, 
 	}
 	if (nFree < 0)
 		return FALSE;
-	int nLeft = bAddTime ? GetPlayerSkillBuffTime(dwBuffId) : 0;
+	const PLAYER_ITEM_BUFF_RULE* pItemRule = g_SkillManager.GetItemBuffRule(GetItemBuffTemplateId(dwBuffId));
+	BOOL bPermanent = pItemRule && pItemRule->Permanent;
+	int nLeft = bAddTime && !bPermanent ? GetPlayerSkillBuffTime(dwBuffId) : 0;
 	int nMaxDuration = GetBuffMaxDuration(dwBuffId);
 	if (nLeft > nMaxDuration - nSeconds)
 		return FALSE;
 	PLAYER_SKILL_BUFF& Buff = m_SkillBuffs[nFree];
 	Buff.BuffId = dwBuffId;
-	Buff.EndTime = (DWORD)time(NULL) + nLeft + nSeconds;
+	Buff.EndTime = bPermanent ? MAXDWORD : (DWORD)time(NULL) + nLeft + nSeconds;
 	Buff.SkillId = nSkillId;
 	Buff.Value = nValue;
 	if (bSync)
@@ -1407,5 +1439,6 @@ void KSkillList::SyncPlayerSkillBuffs(BOOL bInitial)
 	WORD wLength = nOffset - 1;
 	memcpy(Buffer + 1, &wLength, sizeof(wLength));
 	g_pServer->PackDataToClient(nClient, Buffer, nOffset);
+	Player[nPlayer].SendCurNormalSyncData();
 }
 #endif
