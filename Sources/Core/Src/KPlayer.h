@@ -246,6 +246,7 @@ public:
 	DWORD			m_dwCompoundNpcID;
 	DWORD			m_dwCompoundScriptID;
 	int				m_nCompoundWorld;
+	int				m_nCompoundMode;
 	char			m_szCompoundFunction[64];
 	int				m_nAvailableAnswerNum;//当前选择界面下，最大回答数。
 	bool			m_bWaitingPlayerFeedBack;	//当前是否正等待玩家在客户端的反馈。该状态下，当前脚本不置空.类式对话选择情况
@@ -309,7 +310,7 @@ public:
 	void SyncStoreBoxPage(int nIndex);
 	BOOL CanChangeInventory();
 	BOOL IsInventoryPosition(int nPlace, int nX, int nY, int nWidth, int nHeight) const;
-	BOOL			OpenItemCompound(BOOL bNewWindow, const char* pszFunction = "OnCompound");
+	BOOL			OpenItemCompound(BOOL bNewWindow, const char* pszFunction = "OnCompound", int nMode = 0);
 	BOOL			CanCompoundItems();
 	void			CompoundMessage(const char* pszMessage);
 	BOOL			UseSkillBook(int nItem);

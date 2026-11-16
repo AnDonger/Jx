@@ -124,6 +124,15 @@ typedef struct
 	int		nLuck;
 } KItemGeneratorParam;
 
+// 孔位与玉石各自保留原资源编号及独立随机种子；四槽顺序对应客户端物品数据。
+struct KItemSocket
+{
+	WORD GemID;
+	WORD TypeID;
+	DWORD Seed;
+};
+static_assert(sizeof(KItemSocket) == 8, "item socket state size");
+
 class KNpc;
 
 class KItem
@@ -155,6 +164,7 @@ private:
 	BYTE	m_btStateFlags;
 	BYTE	m_btBindingMode;
 	BYTE	m_btReforgeLuck;
+	KItemSocket m_Sockets[4];
 	int		m_nStackCount;						// 堆叠数量，旧存档默认一件。
 	int		m_nCurrentDur;						// 当前耐久度
 #ifndef _SERVER
@@ -199,6 +209,21 @@ public:
 	int		GetRequireLevel() const;
 	BYTE	GetGenerationFlags() const { return m_btGenerationFlags; };
 	DWORD	GetUpgradeData() const { return m_dwUpgradeData; };
+	const KItemSocket* GetSocket(int nSlot) const
+	{
+		return nSlot >= 0 && nSlot < 4 ? &m_Sockets[nSlot] : NULL;
+	}
+	BOOL SetSocket(int nSlot, const KItemSocket& Socket)
+	{
+		if (nSlot < 0 || nSlot >= 4 || GetGenre() != item_equip)
+			return FALSE;
+		m_Sockets[nSlot] = Socket;
+		return TRUE;
+	}
+	void ClearSockets()
+	{
+		memset(m_Sockets, 0, sizeof(m_Sockets));
+	}
 	int		GetRepairPrice();
 	int		GetRepairMagicAttribCount() const;
 	void	Remove();

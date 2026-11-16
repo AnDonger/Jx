@@ -31,13 +31,18 @@ void KItemGenerator::SetRandomSeed(UINT uSeed)
 	m_uRandomSeed = uSeed;
 }
 
-int KItemGenerator::GetRandomNumber(int nMin, int nMax)
+static int NextItemRandom(UINT& uSeed, int nMin, int nMax)
 {
 	UINT nRange = (UINT)(nMax - nMin) + 1;
 	if (nRange == 0)
 		return nMin;
-	m_uRandomSeed = m_uRandomSeed * 214013U + 2531011U;
-	return nMin + (int)(((m_uRandomSeed >> 16) & 0x7fffU) % nRange);
+	uSeed = uSeed * 214013U + 2531011U;
+	return nMin + (int)(((uSeed >> 16) & 0x7fffU) % nRange);
+}
+
+int KItemGenerator::GetRandomNumber(int nMin, int nMax)
+{
+	return NextItemRandom(m_uRandomSeed, nMin, nMax);
 }
 
 KItemGenerator::~KItemGenerator()
@@ -903,6 +908,8 @@ BOOL KItemGenerator::Gen_ExistEquipment(IN int nDetailType,
 BOOL KItemGenerator::InitGemRules()
 {
 	m_GemRules.clear();
+	m_SocketGemDetails.clear();
+	m_SocketRules.clear();
 	KTabFile Table;
 	if (!Table.Load("\\settings\\item\\打孔镶嵌\\宝石属性表_sc.txt"))
 	{
@@ -911,13 +918,15 @@ BOOL KItemGenerator::InitGemRules()
 	}
 	for (int nRow = 2; nRow <= Table.GetHeight(); nRow++)
 	{
-		int nGenre, nDetail, nParticular, nLevel, nGenerateCount;
+		int nGemID, nGenre, nDetail, nParticular, nLevel, nGenerateCount;
+		Table.GetInteger(nRow, 1, 0, &nGemID);
 		Table.GetInteger(nRow, 2, -1, &nGenre);
 		Table.GetInteger(nRow, 3, -1, &nDetail);
 		Table.GetInteger(nRow, 4, -1, &nParticular);
 		Table.GetInteger(nRow, 5, -1, &nLevel);
 		Table.GetInteger(nRow, 8, 0, &nGenerateCount);
-		if (nGenre != item_materials || nDetail < 0 || nParticular != 0 ||
+		if (nGemID <= 0 || nGemID > 65535 || m_SocketGemDetails.find(nGemID) != m_SocketGemDetails.end() ||
+			nGenre != item_materials || nDetail < 0 || nParticular != 0 ||
 			nLevel != 0 || nGenerateCount != 1 || m_GemRules.find(nDetail) != m_GemRules.end())
 		{
 			g_DebugLog("[Gem] Unsupported or duplicate original gem row: row=%d", nRow);
@@ -935,7 +944,8 @@ BOOL KItemGenerator::InitGemRules()
 			Table.GetInteger(nRow, 10 + i * 5, 0, &Property.nMin);
 			Table.GetInteger(nRow, 11 + i * 5, 0, &Property.nMax);
 			Table.GetInteger(nRow, 12 + i * 5, 100, &Property.nThreshold);
-			if (Property.nMin < 0 || Property.nMax < Property.nMin ||
+			Table.GetInteger(nRow, 13 + i * 5, 0, &Property.nDecorationExtra);
+			if (Property.nDecorationExtra < 0 || Property.nMin < 0 || Property.nMax < Property.nMin ||
 				Property.nThreshold < nPrevious || Property.nThreshold > 100)
 			{
 				g_DebugLog("[Gem] Invalid original gem property: row=%d property=%d", nRow, i + 1);
@@ -947,9 +957,137 @@ BOOL KItemGenerator::InitGemRules()
 		if (!Rule.nCount || nPrevious != 100)
 			return FALSE;
 		m_GemRules[nDetail] = Rule;
+		m_SocketGemDetails[nGemID] = nDetail;
+	}
+	KTabFile Sockets;
+	if (!Sockets.Load("\\settings\\item\\打孔镶嵌\\孔属性表_sc.txt"))
+		return FALSE;
+	for (int nRow = 2; nRow <= Sockets.GetHeight(); nRow++)
+	{
+		int nID;
+		Sockets.GetInteger(nRow, 1, 0, &nID);
+		SocketRule Rule;
+		Sockets.GetInteger(nRow, 7, 0, &Rule.nQuality);
+		if (nID <= 0 || nID > 65535 || (Rule.nQuality != 0 && Rule.nQuality != 1) ||
+			m_SocketRules.find(nID) != m_SocketRules.end())
+			return FALSE;
+		char szPattern[2048];
+		Sockets.GetString(nRow, 6, "", szPattern, sizeof(szPattern));
+		if (szPattern[0])
+		{
+			// 原表的激活格式为 *.3.[详细类别列表或区间].*；不按颜色名称推断。
+			if (strncmp(szPattern, "*.3.[", 5) != 0)
+				return FALSE;
+			const char* pPart = szPattern + 5;
+			while (*pPart)
+			{
+				char* pEnd;
+				long nFirst = strtol(pPart, &pEnd, 10);
+				if (pEnd == pPart || nFirst < 0 || nFirst > 65535)
+					return FALSE;
+				long nLast = nFirst;
+				if (*pEnd == '-')
+				{
+					pPart = pEnd + 1;
+					nLast = strtol(pPart, &pEnd, 10);
+					if (pEnd == pPart || nLast < nFirst || nLast > 65535)
+						return FALSE;
+				}
+				for (int nDetail = nFirst; nDetail <= nLast; nDetail++)
+					Rule.ActivatedDetails.insert(nDetail);
+				if (strcmp(pEnd, "].*") == 0)
+					break;
+				if (*pEnd != ',')
+					return FALSE;
+				pPart = pEnd + 1;
+			}
+		}
+		m_SocketRules[nID] = Rule;
 	}
 	g_DebugLog("[Gem] Original gem property rules loaded: count=%d", (int)m_GemRules.size());
 	return !m_GemRules.empty();
+}
+
+BOOL KItemGenerator::GenerateGemAttrib(int nDetail, DWORD dwSeed, KItemNormalAttrib* pAttrib,
+	int* pnDecorationExtra) const
+{
+	if (!pAttrib)
+		return FALSE;
+	ZeroMemory(pAttrib, sizeof(*pAttrib));
+	if (pnDecorationExtra)
+		*pnDecorationExtra = 0;
+	std::map<int, GemRule>::const_iterator it = m_GemRules.find(nDetail);
+	if (it == m_GemRules.end())
+		return FALSE;
+	UINT uSeed = dwSeed;
+	int nRoll = NextItemRandom(uSeed, 0, 99);
+	for (int i = 0; i < it->second.nCount; i++)
+	{
+		const GemProperty& Property = it->second.Properties[i];
+		if (Property.nThreshold >= nRoll)
+		{
+			pAttrib->nAttribType = Property.nType;
+			pAttrib->nValue[0] = NextItemRandom(uSeed, Property.nMin, Property.nMax);
+			pAttrib->nValue[1] = -1;
+			pAttrib->nValue[2] = -1;
+			if (pnDecorationExtra)
+				*pnDecorationExtra = Property.nDecorationExtra;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+int KItemGenerator::GetSocketGemDetail(int nGemID) const
+{
+	std::map<int, int>::const_iterator it = m_SocketGemDetails.find(nGemID);
+	return it == m_SocketGemDetails.end() ? -1 : it->second;
+}
+
+BOOL KItemGenerator::IsValidSocket(const KItemSocket& Socket) const
+{
+	if (!Socket.TypeID)
+		return !Socket.GemID && !Socket.Seed;
+	if (m_SocketRules.find(Socket.TypeID) == m_SocketRules.end())
+		return FALSE;
+	return Socket.GemID ? GetSocketGemDetail(Socket.GemID) >= 0 : !Socket.Seed;
+}
+
+BOOL KItemGenerator::GenerateSocketGem(int nGemID, DWORD dwSeed, KItem* pResult, int nVersion)
+{
+	int nDetail = GetSocketGemDetail(nGemID);
+	if (!pResult || nDetail < 0)
+		return FALSE;
+	pResult->m_GeneratorParam.uRandomSeed = dwSeed;
+	return Gen_Material(nDetail, 0, 0, nVersion, pResult);
+}
+
+BOOL KItemGenerator::GetSocketAttrib(const KItemSocket& Socket, KItemNormalAttrib* pAttrib,
+	BOOL* pbActivated) const
+{
+	if (pbActivated)
+		*pbActivated = FALSE;
+	if (!pAttrib)
+		return FALSE;
+	ZeroMemory(pAttrib, sizeof(*pAttrib));
+	if (!IsValidSocket(Socket) || !Socket.GemID)
+		return FALSE;
+	int nDetail = GetSocketGemDetail(Socket.GemID);
+	int nExtra = 0;
+	if (!GenerateGemAttrib(nDetail, Socket.Seed, pAttrib, &nExtra))
+		return FALSE;
+	const SocketRule& Rule = m_SocketRules.find(Socket.TypeID)->second;
+	if (Rule.ActivatedDetails.find(nDetail) != Rule.ActivatedDetails.end())
+	{
+		// 极品仅将装饰附加值翻倍；宝石原属性与独立种子保持不变。
+		pAttrib->nValue[0] += nExtra * (Rule.nQuality == 1 ? 2 : 1);
+		if (pbActivated)
+			*pbActivated = TRUE;
+	}
+	// 宝石表生成的是单值属性，-1仅供物品说明占位，不能作为第二、三参数应用。
+	pAttrib->nValue[1] = 0;
+	pAttrib->nValue[2] = 0;
+	return TRUE;
 }
 
 // 普通材料按原资源的类别、详细类别、等级和版本生成，不占用任务专用物品类型。
@@ -978,24 +1116,10 @@ BOOL KItemGenerator::Gen_Material(IN int nDetailType,
 	if (it != m_GemRules.end() && nParticularType == 0 && nLevel == 0)
 	{
 		pItem->m_GeneratorParam.uRandomSeed = uSeed;
-		UINT uPreviousSeed = m_uRandomSeed;
-		SetRandomSeed(uSeed);
-		int nRoll = GetRandomNumber(0, 99);
 		KItemNormalAttrib Attributes[6];
 		ZeroMemory(Attributes, sizeof(Attributes));
-		for (int i = 0; i < it->second.nCount; i++)
-		{
-			const GemProperty& Property = it->second.Properties[i];
-			if (Property.nThreshold >= nRoll)
-			{
-				Attributes[0].nAttribType = Property.nType;
-				Attributes[0].nValue[0] = GetRandomNumber(Property.nMin, Property.nMax);
-				Attributes[0].nValue[1] = -1;
-				Attributes[0].nValue[2] = -1;
-				break;
-			}
-		}
-		SetRandomSeed(uPreviousSeed);
+		if (!GenerateGemAttrib(nDetailType, uSeed, &Attributes[0]))
+			return FALSE;
 		pItem->SetMagicAttrib(Attributes);
 	}
 	return TRUE;
@@ -1273,6 +1397,8 @@ BOOL KItemGenerator::PrepareReforge(const KItem& Source, int nParticular, int nL
 	if (pResult->GetMaxDurability() >= 0 && nDur > pResult->GetMaxDurability())
 		nDur = pResult->GetMaxDurability();
 	pResult->SetDurability(nDur);
+	for (int i = 0; i < 4; i++)
+		pResult->SetSocket(i, *Source.GetSocket(i));
 	pResult->m_btStateFlags |= 1;
 	pResult->m_btBindingMode = 2;
 	return TRUE;

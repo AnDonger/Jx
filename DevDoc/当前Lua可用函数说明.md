@@ -1,10 +1,40 @@
 # 当前 Lua 可用函数说明（Lua函数表）
 
-核对日期：2026-11-15。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
+
+## 2026-11-16 孔位操作接口补充
+
+以下接口已接入源码，原生及TLS交互已验证，客户端画面待实测；需与原资源规则配合使用，不能由客户端直接指定奖励或种子。
+
+### `GetItemOperationInfo`
+
+`local operation = GetItemOperationInfo()`：仅当前有效NPC物品窗口提交的事务回调可用，返回 `{Mode, Socket, Parameter}`；无有效上下文返回nil。Mode=0为合成，1为打孔／镶嵌／孔装饰，2为剥离。Mode来自服务端打开的窗口上下文；Socket为内部已归一化的1～4孔序提示，正常89协议入口为0。Parameter原样保留89尾DWORD，必须由Lua按本次业务校验：打孔／装饰为原打孔需求表组编号；镶嵌为0～3目标孔序；剥离为0。无协议参数的内部调用不含Parameter。不能将客户端Parameter当已授权配方，更不能用它指定成功结果或随机种子。
+
+### `SetSelectedItemSocket`
+
+`SetSelectedItemSocket(equipmentSlot, socket, gemID, typeID, seed [, bound, bindingMode])`：equipmentSlot是本次`GetSelectedItems()`数组下标；socket为1～4；gemID和typeID为原资源中存在的编号；seed为0～4294967295整数。gemID=0代表空孔，此时seed必须0；typeID=0则gemID及seed也必须0。可选bound=0/1、bindingMode=0～255，须同时提供；仅升级绑定，不清除原绑定或降低永久绑定。typeID大于0时须满足`(typeID-1)%4 == socket-1`，不得把其他孔位专属类型写到当前孔。成功返回1，参数错误、非当前提交的真实背包装备、已完成或无事务时失败并回滚。费用、材料、装备限制及概率应先由NPC Lua核对；该接口只更新底层状态。提交后完整刷新物品并保存，错误时由事务快照恢复。
+
+示例：`SetSelectedItemSocket(1, 1, 0, 1, 0)`设置第一孔为空的普通第一孔；镶嵌时gemID、seed必须取本次真实提交宝石及原表映射，不可另抽随机值。
+
+### `ReturnSelectedSocketGem`
+
+`ReturnSelectedSocketGem(equipmentSlot, socket)`：仅当前真实背包装备及有效事务；按原gemID、原seed（包含0种子）生成并发回一颗永久绑定(mode2)的宝石，再清掉该孔GemID/Seed、保留TypeID。成功1；无镶嵌物、模板无效、满包或其他失败抛错并完整回滚。剥离材料及扣费须由Lua先按原表判断并在同次事务扣除。返回的玉石／卦符不会重新随机属性。
+
+### `GetSelectedItems`新增字段
+
+每项保留Genre、Detail、Particular、Level、Count、Bound、BindingMode，新增Version（模板实际版本）、RandomSeed（无符号32位数值）、UpgradeData、GenerationFlags、RequireLevel和Sockets（四项数组，每项GemID／TypeID／Seed）。槽号只能在当次请求内使用。空材料槽不在返回数组中，不能拿客户端槽位代替数组索引。
+
+### `EnchaseItem`新增重载
+
+`EnchaseItem(1, "OnSocketOperation")`打开打孔／镶嵌／装饰窗口；`EnchaseItem(2, "OnSocketOperation")`打开剥离窗口。省略第二参数时回调名为OnSocketOperation。原`EnchaseItem("OnCompound")`仍打开旧合成窗口。回调名只允许字母、数字和下划线；窗口绑定当前NPC、脚本、地图与距离，不可跨NPC或切图沿用。
+
+业务预检失败可`Msg2Player("具体原因")`后`CompleteItemOperation(0)`，前提是尚无消耗；0表示合法完成的失败并提交已有变更。真实操作接口失败或Lua报错必须回滚，不得用Complete掩盖失败。
+
+
+核对日期：2026-11-16。适用项目：`F:\mxd\Jx` 当前 C/C++ 服务端。本文是后续NPC脚本开发的接口基准；增加、修改、删除注册函数或改变参数、返回值、事务行为时，必须同步维护本文。
 
 ## 阅读方法与范围
 
-- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **271个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **363个不同名字**，均有独立条目。
+- 编写或修改NPC Lua前，先查本文中的函数名、参数、返回值、状态和限制。本文收录服务端游戏脚本 **274个不同注册名**，世界脚本 **9个注册名**（与游戏脚本重叠7个、另有2个专用名），以及实际打开的Lua标准库 **90个名字**（含4个注册为报错的废弃名）；合计 **366个不同名字**，均有独立条目。
 - “实现已核对”表示已对照当前注册和函数正文，**不表示全部接口已通过新版客户端实测**。带“旧接口”“待适配”“有缺陷”“不可用”的条目保留用于查错；不能把存在名字当成功能已完整适配。
 - 以服务端 `_SERVER` 分支为准，排除注释中的注册项、客户端专用 `PlaySound` / `PlaySprMovie`、未注册的C++辅助函数。原脚本内 `main`、`OnCompound`、公共库中自定义函数不属于引擎全局API；只能在加载了对应脚本后使用其实际定义。
 - 普通NPC／玩家脚本由 `GameScriptFuns` 注册；全局世界脚本由 `WorldScriptFuns` 注册。标准库在创建Lua状态时打开。脚本可覆盖同名全局，使用时还要核对原脚本及 `Include` 内容。

@@ -35,6 +35,7 @@ KItem::KItem()
 	m_nCurrentDur = -1;
 	m_nStackCount = 1;
 	m_dwUpgradeData = 0;
+	ClearSockets();
 	m_btGenerationFlags = 0;
 	m_btStateFlags = 0;
 	m_btBindingMode = 0;
@@ -116,6 +117,17 @@ void KItem::ApplyMagicAttribToNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 */) 
 			}
 		}
 	}
+	if (GetGenre() == item_equip)
+	{
+		for (int nSlot = 0; nSlot < 4; nSlot++)
+		{
+			KItemNormalAttrib Attrib;
+			if (ItemGen.GetSocketAttrib(m_Sockets[nSlot], &Attrib))
+			{
+				g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, &Attrib);
+			}
+		}
+	}
 }
 
 /******************************************************************************
@@ -186,6 +198,18 @@ void KItem::RemoveMagicAttribFromNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 *
 				RemoveAttrib.nValue[1] = -pAttrib->nValue[1];
 				RemoveAttrib.nValue[2] = -pAttrib->nValue[2];
 				g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, &RemoveAttrib);
+			}
+		}
+	}
+	if (GetGenre() == item_equip)
+	{
+		for (int nSlot = 0; nSlot < 4; nSlot++)
+		{
+			KItemNormalAttrib Attrib;
+			if (ItemGen.GetSocketAttrib(m_Sockets[nSlot], &Attrib))
+			{
+				Attrib.nValue[0] = -Attrib.nValue[0];
+				g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, &Attrib);
 			}
 		}
 	}
@@ -774,6 +798,7 @@ void KItem::Remove()
 	m_nIndex = 0;
 	m_nStackCount = 1;
 	m_dwUpgradeData = 0;
+	ClearSockets();
 	m_btGenerationFlags = 0;
 	m_btStateFlags = 0;
 	m_btBindingMode = 0;

@@ -416,6 +416,24 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 	}
 	else
 	{
+		// 孔位/绑定只在事务成功后重建客户端真实物品；失败已由完整物品快照恢复。
+		for (size_t i = 0; i < pState->Items.size(); i++)
+		{
+			KItem& Saved = pState->Items[i].Data;
+			int nItem = Role.m_ItemList.SearchID(Saved.GetID());
+			if (!nItem || Item[nItem].GetGenre() != item_equip)
+				continue;
+			BOOL bChanged = Item[nItem].IsBound() != Saved.IsBound() ||
+				Item[nItem].GetBindingMode() != Saved.GetBindingMode();
+			for (int j = 0; j < 4; j++)
+				if (memcmp(Item[nItem].GetSocket(j), Saved.GetSocket(j), sizeof(KItemSocket)))
+					bChanged = TRUE;
+			if (bChanged)
+			{
+				Role.m_ItemList.SyncItem(nItem, TRUE);
+				Role.m_ulLastSaveTime = 0;
+			}
+		}
 		if (memcmp(&pState->Expansion, &Role.m_InventoryExpansion, sizeof(pState->Expansion)))
 		{
 			Role.m_ulLastSaveTime = 0;
@@ -471,15 +489,17 @@ struct KNpcSelectedItems
 {
 	std::vector<KNpcSelectedItem> Items;
 	int Result;
+	int Socket;
+	int Parameter;
 };
 
 static KNpcSelectedItems* g_NpcSelectedItems[MAX_PLAYER] = {NULL};
 
-KNpcScriptSelection::KNpcScriptSelection(int nPlayer, const int* pItems, int nCount)
+KNpcScriptSelection::KNpcScriptSelection(int nPlayer, const int* pItems, int nCount, int nSocket, int nParameter)
 {
 	m_nPlayer = 0;
 	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || !pItems || nCount <= 0 ||
-		nCount > MAX_SCRIPT_SELECTED_ITEMS || g_NpcSelectedItems[nPlayer])
+		nCount > MAX_SCRIPT_SELECTED_ITEMS || nSocket < 0 || nSocket > 4 || g_NpcSelectedItems[nPlayer])
 		return;
 	for (int i = 0; i < nCount; i++)
 	{
@@ -493,6 +513,8 @@ KNpcScriptSelection::KNpcScriptSelection(int nPlayer, const int* pItems, int nCo
 	}
 	KNpcSelectedItems* pState = new KNpcSelectedItems;
 	pState->Result = -1;
+	pState->Socket = nSocket;
+	pState->Parameter = nParameter;
 	for (int i = 0; i < nCount; i++)
 	{
 		KNpcSelectedItem Selected;
@@ -732,8 +754,148 @@ int LuaGetSelectedItems(Lua_State* L)
 		SetScriptItemInteger(L, nTable, "Count", Data.GetStackCount());
 		SetScriptItemInteger(L, nTable, "Bound", Data.IsBound() ? 1 : 0);
 		SetScriptItemInteger(L, nTable, "BindingMode", Data.GetBindingMode());
+		SetScriptItemInteger(L, nTable, "Version", Data.GetGeneratorParam()->nVersion);
+		Lua_PushString(L, "RandomSeed");
+		Lua_PushNumber(L, (double)Data.GetGeneratorParam()->uRandomSeed);
+		Lua_SetTable(L, nTable);
+		Lua_PushString(L, "UpgradeData");
+		Lua_PushNumber(L, (double)Data.GetUpgradeData());
+		Lua_SetTable(L, nTable);
+		SetScriptItemInteger(L, nTable, "GenerationFlags", Data.GetGenerationFlags());
+		SetScriptItemInteger(L, nTable, "RequireLevel", Data.GetRequireLevel());
+		Lua_PushString(L, "Sockets");
+		lua_newtable(L);
+		int nSockets = Lua_GetTopIndex(L);
+		for (int j = 0; j < 4; j++)
+		{
+			const KItemSocket* pSocket = Data.GetSocket(j);
+			lua_newtable(L);
+			int nSocket = Lua_GetTopIndex(L);
+			SetScriptItemInteger(L, nSocket, "GemID", pSocket->GemID);
+			SetScriptItemInteger(L, nSocket, "TypeID", pSocket->TypeID);
+			Lua_PushString(L, "Seed");
+			Lua_PushNumber(L, (double)pSocket->Seed);
+			Lua_SetTable(L, nSocket);
+			lua_rawseti(L, nSockets, j + 1);
+		}
+		Lua_SetTable(L, nTable);
 		lua_rawseti(L, nResult, (int)i + 1);
 	}
+	return 1;
+}
+
+
+// 操作上下文来自当前NPC窗口及经过校验的提交，不接受Lua选择其他玩家。
+int LuaGetItemOperationInfo(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	KNpcSelectedItems* pState = nPlayer > 0 && nPlayer < MAX_PLAYER ? g_NpcSelectedItems[nPlayer] : NULL;
+	if (!pState || pState->Result >= 0 || !g_NpcScriptExchange[nPlayer] ||
+		!Player[nPlayer].CanCompoundItems())
+	{
+		Lua_PushNil(L);
+		return 1;
+	}
+	lua_newtable(L);
+	int nTable = Lua_GetTopIndex(L);
+	SetScriptItemInteger(L, nTable, "Mode", Player[nPlayer].m_nCompoundMode);
+	SetScriptItemInteger(L, nTable, "Socket", pState->Socket);
+	if (pState->Parameter >= 0)
+		SetScriptItemInteger(L, nTable, "Parameter", pState->Parameter);
+	return 1;
+}
+
+static BOOL ReadSocketArgument(Lua_State* L, int nArgument, DWORD dwMaximum, DWORD* pValue)
+{
+	double Value = Lua_ValueToNumber(L, nArgument);
+	if (!Lua_IsNumber(L, nArgument) || !(Value >= 0 && Value <= (double)dwMaximum) || Value != (DWORD)Value)
+		return FALSE;
+	*pValue = (DWORD)Value;
+	return TRUE;
+}
+
+static KItem* GetSelectedSocketEquipment(Lua_State* L, int nPlayer, DWORD dwSlot)
+{
+	KNpcSelectedItems* pState = nPlayer > 0 && nPlayer < MAX_PLAYER ? g_NpcSelectedItems[nPlayer] : NULL;
+	if (!pState || pState->Result >= 0 || !g_NpcScriptExchange[nPlayer] ||
+		g_NpcScriptExchange[nPlayer]->Failed || !Player[nPlayer].CanCompoundItems() ||
+		Player[nPlayer].m_nCompoundMode < 1 || Player[nPlayer].m_nCompoundMode > 2 ||
+		dwSlot < 1 || dwSlot > pState->Items.size())
+		return NULL;
+	KNpcSelectedItem& Selected = pState->Items[dwSlot - 1];
+	KItem& Data = Item[Selected.Index];
+	if (Selected.Remaining != 1 || Data.GetID() != Selected.ID || Data.GetGenre() != item_equip ||
+		Data.GetStackCount() != 1 ||
+		!IsBagItemPlace(Player[nPlayer].m_ItemList.GetItemPlace(Selected.Index)))
+		return NULL;
+	return &Data;
+}
+
+int LuaSetSelectedItemSocket(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	DWORD Values[7] = {0};
+	const DWORD Maximum[7] = {MAX_SCRIPT_SELECTED_ITEMS, 4, 65535, 65535, 0xffffffffUL, 1, 255};
+	BOOL bValid = nTop == 5 || nTop == 7;
+	for (int i = 0; bValid && i < nTop; i++)
+		bValid = ReadSocketArgument(L, i + 1, Maximum[i], &Values[i]);
+	KItem* pItem = bValid ? GetSelectedSocketEquipment(L, nPlayer, Values[0]) : NULL;
+	KItemSocket Socket;
+	Socket.GemID = (WORD)Values[2];
+	Socket.TypeID = (WORD)Values[3];
+	Socket.Seed = Values[4];
+	if (!pItem || Values[1] < 1 || Socket.TypeID && (Socket.TypeID - 1) % 4 != Values[1] - 1 ||
+		!ItemGen.IsValidSocket(Socket) ||
+		!Values[5] && Values[6] || !pItem->SetSocket(Values[1] - 1, Socket))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	// 只能升级绑定。既有永久绑定不能因换孔或镶嵌未绑定宝石降级。
+	if (Values[5] && (!pItem->IsBound() || pItem->GetBindingMode() != 2))
+		pItem->SetBinding(TRUE, (BYTE)Values[6]);
+	Lua_PushNumber(L, 1);
+	return 1;
+}
+
+int LuaReturnSelectedSocketGem(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	DWORD dwSlot = 0, dwSocket = 0;
+	BOOL bValid = Lua_GetTopIndex(L) == 2 &&
+		ReadSocketArgument(L, 1, MAX_SCRIPT_SELECTED_ITEMS, &dwSlot) &&
+		ReadSocketArgument(L, 2, 4, &dwSocket) && dwSocket >= 1;
+	KItem* pItem = bValid ? GetSelectedSocketEquipment(L, nPlayer, dwSlot) : NULL;
+	const KItemSocket* pSocket = pItem ? pItem->GetSocket(dwSocket - 1) : NULL;
+	KItem Gem;
+	if (!pSocket || !pSocket->GemID || !ItemGen.IsValidSocket(*pSocket) ||
+		!ItemGen.GenerateSocketGem(pSocket->GemID, pSocket->Seed, &Gem, pItem->GetGeneratorParam()->nVersion))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	Gem.SetBinding(TRUE, 2);
+	int nGem = ItemSet.Add(&Gem);
+	if (!nGem || !Player[nPlayer].m_ItemList.AddPickupItem(nGem, -1, -1))
+	{
+		if (nGem) ItemSet.Remove(nGem);
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	KItemSocket Empty = *pSocket;
+	Empty.GemID = 0;
+	Empty.Seed = 0;
+	pItem->SetSocket(dwSocket - 1, Empty);
+	Lua_PushNumber(L, 1);
 	return 1;
 }
 
@@ -7081,7 +7243,17 @@ int LuaEnchaseItem(Lua_State* L)
 	int nPlayer = GetPlayerIndex(L);
 	Lua_SetTopIndex(L, nTop);
 	if (nPlayer > 0 && nPlayer < MAX_PLAYER)
-		Player[nPlayer].OpenItemCompound(FALSE, nTop > 0 && lua_type(L, 1) == LUA_TSTRING ? Lua_ValueToString(L, 1) : "OnCompound");
+	{
+		if (nTop > 0 && Lua_IsNumber(L, 1))
+		{
+			double Mode = Lua_ValueToNumber(L, 1);
+			if ((Mode != 1 && Mode != 2) || nTop > 2 || nTop == 2 && lua_type(L, 2) != LUA_TSTRING)
+				return 0;
+			Player[nPlayer].OpenItemCompound(FALSE, nTop == 2 ? Lua_ValueToString(L, 2) : "OnSocketOperation", (int)Mode);
+		}
+		else if (nTop <= 1)
+			Player[nPlayer].OpenItemCompound(FALSE, nTop > 0 && lua_type(L, 1) == LUA_TSTRING ? Lua_ValueToString(L, 1) : "OnCompound");
+	}
 	return 0;
 }
 
@@ -7202,6 +7374,9 @@ TLua_Funcs GameScriptFuns[] =
 	{"GetLastSkillIdx", LuaGetLastSkillIdx},
 	{"IsSkillActivedByIdx", LuaIsSkillActivedByIdx},
 	{"GetSelectedItems", LuaGetSelectedItems},
+	{"GetItemOperationInfo", LuaGetItemOperationInfo},
+	{"SetSelectedItemSocket", LuaSetSelectedItemSocket},
+	{"ReturnSelectedSocketGem", LuaReturnSelectedSocketGem},
 	{"DelSelectedItem", LuaDelSelectedItem},
 	{"CompleteItemOperation", LuaCompleteItemOperation},
 	{"HaveItem2", LuaHaveNormalItem},

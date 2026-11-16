@@ -113,11 +113,12 @@ public:
 	void		SyncItemPosition(int nIdx);
 	void		SyncItemCount(int nIdx);
 	void		SyncItem(int nIdx, BOOL bRefresh = FALSE);
+	void		SyncItemSockets(int nIdx);
 	int		ReforgeItem(int nIdx, int nParticular, int nLevel, int nCostGenre, int nCostDetail, int nCostParticular, int nCostLevel, int nMaterialCount, int nCopperCount);
 	int		GetCopperCashCount();
 	static int InventoryRoomFromPlace(int nPlace);
 	BOOL		SplitItem(ItemPos* pSource, DWORD dwCount);
-	int		CompoundItems(const GAME_COMPOUND_ITEM_POS* pPositions, int nCount);
+	int		CompoundItems(const GAME_COMPOUND_ITEM_POS* pPositions, int nCount, int nSocket = 0, int nParameter = -1);
 	int			CountNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, BOOL bQuick = FALSE);
 	BOOL		ConsumeNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, int nCount, BOOL bQuick = FALSE);
 	BOOL		ConsumeItem(int nIdx, int nCount);

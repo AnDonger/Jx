@@ -78,7 +78,7 @@ class KNpcScriptSelection
 private:
 	int m_nPlayer;
 public:
-	KNpcScriptSelection(int nPlayer, const int* pItems, int nCount);
+	KNpcScriptSelection(int nPlayer, const int* pItems, int nCount, int nSocket = 0, int nParameter = -1);
 	~KNpcScriptSelection();
 	BOOL IsValid() const { return m_nPlayer > 0; }
 	int GetResult() const;

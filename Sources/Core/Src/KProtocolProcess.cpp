@@ -3825,8 +3825,10 @@ void KProtocolProcess::CurrentCompoundCommand(int nIndex, BYTE* pProtocol)
 {
 	const GAME_COMPOUND_COMMAND* pCommand = (const GAME_COMPOUND_COMMAND*)pProtocol;
 	int nResult = -1;
-	if (Player[nIndex].CanCompoundItems() && pCommand->unknown_1 == 0)
-		nResult = Player[nIndex].m_ItemList.CompoundItems(pCommand->Materials, 9);
+	// 89尾参数由加工分支解释；规则及孔序须由当前NPC Lua交叉校验。
+	if (Player[nIndex].CanCompoundItems() && pCommand->unknown_1 >= 0 &&
+		(Player[nIndex].m_nCompoundMode != 0 || pCommand->unknown_1 == 0))
+		nResult = Player[nIndex].m_ItemList.CompoundItems(pCommand->Materials, 9, 0, pCommand->unknown_1);
 	if (nResult < 0)
 		Player[nIndex].CompoundMessage("合成未完成，请检查配方、材料、金钱、背包空间及是否仍在合成NPC附近。");
 	GAME_COMPOUND_RESULT Result;

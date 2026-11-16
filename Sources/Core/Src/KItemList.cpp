@@ -312,6 +312,38 @@ void KItemList::SyncItemData(int nIdx, int nPlace, int nX, int nY)
 	sItem.StateFlags = Item[nIdx].m_btStateFlags;
 	sItem.BindingMode = Item[nIdx].m_btBindingMode;
 	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC) - sizeof(sItem.unknown_9));
+	if (Item[nIdx].GetGenre() == item_equip)
+	{
+		for (int i = 0; i < 4; i++)
+		{
+			const KItemSocket* pSocket = Item[nIdx].GetSocket(i);
+			if (pSocket->GemID || pSocket->TypeID || pSocket->Seed)
+			{
+				SyncItemSockets(nIdx);
+				break;
+			}
+		}
+	}
+}
+
+void KItemList::SyncItemSockets(int nIdx)
+{
+	if (nIdx <= 0 || nIdx >= MAX_ITEM || Item[nIdx].GetGenre() != item_equip ||
+		!FindSame(nIdx) || m_PlayerIdx <= 0 || m_PlayerIdx >= MAX_PLAYER)
+		return;
+	GAME_ITEM_SOCKETS_SYNC Packet = {};
+	Packet.ProtocolType = 0xF4;
+	Packet.ID = Item[nIdx].GetID();
+	for (int i = 0; i < 4; i++)
+	{
+		const KItemSocket* pSocket = Item[nIdx].GetSocket(i);
+		Packet.Sockets[i].GemID = pSocket->GemID;
+		Packet.Sockets[i].TypeID = pSocket->TypeID;
+		Packet.GemSeeds[i] = pSocket->Seed;
+	}
+	// 75 creates these unsupported extension members as zero. Keep that state;
+	// never copy client stack bytes or use socket seeds as growth/jade data.
+	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &Packet, sizeof(Packet));
 }
 
 // 回购栏使用独立的逻辑槽位；不占背包格子，但沿用原物品存档和退出清理。
@@ -3582,7 +3614,7 @@ int KItemList::ReforgeItem(int nIdx, int nParticular, int nLevel, int nCostGenre
 #endif
 
 #ifdef _SERVER
-int KItemList::CompoundItems(const GAME_COMPOUND_ITEM_POS* pPositions, int nCount)
+int KItemList::CompoundItems(const GAME_COMPOUND_ITEM_POS* pPositions, int nCount, int nSocket, int nParameter)
 {
 	if (!pPositions || nCount != MAX_SCRIPT_SELECTED_ITEMS ||
 		!Player[m_PlayerIdx].CanCompoundItems())
@@ -3618,7 +3650,7 @@ int KItemList::CompoundItems(const GAME_COMPOUND_ITEM_POS* pPositions, int nCoun
 	}
 	// 协议入口只核实本次提交的真实物品；费用、配方、概率和奖励由NPC脚本决定。
 	KPlayer& Role = Player[m_PlayerIdx];
-	KNpcScriptSelection Selection(m_PlayerIdx, Indices, nItems);
+	KNpcScriptSelection Selection(m_PlayerIdx, Indices, nItems, nSocket, nParameter);
 	if (!Selection.IsValid())
 		return -1;
 	int nResult = -1;

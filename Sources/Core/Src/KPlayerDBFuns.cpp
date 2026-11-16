@@ -414,11 +414,13 @@ static int SavePlayerTaskExtension(KPlayerTask& Task, BYTE *pData, DWORD dwCapac
 }
 
 static BOOL GetPlayerItemCounts(const TRoleData* pRoleData, const BYTE** ppCounts,
-	const PLAYER_ITEM_STATE** ppStates, const DWORD** ppValidityTimes)
+	const PLAYER_ITEM_STATE** ppStates, const DWORD** ppValidityTimes,
+	const KItemSocket** ppSockets)
 {
 	*ppCounts = NULL;
 	*ppStates = NULL;
 	*ppValidityTimes = NULL;
+	*ppSockets = NULL;
 	if (pRoleData->nItemCount < 0 || pRoleData->nItemCount >= MAX_PLAYER_ITEM ||
 		pRoleData->dwItemOffset < 0 || pRoleData->dwFriendOffset < 0)
 		return FALSE;
@@ -435,11 +437,13 @@ static BOOL GetPlayerItemCounts(const TRoleData* pRoleData, const BYTE** ppCount
 	PLAYER_ITEM_COUNT_HEADER Header;
 	memcpy(&Header, (const BYTE*)pRoleData + nEnd, sizeof(Header));
 	if (Header.Magic != PLAYER_ITEM_COUNT_MAGIC ||
-		Header.ItemCount != (DWORD)pRoleData->nItemCount || (Header.Version != 1 && Header.Version != 2 && Header.Version != 3))
+		Header.ItemCount != (DWORD)pRoleData->nItemCount || (Header.Version != 1 && Header.Version != 2 && Header.Version != 3 && Header.Version != 4))
 		return FALSE;
 	DWORD nStride = Header.Version == 1 ? 1 : sizeof(PLAYER_ITEM_STATE);
-	if (Header.Version == 3)
+	if (Header.Version >= 3)
 		nStride += sizeof(DWORD);
+	if (Header.Version == 4)
+		nStride += 4 * sizeof(KItemSocket);
 	if (nExtra != sizeof(Header) + Header.ItemCount * nStride)
 		return FALSE;
 	const BYTE* pData = (const BYTE*)pRoleData + nEnd + sizeof(Header);
@@ -460,8 +464,11 @@ static BOOL GetPlayerItemCounts(const TRoleData* pRoleData, const BYTE** ppCount
 				return FALSE;
 		}
 		*ppStates = pStates;
-		if (Header.Version == 3)
+		if (Header.Version >= 3)
 			*ppValidityTimes = (const DWORD*)(pData + Header.ItemCount * sizeof(PLAYER_ITEM_STATE));
+		if (Header.Version == 4)
+			*ppSockets = (const KItemSocket*)(pData + Header.ItemCount *
+				(sizeof(PLAYER_ITEM_STATE) + sizeof(DWORD)));
 	}
 	return TRUE;
 }
@@ -890,7 +897,8 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 	const BYTE* pCounts = NULL;
 	const PLAYER_ITEM_STATE* pStates = NULL;
 	const DWORD* pValidityTimes = NULL;
-	if (!GetPlayerItemCounts((const TRoleData*)pRoleBuffer, &pCounts, &pStates, &pValidityTimes))
+	const KItemSocket* pSockets = NULL;
+	if (!GetPlayerItemCounts((const TRoleData*)pRoleBuffer, &pCounts, &pStates, &pValidityTimes, &pSockets))
 	{
 		g_DebugLog("[Item] Invalid saved item count block: role=%s", m_PlayerName);
 		return -1;
@@ -1049,6 +1057,22 @@ int	KPlayer::LoadPlayerItemList(BYTE * pRoleBuffer , BYTE* &pItemBuffer, unsigne
 		{
 			g_DebugLog("[Item] Cannot generate saved item: role=%s, item=%d, class=%d, detail=%d, particular=%d, level=%d, version=%d", m_PlayerName, i, nItemClass, NewItem.m_CommonAttrib.nDetailType, NewItem.m_CommonAttrib.nParticularType, NewItem.m_CommonAttrib.nLevel, NewItem.m_GeneratorParam.nVersion);
 			return -1;
+		}
+		// Version 4在原状态和有效期数组后追加四槽；旧存档保持无孔。
+		NewItem.ClearSockets();
+		if (pSockets)
+		{
+			for (int nSlot = 0; nSlot < 4; nSlot++)
+			{
+				const KItemSocket& Socket = pSockets[i * 4 + nSlot];
+				if (nItemClass == item_equip)
+					NewItem.SetSocket(nSlot, Socket);
+				else if (Socket.GemID || Socket.TypeID || Socket.Seed)
+				{
+					g_DebugLog("[Item] Invalid saved socket owner: role=%s, item=%d, class=%d", m_PlayerName, i, nItemClass);
+					return -1;
+				}
+			}
 		}
 		// 老存档没有有效期起点，由正常模板生成补一次；新版不能重登续期。
 		if (pValidityTimes && pValidityTimes[i])
@@ -1416,6 +1440,9 @@ int	KPlayer::SavePlayerItemList(BYTE * pRoleBuffer)
 	BOOL bHasState = FALSE;
 	DWORD ValidityTimes[MAX_PLAYER_ITEM];
 	BOOL bHasValidity = FALSE;
+	KItemSocket Sockets[MAX_PLAYER_ITEM][4];
+	ZeroMemory(Sockets, sizeof(Sockets));
+	BOOL bHasSockets = FALSE;
 
 	int	nItemCount = 0;
 	char szSection[100];
@@ -1461,6 +1488,16 @@ int	KPlayer::SavePlayerItemList(BYTE * pRoleBuffer)
 		ValidityTimes[nItemCount] = Item[nItemIndex].GetValidityStartTime();
 		if (ValidityTimes[nItemCount])
 			bHasValidity = TRUE;
+		if (Item[nItemIndex].GetGenre() == item_equip)
+		{
+			for (int nSlot = 0; nSlot < 4; nSlot++)
+			{
+				Sockets[nItemCount][nSlot] = *Item[nItemIndex].GetSocket(nSlot);
+				const KItemSocket& Socket = Sockets[nItemCount][nSlot];
+				if (Socket.GemID || Socket.TypeID || Socket.Seed)
+					bHasSockets = TRUE;
+			}
+		}
 		Counts[nItemCount] = (BYTE)Item[nItemIndex].GetStackCount();
 		States[nItemCount].Count = Counts[nItemCount];
 		States[nItemCount].UpgradeData = Item[nItemIndex].m_dwUpgradeData;
@@ -1485,24 +1522,30 @@ int	KPlayer::SavePlayerItemList(BYTE * pRoleBuffer)
 		if (Counts[i] > 1)
 			bHasStack = TRUE;
 	}
-	if (bHasStack || bHasState || bHasValidity)
+	if (bHasStack || bHasState || bHasValidity || bHasSockets)
 	{
-		DWORD dwStateSize = (bHasState || bHasValidity) ? nItemCount * sizeof(PLAYER_ITEM_STATE) : nItemCount;
-		DWORD dwValiditySize = bHasValidity ? nItemCount * sizeof(DWORD) : 0;
-		if (pEnd - pRoleBuffer + sizeof(PLAYER_ITEM_COUNT_HEADER) + dwStateSize + dwValiditySize >= sizeof(m_SaveBuffer))
+		DWORD dwStateSize = (bHasState || bHasValidity || bHasSockets) ? nItemCount * sizeof(PLAYER_ITEM_STATE) : nItemCount;
+		DWORD dwValiditySize = (bHasValidity || bHasSockets) ? nItemCount * sizeof(DWORD) : 0;
+		DWORD dwSocketSize = bHasSockets ? nItemCount * 4 * sizeof(KItemSocket) : 0;
+		if (pEnd - pRoleBuffer + sizeof(PLAYER_ITEM_COUNT_HEADER) + dwStateSize + dwValiditySize + dwSocketSize >= sizeof(m_SaveBuffer))
 			return -1;
 		PLAYER_ITEM_COUNT_HEADER Header;
 		Header.Magic = PLAYER_ITEM_COUNT_MAGIC;
-		Header.Version = bHasValidity ? 3 : (bHasState ? 2 : 1);
+		Header.Version = bHasSockets ? 4 : (bHasValidity ? 3 : (bHasState ? 2 : 1));
 		Header.ItemCount = nItemCount;
 		memcpy(pEnd, &Header, sizeof(Header));
 		pEnd += sizeof(Header);
-		memcpy(pEnd, (bHasState || bHasValidity) ? (const void*)States : (const void*)Counts, dwStateSize);
+		memcpy(pEnd, (bHasState || bHasValidity || bHasSockets) ? (const void*)States : (const void*)Counts, dwStateSize);
 		pEnd += dwStateSize;
 		if (dwValiditySize)
 		{
 			memcpy(pEnd, ValidityTimes, dwValiditySize);
 			pEnd += dwValiditySize;
+		}
+		if (dwSocketSize)
+		{
+			memcpy(pEnd, Sockets, dwSocketSize);
+			pEnd += dwSocketSize;
 		}
 	}
 	pRoleData->dwFriendOffset = pEnd - pRoleBuffer;
@@ -1638,9 +1681,21 @@ int	KPlayer::SavePlayerTaskList(BYTE * pRoleBuffer)
 	dwOffset += nNotesLength;
 	// 任务日志不能挤占随后物品记录的空间，提前计算完整存档上限。
 	int nItems = 0;
+	BOOL bHasSockets = FALSE;
 	for (PlayerItem *pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
+	{
 		nItems++;
-	if (dwOffset + nItems * (sizeof(TDBItemData) + sizeof(PLAYER_ITEM_STATE) + sizeof(DWORD)) + sizeof(PLAYER_ITEM_COUNT_HEADER) >= sizeof(m_SaveBuffer) - 32)
+		if (Item[pItem->nIdx].GetGenre() != item_equip)
+			continue;
+		for (int nSlot = 0; nSlot < 4; nSlot++)
+		{
+			const KItemSocket* pSocket = Item[pItem->nIdx].GetSocket(nSlot);
+			if (pSocket->GemID || pSocket->TypeID || pSocket->Seed)
+				bHasSockets = TRUE;
+		}
+	}
+	DWORD dwSocketSize = bHasSockets ? nItems * 4 * sizeof(KItemSocket) : 0;
+	if (dwOffset + nItems * (sizeof(TDBItemData) + sizeof(PLAYER_ITEM_STATE) + sizeof(DWORD)) + dwSocketSize + sizeof(PLAYER_ITEM_COUNT_HEADER) >= sizeof(m_SaveBuffer) - 32)
 		return -1;
 	pRoleData->dwItemOffset = dwOffset;
 	return 1;

@@ -13,6 +13,7 @@
 #include "KBasPropTbl.h"
 #include "KItem.h"
 #include <map>
+#include <set>
 
 #define		IN
 #define		OUT
@@ -44,6 +45,7 @@ protected:
 		int nMin;
 		int nMax;
 		int nThreshold;
+		int nDecorationExtra;
 	};
 	struct GemRule
 	{
@@ -51,6 +53,13 @@ protected:
 		GemProperty Properties[10];
 	};
 	std::map<int, GemRule> m_GemRules;
+	std::map<int, int> m_SocketGemDetails;
+	struct SocketRule
+	{
+		int nQuality;
+		std::set<int> ActivatedDetails;
+	};
+	std::map<int, SocketRule> m_SocketRules;
 
 // 以下是辅助成员变量
 	int			m_GMA_naryMA[2][NUMOFCMA];	// [0][x]: 前缀; [1][x]: 后缀
@@ -64,6 +73,10 @@ protected:
 public:
 	BOOL Init();
 	BOOL InitReforge();
+	BOOL IsValidSocket(const KItemSocket& Socket) const;
+	int GetSocketGemDetail(int nGemID) const;
+	BOOL GenerateSocketGem(int nGemID, DWORD dwSeed, KItem* pResult, int nVersion);
+	BOOL GetSocketAttrib(const KItemSocket& Socket, KItemNormalAttrib* pAttrib, BOOL* pbActivated = NULL) const;
 	BOOL GetReforgeRule(int* pnBaseRate, int* pnLuckMin, int* pnLuckMax);
 	const KBASICPROP_EQUIPMENT* GetEquipmentTemplate(int nDetail, int nParticular, int nLevel, int nVersion);
 	int GetGreenMagicAttribCount(int nGreenId, int nVersion);
@@ -94,6 +107,7 @@ public:
 // 以下是辅助函数
 private:
 	BOOL InitGemRules();
+	BOOL GenerateGemAttrib(int nDetail, DWORD dwSeed, KItemNormalAttrib* pAttrib, int* pnDecorationExtra = NULL) const;
 	KLibOfBPT* GetVersionLibrary(int nVersion);
 	BOOL Gen_MagicAttrib(int, const int*, int, int, KItemNormalAttrib*, int nVersion, KLibOfBPT*, int nClass, int nEquipmentLevel);
 	const KMAGICATTRIB_TABFILE* GetMARecord(int) const;

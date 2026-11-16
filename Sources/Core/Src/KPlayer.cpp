@@ -118,6 +118,7 @@ void	KPlayer::Release()
 	m_dwCompoundNpcID = 0;
 	m_dwCompoundScriptID = 0;
 	m_nCompoundWorld = -1;
+	m_nCompoundMode = 0;
 	m_szCompoundFunction[0] = 0;
 #endif
 #ifndef _SERVER
@@ -6899,8 +6900,11 @@ BOOL KPlayer::CanCompoundItems()
 	return TRUE;
 }
 
-BOOL KPlayer::OpenItemCompound(BOOL bNewWindow, const char* pszFunction)
+BOOL KPlayer::OpenItemCompound(BOOL bNewWindow, const char* pszFunction, int nMode)
 {
+	if (nMode < 0 || nMode > 2 || bNewWindow && nMode != 0)
+		return FALSE;
+	m_nCompoundMode = nMode;
 	m_dwCompoundNpcID = 0;
 	m_szCompoundFunction[0] = 0;
 	if (m_nPeapleIdx <= 0 || m_nPeapleIdx >= MAX_NPC ||
@@ -6935,6 +6939,8 @@ BOOL KPlayer::OpenItemCompound(BOOL bNewWindow, const char* pszFunction)
 		PLAYER_SCRIPTACTION_SYNC Info;
 		ZeroMemory(&Info, sizeof(Info));
 		Info.m_bUIId = UI_COMPOUND;
+		// UIAction 8读取packet+9窗口模式，通用结构对应OptionNum。
+		Info.m_bOptionNum = (BYTE)nMode;
 		Info.m_bParam2 = 1;
 		DoScriptAction(&Info);
 	}

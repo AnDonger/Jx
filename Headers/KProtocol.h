@@ -416,6 +416,25 @@ struct GAME_SKILL_SYNC
 	GAME_SKILL_SYNC_DATA m_sAllSkill[80];
 };
 
+// Current client 7C5380: fixed 65-byte F4 update, after the item has been created.
+struct GAME_ITEM_SOCKET_SYNC_DATA
+{
+	WORD GemID;
+	WORD TypeID;
+};
+
+struct GAME_ITEM_SOCKETS_SYNC
+{
+	BYTE ProtocolType;
+	DWORD ID;
+	DWORD unknown_1;		// +5, extra growth data consumed by 73EB00; unsupported items use their zero initial state.
+	DWORD unknown_2;		// +9, not read by current 7C5380.
+	GAME_ITEM_SOCKET_SYNC_DATA Sockets[4];	// +13, gem ID then socket type ID.
+	DWORD GemSeeds[4];	// +29, independent gem attribute seeds.
+	DWORD unknown_3;		// +45, copied through 73ECD0; current generated items have no such extension.
+	BYTE unknown_4[16];	// +49, extra jade-pendant generation state, not a socket attribute array.
+};
+
 struct GAME_ITEM_SYNC
 {
 	BYTE ProtocolType;
@@ -647,6 +666,7 @@ struct GAME_COMPOUND_COMMAND
 {
 	BYTE ProtocolType;
 	GAME_COMPOUND_ITEM_POS Materials[9];
+	// +109：打孔/装饰为需求组ID，镶嵌为0起始孔序，剥离为0。
 	int unknown_1;
 };
 
@@ -924,6 +944,10 @@ static_assert(sizeof(GAME_SKILL_COOLDOWN_SYNC) == 11, "F8/2D skill cooldown");
 static_assert(sizeof(GAME_SKILL_COOLDOWN_RECORD) == 6, "F8/4B cooldown record");
 static_assert(sizeof(GAME_SKILL_COOLDOWN_LIST_HEADER) == 5, "F8/4B cooldown header");
 static_assert(sizeof(GAME_ITEM_SYNC) == 58, "CB item sync");
+static_assert(sizeof(GAME_ITEM_SOCKET_SYNC_DATA) == 4, "F4 socket record");
+static_assert(sizeof(GAME_ITEM_SOCKETS_SYNC) == 65, "F4 item sockets");
+static_assert(offsetof(GAME_ITEM_SOCKETS_SYNC, Sockets) == 13, "F4 socket offset");
+static_assert(offsetof(GAME_ITEM_SOCKETS_SYNC, GemSeeds) == 29, "F4 seed offset");
 static_assert(sizeof(GAME_AURA_SKILL_SYNC) == 25, "90 aura skill sync");
 static_assert(sizeof(GAME_NPC_STATE_SYNC) == 13, "8A state graphics sync");
 static_assert(offsetof(GAME_NPC_STATE_SYNC, ID) == 9, "8A entity offset");
