@@ -1309,7 +1309,8 @@ int		KSkill::CastExtractiveLineMissle(TOrdinSkillParam* pSkillParam,  int nDir,i
 			Missle[nMissleIndex].m_nDirIndex		= nDirIndex;
 			CreateMissle(nLauncher, m_nChildSkillId, nMissleIndex);
 			
-			if (Missle[nMissleIndex].m_eMoveKind == MISSLE_MMK_Parabola)
+			if (Missle[nMissleIndex].m_eMoveKind == MISSLE_MMK_Parabola &&
+				Missle[nMissleIndex].m_nSpeed > 0)
 			{
 				int nLength = g_GetDistance(nSrcX, nSrcY, nDesX, nDesY);
 				int nTime = nLength / Missle[nMissleIndex].m_nSpeed;
@@ -1344,10 +1345,14 @@ int		KSkill::CastExtractiveLineMissle(TOrdinSkillParam* pSkillParam,  int nDir,i
 			int nTempOffsetX = 0;
 			int nTempOffsetY = 0;
 
-			Missle[nMissleIndex].m_bNeedReclaim = TRUE;
-			int nLength = g_GetDistance(nSrcX, nSrcY, nDesX, nDesY);
-			Missle[nMissleIndex].m_nFirstReclaimTime = nLength / Missle[nMissleIndex].m_nSpeed + Missle[nMissleIndex].m_nStartLifeTime;
-			Missle[nMissleIndex].m_nEndReclaimTime = Missle[nMissleIndex].m_nFirstReclaimTime + SubWorld[nSubWorldId].m_nCellWidth / Missle[nMissleIndex].m_nSpeed + 2;
+			// 零速子弹仍按资源生命周期结算碰撞，不能计算飞行时间或丢弃伤害。
+			if (Missle[nMissleIndex].m_nSpeed > 0)
+			{
+				Missle[nMissleIndex].m_bNeedReclaim = TRUE;
+				int nLength = g_GetDistance(nSrcX, nSrcY, nDesX, nDesY);
+				Missle[nMissleIndex].m_nFirstReclaimTime = nLength / Missle[nMissleIndex].m_nSpeed + Missle[nMissleIndex].m_nStartLifeTime;
+				Missle[nMissleIndex].m_nEndReclaimTime = Missle[nMissleIndex].m_nFirstReclaimTime + SubWorld[nSubWorldId].m_nCellWidth / Missle[nMissleIndex].m_nSpeed + 2;
+			}
 
 			if (Missle[nMissleIndex].m_eMoveKind == MISSLE_MMK_Line || Missle[nMissleIndex].m_eMoveKind == MISSLE_MMK_Parabola)
 			{

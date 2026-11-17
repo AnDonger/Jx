@@ -60,6 +60,10 @@ void KNpcAI::Activate(int nIndex)
 		case 6:
 			ProcessAIType06();
 			break;
+		case 7:
+			// 原封神模式07：战斗中追击，失去敌人后才返回活动范围。
+			ProcessAIType01(FALSE);
+			break;
 /*		case 7:
 			ProcessAIType7();
 			break;
@@ -1154,11 +1158,11 @@ void KNpcAI::Flee(int nIdx)
 //	m_AiParam[1、2、3、4] 四种技能的使用概率，分别对应SkillList里的技能1 2 3 4
 //	m_AiParam[5、6] 看见敌人但比较远时，待机、巡逻的概率
 //------------------------------------------------------------------------------
-void	KNpcAI::ProcessAIType01()
+void	KNpcAI::ProcessAIType01(BOOL bKeepActiveRange)
 {
 	int *pAIParam = Npc[m_nIndex].m_AiParam;
 	// 是否已超过活动半径
-	if (KeepActiveRange())
+	if (bKeepActiveRange && KeepActiveRange())
 		return;
 
 	int nEnemyIdx = Npc[m_nIndex].m_nPeopleIdx;
@@ -1172,6 +1176,9 @@ void	KNpcAI::ProcessAIType01()
 	// 周围没有敌人，一定概率待机/巡逻
 	if (nEnemyIdx <= 0)
 	{
+		if (!bKeepActiveRange && KeepActiveRange())
+			return;
+
 		// pAIParam[0]:巡逻概率
 		if (pAIParam[0] > 0 && g_RandPercent(pAIParam[0]))
 		{	// 巡逻
