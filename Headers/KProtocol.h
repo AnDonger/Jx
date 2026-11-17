@@ -2271,6 +2271,7 @@ typedef struct
 	WORD			m_wLength;
 	DWORD			m_dwID;
 	BYTE			m_btState;
+	DWORD			unknown_1;		// Current 0x86 prefix has four additional bytes.
 	char			m_szSentence[MAX_SENTENCE_LENGTH];
 } NPC_SET_MENU_STATE_SYNC;
 

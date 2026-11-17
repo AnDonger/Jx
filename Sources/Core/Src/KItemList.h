@@ -50,7 +50,7 @@ public:
 private:
 	int			FindFree();
 #ifdef _SERVER
-	void		SyncItemData(int nIdx, int nPlace, int nX, int nY);
+	void		SyncItemData(int nIdx, int nPlace, int nX, int nY, int nClient = -1);
 #endif
 	int			FindSame(int nGameIdx);							// nGameIdx指游戏世界中道具数组的编号
 	int			GetEquipPlace(int nType);						// 取得某类型装备应该放的位置
@@ -113,7 +113,9 @@ public:
 	void		SyncItemPosition(int nIdx);
 	void		SyncItemCount(int nIdx);
 	void		SyncItem(int nIdx, BOOL bRefresh = FALSE);
-	void		SyncItemSockets(int nIdx);
+	void		SyncItemSockets(int nIdx, int nClient = -1);
+	BOOL		CommitTrade(KItemList& Other);
+	void		SyncTradeInventory();
 	int		ReforgeItem(int nIdx, int nParticular, int nLevel, int nCostGenre, int nCostDetail, int nCostParticular, int nCostLevel, int nMaterialCount, int nCopperCount);
 	int		GetCopperCashCount();
 	static int InventoryRoomFromPlace(int nPlace);

@@ -87,6 +87,7 @@ public:
 	int GetRandomNumber(int nMin, int nMax);
 	BOOL Gen_Item(IN int, IN int, IN int, IN int, IN OUT KItem*);
 	BOOL Gen_Quest(IN int, IN OUT KItem*);
+	BOOL IsTradeAllowed(const KItem& Data);
 	BOOL Gen_TownPortal(IN OUT KItem*);
 	BOOL Gen_Medicine(IN int, IN int, IN int, IN OUT KItem*);
 	BOOL Gen_Material(IN int, IN int, IN int, IN int, IN OUT KItem*);

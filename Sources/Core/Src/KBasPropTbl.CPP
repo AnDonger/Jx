@@ -1080,6 +1080,7 @@ BOOL KBPT_Quest::LoadRecord(int i, KTabFile* pTF)
 		return FALSE;
 	pTF->GetInteger(i + 2, "是否叠放", 0, &pBuf->m_bStack);
 	pTF->GetInteger(i + 2, "详细类别", 0, &pBuf->m_nParticularType);
+	pTF->GetInteger(i + 2, "是否可以交换", FALSE, &pBuf->m_bCanTrade);
 	return pBuf->m_bStack >= 0;
 
 }
@@ -1366,6 +1367,7 @@ BOOL KBPT_NormalItem::LoadRecord(int i, KTabFile* pTF)
 	pTF->GetInteger(nRow, "使用后是否消失", 0, &pBuf->m_bConsumeOnUse);
 	pTF->GetInteger(nRow, "铜钱价格", 0, &pBuf->m_nCopperPrice);
 	pTF->GetInteger(nRow, "存在时间", 0, &pBuf->m_nExistDays);
+	pTF->GetInteger(nRow, "是否可以交换", TRUE, &pBuf->m_bCanTrade);
 	pBuf->m_bValid = bRead && pBuf->m_szName[0] && pBuf->m_nItemGenre == m_nGenre &&
 		pBuf->m_nDetailType >= 0 && pBuf->m_nParticularType >= 0 &&
 		pBuf->m_nLevel >= 0 && pBuf->m_nWidth > 0 && pBuf->m_nHeight > 0 &&

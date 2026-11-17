@@ -9,6 +9,7 @@
 #include	"KItemList.h"
 #include	"KItemChangeRes.h"
 #include	"KIniFile.h"
+#include <vector>
 #ifdef _SERVER
 //#include	"../../Headers/IServer.h"
 #include	"KObjSet.h"
@@ -285,8 +286,9 @@ void KItemList::SyncItem(int nIdx, BOOL bRefresh)
 	SyncItemData(nIdx, m_Items[nList].nPlace, m_Items[nList].nX, m_Items[nList].nY);
 }
 
-void KItemList::SyncItemData(int nIdx, int nPlace, int nX, int nY)
+void KItemList::SyncItemData(int nIdx, int nPlace, int nX, int nY, int nClient)
 {
+	if (nClient < 0) nClient = Player[m_PlayerIdx].m_nNetConnectIdx;
 	GAME_ITEM_SYNC	sItem;
 	memset(&sItem, 0, sizeof(sItem));
 	sItem.Count = (BYTE)Item[nIdx].GetStackCount();
@@ -311,7 +313,7 @@ void KItemList::SyncItemData(int nIdx, int nPlace, int nX, int nY)
 	sItem.ValidityStartTime = Item[nIdx].GetValidityStartTime();
 	sItem.StateFlags = Item[nIdx].m_btStateFlags;
 	sItem.BindingMode = Item[nIdx].m_btBindingMode;
-	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC) - sizeof(sItem.unknown_9));
+	g_pServer->PackDataToClient(nClient, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC) - sizeof(sItem.unknown_9));
 	if (Item[nIdx].GetGenre() == item_equip)
 	{
 		for (int i = 0; i < 4; i++)
@@ -319,15 +321,16 @@ void KItemList::SyncItemData(int nIdx, int nPlace, int nX, int nY)
 			const KItemSocket* pSocket = Item[nIdx].GetSocket(i);
 			if (pSocket->GemID || pSocket->TypeID || pSocket->Seed)
 			{
-				SyncItemSockets(nIdx);
+				SyncItemSockets(nIdx, nClient);
 				break;
 			}
 		}
 	}
 }
 
-void KItemList::SyncItemSockets(int nIdx)
+void KItemList::SyncItemSockets(int nIdx, int nClient)
 {
+	if (nClient < 0) nClient = Player[m_PlayerIdx].m_nNetConnectIdx;
 	if (nIdx <= 0 || nIdx >= MAX_ITEM || Item[nIdx].GetGenre() != item_equip ||
 		!FindSame(nIdx) || m_PlayerIdx <= 0 || m_PlayerIdx >= MAX_PLAYER)
 		return;
@@ -343,7 +346,7 @@ void KItemList::SyncItemSockets(int nIdx)
 	}
 	// 75 creates these unsupported extension members as zero. Keep that state;
 	// never copy client stack bytes or use socket seeds as growth/jade data.
-	g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &Packet, sizeof(Packet));
+	g_pServer->PackDataToClient(nClient, &Packet, sizeof(Packet));
 }
 
 // 回购栏使用独立的逻辑槽位；不占背包格子，但沿用原物品存档和退出清理。
@@ -2075,8 +2078,13 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 		return;
 
 #ifdef _SERVER
+	BOOL bTrading = Player[m_PlayerIdx].CheckTrading();
+	if (bTrading && (!Player[m_PlayerIdx].CanTradeWith(Player[m_PlayerIdx].m_cTrade.m_nTradeDest) ||
+		Player[m_PlayerIdx].m_cTrade.m_nTradeLock ||
+		(!IsBagItemPlace(SrcPos->nPlace) && SrcPos->nPlace != pos_traderoom)))
+		return;
 	int nGridRoom = InventoryRoomFromPlace(SrcPos->nPlace);
-	if (nGridRoom >= 0 && (!Player[m_PlayerIdx].CanChangeInventory() ||
+	if (nGridRoom >= 0 && ((!bTrading && !Player[m_PlayerIdx].CanChangeInventory()) ||
 		!Player[m_PlayerIdx].IsInventoryPosition(SrcPos->nPlace, SrcPos->nX, SrcPos->nY, 1, 1) ||
 		!Player[m_PlayerIdx].IsInventoryPosition(DesPos->nPlace, DesPos->nX, DesPos->nY,
 			m_Hand ? Item[m_Hand].GetWidth() : 1, m_Hand ? Item[m_Hand].GetHeight() : 1) ||
@@ -2098,7 +2106,7 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 	sMove.m_btUpY = DesPos->nY;
 	// Quantity-only AD does not redraw the client cell. Recreate affected client entries
 	// through the existing remove/add notifications, without running its implicit 78 merge.
-	if (m_Hand && SrcPos->nX == DesPos->nX && SrcPos->nY == DesPos->nY &&
+	if (!bTrading && m_Hand && SrcPos->nX == DesPos->nX && SrcPos->nY == DesPos->nY &&
 		(nGridRoom >= 0 ||
 		SrcPos->nPlace == pos_immediacy))
 	{
@@ -2161,6 +2169,10 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 		KInventory& Room = m_Room[nGridRoom];
 		int nSource = Room.FindItem(SrcPos->nX, SrcPos->nY);
 		if (nSource < 0) return;
+		// Do not send an implicit client stack merge while cancellation relies on
+		// unchanged instances and quantities. Split/merge before opening trade.
+		if (bTrading && m_Hand && nSource && Item[nSource].CanStackWith(Item[m_Hand]))
+			return;
 		if (nSource && !Room.PickUpItem(nSource, SrcPos->nX, SrcPos->nY,
 			Item[nSource].GetWidth(), Item[nSource].GetHeight())) return;
 		if (m_Hand && !Room.PlaceItem(DesPos->nX, DesPos->nY, m_Hand,
@@ -2398,21 +2410,18 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 		if ( !Player[m_PlayerIdx].CheckTrading() )	// 不在交易
 			return;
 #ifdef _SERVER
-		if (m_Hand && (Item[m_Hand].GetGenre() == item_task || Item[m_Hand].IsBound()))
+		if (m_Hand && !Item[m_Hand].CanTrade())
 		{
-			// 通知界面，任务道具，不能交易
-			SHOW_MSG_SYNC	sMsg;
-			sMsg.ProtocolType = s2c_msgshow;
-			sMsg.m_wMsgID = enumMSG_ID_TRADE_TASK_ITEM;
-			sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-			g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-
+			Player[m_PlayerIdx].SendTradeNotice("该物品不能交易。");
 			return;
 		}
 #endif
 		nEquipIdx1 = m_Room[room_trade].FindItem(SrcPos->nX, SrcPos->nY);
 		if (nEquipIdx1 < 0)
 			return;
+#ifdef _SERVER
+		if (m_Hand && nEquipIdx1 && Item[nEquipIdx1].CanStackWith(Item[m_Hand])) return;
+#endif
 
 		// 先把东西拣起来
 		if (nEquipIdx1)
@@ -2439,27 +2448,8 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 					g_pServer->PackDataToClient(Player[Player[m_PlayerIdx].m_cTrade.m_nTradeDest].m_nNetConnectIdx, (BYTE*)&sRemove, sizeof(ITEM_REMOVE_SYNC));
 				}
 				// 手上的东西放在了交易栏
-				GAME_ITEM_SYNC	sItem;
-				memset(&sItem, 0, sizeof(sItem));
-				sItem.Count = (BYTE)Item[m_Hand].GetStackCount();
-				sItem.ProtocolType = 0xCB;
-				sItem.m_ID = Item[m_Hand].GetID();
-				sItem.m_Genre = Item[m_Hand].GetGenre();
-				sItem.m_Detail = Item[m_Hand].GetDetailType();
-				sItem.m_Particur = Item[m_Hand].GetParticular();
-				sItem.m_Series = Item[m_Hand].GetSeries();
-				sItem.m_Level = Item[m_Hand].GetLevel();
-				sItem.m_Luck = Item[m_Hand].m_GeneratorParam.nLuck;
-				sItem.m_btPlace = pos_trade1;
-				sItem.m_btX = DesPos->nX;
-				sItem.m_btY = DesPos->nY;
-				for (int j = 0; j < 6; j++)
-					sItem.m_MagicLevel[j] = (BYTE)Item[m_Hand].m_GeneratorParam.nGeneratorLevel[j];
-				sItem.m_RandomSeed = Item[m_Hand].m_GeneratorParam.uRandomSeed;
-				sItem.m_Version = Item[m_Hand].m_GeneratorParam.nVersion;
-				sItem.m_Durability = Item[m_Hand].GetDurability();
-				sItem.ValidityStartTime = Item[m_Hand].GetValidityStartTime();
-				g_pServer->PackDataToClient(Player[Player[m_PlayerIdx].m_cTrade.m_nTradeDest].m_nNetConnectIdx, (BYTE*)&sItem, sizeof(GAME_ITEM_SYNC));
+				SyncItemData(m_Hand, pos_trade1, DesPos->nX, DesPos->nY,
+					Player[Player[m_PlayerIdx].m_cTrade.m_nTradeDest].m_nNetConnectIdx);
 
 				g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, (BYTE*)&sMove, sizeof(PLAYER_MOVE_ITEM_SYNC));
 #endif
@@ -2788,6 +2778,24 @@ void	KItemList::BackupTrade()
 
 void	KItemList::RecoverTrade()
 {
+#ifdef _SERVER
+	int nMoney = GetEquipmentMoney();
+	memcpy(m_Items, m_sBackItems, sizeof(m_Items));
+	m_Hand = m_nBackHand;
+	m_Room[room_equipment].Clear();
+	m_Room[room_equipment2].Clear();
+	m_Room[room_equipment].SetMoney(nMoney);
+	m_Room[room_trade].Clear();
+	for (int i = 1; i < MAX_PLAYER_ITEM; i++)
+	{
+		const PlayerItem& Entry = m_Items[i];
+		if (Entry.nIdx > 0 && IsBagItemPlace(Entry.nPlace))
+			m_Room[InventoryRoomFromPlace(Entry.nPlace)].PlaceItem(Entry.nX, Entry.nY,
+				Entry.nIdx, Item[Entry.nIdx].GetWidth(), Item[Entry.nIdx].GetHeight());
+	}
+	return;
+#endif
+
 	memcpy(m_Room[room_equipment].m_pArray, m_Room[room_tradeback].m_pArray, sizeof(int) * m_Room[room_tradeback].m_nWidth * m_Room[room_tradeback].m_nHeight);
 
 #ifndef _SERVER
@@ -3664,5 +3672,145 @@ int KItemList::CompoundItems(const GAME_COMPOUND_ITEM_POS* pPositions, int nCoun
 		}
 	}
 	return nResult;
+}
+#endif
+
+#ifdef _SERVER
+// Build both resulting inventories without changing live ownership or sending packets.
+// Existing item instances move intact: seeds, stack counts, durability, binding and sockets.
+BOOL KItemList::CommitTrade(KItemList& Other)
+{
+	KItemList* Lists[2] = {this, &Other};
+	struct State
+	{
+		std::vector<PlayerItem> Entries;
+		std::vector<int> Bag[2];
+		int Money;
+	};
+	State Before[2], After[2];
+	std::vector<BYTE> SaveData[2];
+	std::vector<int> Offered[2];
+	const int Rooms[2] = {room_equipment, room_equipment2};
+	const int Places[2] = {pos_equiproom, pos_equipment2};
+	for (int side = 0; side < 2; side++)
+	{
+		KItemList& List = *Lists[side];
+		if (List.m_Hand || Player[List.m_PlayerIdx].m_uMustSave != SAVE_IDLE ||
+			!Player[List.m_PlayerIdx].CheckTrading() ||
+			Player[List.m_PlayerIdx].m_cTrade.m_nTradeDest != Lists[1 - side]->m_PlayerIdx ||
+			!Player[List.m_PlayerIdx].CanTradeWith(Lists[1 - side]->m_PlayerIdx))
+			return FALSE;
+		Before[side].Entries.assign(List.m_Items, List.m_Items + MAX_PLAYER_ITEM);
+		Before[side].Money = List.GetEquipmentMoney();
+		for (int page = 0; page < 2; page++)
+		{
+			KInventory& Bag = List.m_Room[Rooms[page]];
+			if (!Bag.m_pArray) return FALSE;
+			Before[side].Bag[page].assign(Bag.m_pArray, Bag.m_pArray + Bag.m_nWidth * Bag.m_nHeight);
+		}
+		After[side] = Before[side];
+		SaveData[side].resize(sizeof(Player[List.m_PlayerIdx].m_SaveBuffer));
+		for (int i = 1; i < MAX_PLAYER_ITEM; i++)
+		{
+			const PlayerItem& Entry = List.m_Items[i];
+			if (!Entry.nIdx || Entry.nPlace != pos_traderoom) continue;
+			int item = Entry.nIdx;
+			if (item <= 0 || item >= MAX_ITEM || !Item[item].GetID() ||
+				!Item[item].CanTrade() ||
+				Lists[1 - side]->FindSame(item) ||
+				List.m_Room[room_trade].FindItem(Entry.nX, Entry.nY) != item)
+				return FALSE;
+			Offered[side].push_back(item);
+			ZeroMemory(&After[side].Entries[i], sizeof(PlayerItem));
+		}
+	}
+	for (int side = 0; side < 2; side++)
+	{
+		KItemList& List = *Lists[side];
+		int own = List.GetMoney(room_trade);
+		int incoming = Lists[1 - side]->GetMoney(room_trade);
+		__int64 money = (__int64)Before[side].Money - own + incoming;
+		if (own < 0 || own > Before[side].Money || incoming < 0 || money < 0 || money > 0x7fffffff)
+			return FALSE;
+		After[side].Money = (int)money;
+		for (size_t n = 0; n < Offered[1 - side].size(); n++)
+		{
+			int item = Offered[1 - side][n];
+			int slot = 1;
+			while (slot < MAX_PLAYER_ITEM && After[side].Entries[slot].nIdx) slot++;
+			if (slot == MAX_PLAYER_ITEM) return FALSE;
+			BOOL placed = FALSE;
+			for (int page = 0; page < 2 && !placed; page++)
+			{
+				KInventory& Bag = List.m_Room[Rooms[page]];
+				int width = Item[item].GetWidth(), height = Item[item].GetHeight();
+				for (int y = 0; y <= Bag.m_nHeight - height && !placed; y++)
+					for (int x = 0; x <= Bag.m_nWidth - width && !placed; x++)
+					{
+						if (!Player[List.m_PlayerIdx].IsInventoryPosition(Places[page], x, y, width, height))
+							continue;
+						BOOL empty = TRUE;
+						for (int dy = 0; dy < height && empty; dy++)
+							for (int dx = 0; dx < width; dx++)
+								if (After[side].Bag[page][(y + dy) * Bag.m_nWidth + x + dx]) empty = FALSE;
+						if (!empty) continue;
+						for (int dy = 0; dy < height; dy++)
+							for (int dx = 0; dx < width; dx++)
+								After[side].Bag[page][(y + dy) * Bag.m_nWidth + x + dx] = item;
+						PlayerItem& Entry = After[side].Entries[slot];
+						Entry.nIdx = item; Entry.nPlace = Places[page]; Entry.nX = x; Entry.nY = y;
+						placed = TRUE;
+					}
+			}
+			if (!placed) return FALSE;
+		}
+	}
+	// No allocation or packet emission in the application step. On serialization failure,
+	// apply the complete previous state to BOTH sides before returning failure.
+	for (int attempt = 0; attempt < 2; attempt++)
+	{
+		State* States = attempt == 0 ? After : Before;
+		for (int side = 0; side < 2; side++)
+		{
+			KItemList& List = *Lists[side];
+			for (int i = 1; i < MAX_PLAYER_ITEM; i++)
+			{
+				if (List.m_Items[i].nIdx && !States[side].Entries[i].nIdx)
+				{
+					List.m_UseIdx.Remove(i); List.m_FreeIdx.Insert(i);
+				}
+				else if (!List.m_Items[i].nIdx && States[side].Entries[i].nIdx)
+				{
+					List.m_FreeIdx.Remove(i); List.m_UseIdx.Insert(i);
+				}
+			}
+			memcpy(List.m_Items, &States[side].Entries[0], sizeof(List.m_Items));
+			for (int page = 0; page < 2; page++)
+				memcpy(List.m_Room[Rooms[page]].m_pArray, &States[side].Bag[page][0],
+					States[side].Bag[page].size() * sizeof(int));
+			List.m_Room[room_equipment].SetMoney(States[side].Money);
+		}
+		if (attempt == 1) return FALSE;
+		if (Player[m_PlayerIdx].UpdateDBPlayerInfo(&SaveData[0][0]) == 1 &&
+			Player[Other.m_PlayerIdx].UpdateDBPlayerInfo(&SaveData[1][0]) == 1)
+		{
+			for (int side = 0; side < 2; side++)
+				memcpy(Player[Lists[side]->m_PlayerIdx].m_SaveBuffer, &SaveData[side][0],
+					SaveData[side].size());
+			m_Room[room_trade].Clear(); Other.m_Room[room_trade].Clear();
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+void KItemList::SyncTradeInventory()
+{
+	// 88 restores/closes the client's trade backup first. Refresh every bag entry so
+	// second-page positions and mouse operations agree with the authoritative state.
+	for (int n = m_UseIdx.GetNext(0); n; n = m_UseIdx.GetNext(n))
+		if (IsBagItemPlace(m_Items[n].nPlace) || m_Items[n].nPlace == pos_hand)
+			SyncItem(m_Items[n].nIdx, TRUE);
+	SendMoneySync();
 }
 #endif

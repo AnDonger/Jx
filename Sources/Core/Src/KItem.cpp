@@ -52,6 +52,11 @@ KItem::~KItem()
 {
 }
 
+BOOL KItem::CanTrade() const
+{
+	return !IsBound() && !IsExpired() && ItemGen.IsTradeAllowed(*this);
+}
+
 void* KItem::GetRequirement(IN int nReq)
 {
 	int i = sizeof(m_aryRequireAttrib)/sizeof(m_aryRequireAttrib[0]);

@@ -541,6 +541,8 @@ public:
 	void			TradeMoveMoney(BYTE* pProtocol);		// 收到客户端申请交易中money的改变
 	void			TradeDecision(BYTE* pProtocol);			// 收到客户端申请交易确定或取消
 	void			c2sTradeReplyStart(BYTE* pProtocol);
+	BOOL			CanTradeWith(int nTarget);
+	void			SendTradeNotice(const char* pszText);
 	void			SyncTradeState();						// 给交易双方的客户端发送交易状态信息
 	void			SendEquipItemInfo(int nTargetPlayer);	// 发送自己装备在身上的装备信息给别人看
 	PLAYER_REVIVAL_POS* GetDeathRevivalPos() 

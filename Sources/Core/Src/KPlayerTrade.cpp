@@ -30,6 +30,11 @@ void	KTrade::Release()
 	m_nTradeDest			= -1;
 	m_nTradeState			= 0;
 	m_nTradeLock			= 0;
+#ifdef _SERVER
+	m_nApplyIdx = -1;
+	m_dwApplyID = 0;
+	m_dwApplyTime = 0;
+#endif
 #ifndef _SERVER
 	m_nBackEquipMoney		= 0;
 	m_nBackRepositoryMoney	= 0;

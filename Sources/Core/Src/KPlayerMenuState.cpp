@@ -94,12 +94,12 @@ void	KPlayerMenuState::SetState(int nPlayerIdx, int nState, char *lpszSentence/*
 				if (Player[nPlayerIdx].m_cTeam.m_nFlag && g_Team[Player[nPlayerIdx].m_cTeam.m_nID].IsOpen())
 					g_Team[Player[nPlayerIdx].m_cTeam.m_nID].SetTeamClose();
 			}
-			TRADE_CHANGE_STATE_SYNC	sTrade;
+			TRADE_CHANGE_STATE_SYNC	sTrade = {};
 			sTrade.ProtocolType = s2c_tradechangestate;
 			sTrade.m_btState = 0;
 			g_pServer->PackDataToClient(Player[nPlayerIdx].m_nNetConnectIdx, (BYTE*)&sTrade, sizeof(TRADE_CHANGE_STATE_SYNC));
 			
-			NPC_SET_MENU_STATE_SYNC	sSync;
+			NPC_SET_MENU_STATE_SYNC	sSync = {};
 			sSync.ProtocolType = s2c_npcsetmenustate;
 			sSync.m_dwID = Npc[Player[nPlayerIdx].m_nIndex].m_dwID;
 			sSync.m_btState = PLAYER_MENU_STATE_NORMAL;
@@ -109,12 +109,12 @@ void	KPlayerMenuState::SetState(int nPlayerIdx, int nState, char *lpszSentence/*
 		break;
 	case PLAYER_MENU_STATE_TRADEOPEN:
 		{
-			TRADE_CHANGE_STATE_SYNC	sTrade;
+			TRADE_CHANGE_STATE_SYNC	sTrade = {};
 			sTrade.ProtocolType = s2c_tradechangestate;
 			sTrade.m_btState = 1;
 			g_pServer->PackDataToClient(Player[nPlayerIdx].m_nNetConnectIdx, (BYTE*)&sTrade, sizeof(TRADE_CHANGE_STATE_SYNC));
 
-			NPC_SET_MENU_STATE_SYNC	sSync;
+			NPC_SET_MENU_STATE_SYNC	sSync = {};
 			sSync.ProtocolType = s2c_npcsetmenustate;
 			sSync.m_dwID = Npc[Player[nPlayerIdx].m_nIndex].m_dwID;
 			sSync.m_btState = PLAYER_MENU_STATE_TRADEOPEN;
@@ -127,14 +127,14 @@ void	KPlayerMenuState::SetState(int nPlayerIdx, int nState, char *lpszSentence/*
 	case PLAYER_MENU_STATE_TRADING:
 		{
 			// 给自己发消息
-			TRADE_CHANGE_STATE_SYNC	sState;
+			TRADE_CHANGE_STATE_SYNC	sState = {};
 			sState.ProtocolType = s2c_tradechangestate;
 			sState.m_btState = 2;
 			sState.m_dwNpcID = dwDestNpcID;
 			g_pServer->PackDataToClient(Player[nPlayerIdx].m_nNetConnectIdx, (BYTE*)&sState, sizeof(TRADE_CHANGE_STATE_SYNC));
 
 			// 给附近玩家发消息
-			NPC_SET_MENU_STATE_SYNC	sSync;
+			NPC_SET_MENU_STATE_SYNC	sSync = {};
 			sSync.ProtocolType = s2c_npcsetmenustate;
 			sSync.m_btState = PLAYER_MENU_STATE_TRADING;
 			sSync.m_wLength = sizeof(NPC_SET_MENU_STATE_SYNC) - 1 - sizeof(sSync.m_szSentence);

@@ -142,6 +142,7 @@ public:
 	DWORD GetValidityStartTime() const { return m_dwValidityStartTime; }
 	__int64 GetValidityEndTime() const;
 	BOOL IsExpired(DWORD dwNow = 0) const;
+	BOOL CanTrade() const;
 	~KItem();
 
 // 以下是核心成员变量
@@ -182,8 +183,8 @@ public:
 	int		GetDetailType() const { return m_CommonAttrib.nDetailType; };
 	int		GetGenre() const { return m_CommonAttrib.nItemGenre; };
 	int		GetSeries() const { return m_CommonAttrib.nSeries; };
-	int		GetParticular() { return m_CommonAttrib.nParticularType; };
-	int		GetLevel() { return m_CommonAttrib.nLevel; };
+	int		GetParticular() const { return m_CommonAttrib.nParticularType; };
+	int		GetLevel() const { return m_CommonAttrib.nLevel; };
 	void	SetSeries(int nSeries) { m_CommonAttrib.nSeries = nSeries; };
 	int		GetWidth() const { return m_CommonAttrib.nWidth; };
 	int		GetHeight() const { return m_CommonAttrib.nHeight; };

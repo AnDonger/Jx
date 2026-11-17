@@ -109,6 +109,7 @@ typedef struct
 	BOOL		m_bConsumeOnUse;
 	int			m_nCopperPrice;		// 原资源铜钱价格，仅供铜钱商店结算。
 	int			m_nExistDays;		// 原表存在时间，按客户端本地日界计天，0为不限时。
+	BOOL		m_bCanTrade;		// 原资源“是否可以交换”；兼容缺列的旧普通物品。
 } KBASICPROP_NORMALITEM;
 
 // 以下结构用于描述一对最大,最小值
@@ -246,6 +247,7 @@ typedef struct
 	char		m_szIntro[SZBUFLEN_1];		// 说明文字
 	int			m_bStack;				// 原资源“是否叠放”：数量上限
 	int			m_nParticularType;		// 原资源“详细类别”
+	BOOL		m_bCanTrade;		// 原资源“是否可以交换”；缺列时禁止交易。
 } KBASICPROP_QUEST;
 
 typedef struct

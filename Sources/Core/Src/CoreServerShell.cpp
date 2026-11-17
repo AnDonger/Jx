@@ -192,7 +192,8 @@ void CoreServerShell::AddPlayerToWorld(int nIndex)
 
 void CoreServerShell::ProcessClientMessage(int nIndex, const char* pChar, int nSize)
 {
-	PlayerSet.ProcessClientMessage(nIndex, pChar, nSize);
+	if (CheckProtocolSize(pChar, nSize))
+		PlayerSet.ProcessClientMessage(nIndex, pChar, nSize);
 }
 
 void CoreServerShell::ProcessNewClientMessage(IClient* pTransfer,
@@ -798,6 +799,10 @@ bool CoreServerShell::CheckProtocolSize(const char* pChar, int nSize)
 	case 0x58: case 0x5B: return nSize == 1;
 	case 0x79: return nSize == sizeof(TEAM_REPLY_INVITE_COMMAND);
 	case 0x51: return nSize == sizeof(GAME_SKILL_COMMAND);
+	case 0x73: return nSize == sizeof(TRADE_APPLY_START_COMMAND);
+	case 0x74: return nSize == sizeof(TRADE_MOVE_MONEY_COMMAND);
+	case 0x75: return nSize == sizeof(TRADE_DECISION_COMMAND) && (BYTE)pChar[1] <= 4;
+	case 0x7F: return nSize == sizeof(TRADE_REPLY_START_COMMAND) && (BYTE)pChar[1] <= 1;
 	case 0x60: return nSize == sizeof(ITEM_REPAIR);
 	case 0x61: return nSize == sizeof(GAME_USE_ITEM_COMMAND);
 	case 0x62: return nSize == sizeof(GAME_PICKUP_COMMAND);

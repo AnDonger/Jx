@@ -1177,6 +1177,23 @@ BOOL KItemGenerator::Gen_NormalItem(IN int nGenre,
 	return TRUE;
 }
 
+BOOL KItemGenerator::IsTradeAllowed(const KItem& Data)
+{
+	if (Data.GetGenre() == item_task)
+	{
+		// 与 Gen_Quest 使用同一有效模板库，不能按第4类一概拒绝铜钱等可交易物品。
+		const KBASICPROP_QUEST* pTemplate = m_BPTLib.GetQuestRecord(Data.GetDetailType());
+		return pTemplate && pTemplate->m_bCanTrade;
+	}
+	if (Data.GetGenre() == item_magicorscript || Data.GetGenre() == item_skillbook)
+	{
+		const KBASICPROP_NORMALITEM* pTemplate = GetNormalItemTemplate(Data.GetGenre(),
+			Data.GetDetailType(), Data.GetParticular(), Data.GetLevel(), Data.m_GeneratorParam.nVersion);
+		return pTemplate && pTemplate->m_bCanTrade;
+	}
+	return Data.GetGenre() >= item_equip && Data.GetGenre() < item_number;
+}
+
 BOOL KItemGenerator::Gen_Quest(IN int nDetailType, IN OUT KItem* pItem)
 {
 	_ASSERT(this != NULL);

@@ -249,7 +249,12 @@ void	KPlayer::Active()
 		return;
 	
 	//时间任务的处理
-	m_TimerTask.Activate(g_PlayerTimerCallBackFun);
+	if (CheckTrading() && !CanTradeWith(m_cTrade.m_nTradeDest))
+	{
+		TRADE_DECISION_COMMAND Cancel = {c2s_tradedecision, 0};
+		TradeDecision((BYTE*)&Cancel);
+	}
+	if (!CheckTrading()) m_TimerTask.Activate(g_PlayerTimerCallBackFun);
 	this->SendCurNormalSyncData();
 	// Team blood bars need B8 life data even outside the local visible region.
 	// Six simulation frames match the captured periodic update cadence.
@@ -3890,6 +3895,7 @@ void	KPlayer::ServerMoveItem(BYTE* pProtocol)
 #ifdef _SERVER
 void	KPlayer::ServerThrowAwayItem(BYTE* pProtocol)
 {
+	if (CheckTrading()) return;
 	PLAYER_THROW_AWAY_ITEM_COMMAND	*pThrow = (PLAYER_THROW_AWAY_ITEM_COMMAND*)pProtocol;
 	KMapPos		sMapPos;
 	
@@ -4090,6 +4096,7 @@ void	KPlayer::TradeApplyOpen(BYTE* pProtocol)
 	TRADE_APPLY_OPEN_COMMAND	*pApply = (TRADE_APPLY_OPEN_COMMAND*)pProtocol;
 	char	szSentence[MAX_SENTENCE_LENGTH];
 	int		nLength = pApply->m_wLength - (sizeof(TRADE_APPLY_OPEN_COMMAND) - 1 - sizeof(pApply->m_szSentence));
+	if (nLength < 0) return;
 	if (nLength >= MAX_SENTENCE_LENGTH)
 		nLength = MAX_SENTENCE_LENGTH - 1;
 	memset(szSentence, 0, sizeof(szSentence));
@@ -4116,6 +4123,8 @@ void	KPlayer::TradeApplyOpen(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 void	KPlayer::TradeApplyClose(BYTE* pProtocol)
 {
+	if (CheckTrading()) { TRADE_DECISION_COMMAND Cancel = {c2s_tradedecision, 0}; TradeDecision((BYTE*)&Cancel); return; }
+	m_cTrade.Release();
 	m_cMenuState.SetState(m_nPlayerIndex, PLAYER_MENU_STATE_NORMAL);
 }
 #endif
@@ -4124,27 +4133,57 @@ void	KPlayer::TradeApplyClose(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 //	功能：收到客户端申请开始交易
 //-------------------------------------------------------------------------
-void	KPlayer::TradeApplyStart(BYTE* pProtocol)
+void KPlayer::SendTradeNotice(const char* text)
 {
-	if (this->CheckTrading())
+	PLAYER_SCRIPTACTION_SYNC Info = {};
+	Info.m_bUIId = UI_MSGINFO; Info.m_bParam2 = 1;
+	g_StrCpyLen(Info.m_pContent, text, sizeof(Info.m_pContent));
+	Info.m_nBufferLen = strlen(Info.m_pContent);
+	DoScriptAction(&Info);
+}
+
+BOOL KPlayer::CanTradeWith(int target)
+{
+	if (target <= 0 || target >= MAX_PLAYER || target == m_nPlayerIndex) return FALSE;
+	if (CheckTrading() && (m_cTrade.m_nTradeDest != target || !Player[target].CheckTrading() ||
+		Player[target].m_cTrade.m_nTradeDest != m_nPlayerIndex)) return FALSE;
+	KPlayer* Roles[2] = {this, &Player[target]};
+	for (int i = 0; i < 2; i++)
+	{
+		KPlayer& Role = *Roles[i];
+		if (!Role.m_dwID || !Role.m_bFinishLoading || Role.m_nNetConnectIdx < 0 ||
+			Role.m_bIsQuiting || Role.m_bExchangeServer || Role.m_nIndex <= 0 || Role.m_nIndex >= MAX_NPC)
+			return FALSE;
+		KNpc& N = Npc[Role.m_nIndex];
+		if (N.m_CurrentLife <= 0 || N.m_Doing == do_death || N.m_Doing == do_revive ||
+			N.m_bExchangeServer || N.m_SubWorldIndex < 0 || N.m_SubWorldIndex >= MAX_SUBWORLD ||
+			N.m_RegionIndex < 0 || N.m_RegionIndex >= SubWorld[N.m_SubWorldIndex].m_nTotalRegion)
+			return FALSE;
+	}
+	return Npc[m_nIndex].m_SubWorldIndex == Npc[Player[target].m_nIndex].m_SubWorldIndex &&
+		FindAroundPlayer(Npc[Player[target].m_nIndex].m_dwID) == target;
+}
+
+void KPlayer::TradeApplyStart(BYTE* pProtocol)
+{
+	if (!pProtocol || CheckTrading() || !CanChangeInventory() || m_uMustSave != SAVE_IDLE) return;
+	TRADE_APPLY_START_COMMAND* pStart = (TRADE_APPLY_START_COMMAND*)pProtocol;
+	int target = FindAroundPlayer(pStart->m_dwID);
+	if (!CanTradeWith(target) || Player[target].CheckTrading() || Player[target].m_uMustSave != SAVE_IDLE || m_ItemList.Hand() ||
+		Player[target].m_ItemList.Hand())
+	{
+		SendTradeNotice("对方暂时无法交易，请收好鼠标上的物品后重试。");
 		return;
-	
-	TRADE_APPLY_START_COMMAND	*pStart = (TRADE_APPLY_START_COMMAND*)pProtocol;
-	
-	int		nPlayer;
-	nPlayer = FindAroundPlayer(pStart->m_dwID);
-	if (nPlayer < 0)
-		return;
-	if (Player[nPlayer].m_cMenuState.m_nState != PLAYER_MENU_STATE_TRADEOPEN)
-		return;
-	this->m_cTrade.m_nApplyIdx = nPlayer;
-	
-	TRADE_APPLY_START_SYNC	sApply;
-	sApply.ProtocolType = s2c_tradeapplystart;
-	sApply.m_nDestIdx = this->m_nPlayerIndex;
-	sApply.m_dwNpcId = Npc[m_nIndex].m_dwID;
-	if (g_pServer)
-		g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, (BYTE*)&sApply, sizeof(TRADE_APPLY_START_SYNC));
+	}
+	m_cTrade.m_nApplyIdx = target;
+	m_cTrade.m_dwApplyID = pStart->m_dwID;
+	m_cTrade.m_dwApplyTime = GetTickCount();
+	TRADE_APPLY_START_SYNC Invite = {};
+	Invite.ProtocolType = s2c_tradeapplystart;
+	Invite.m_nDestIdx = m_nPlayerIndex;
+	Invite.m_dwNpcId = Npc[m_nIndex].m_dwID;
+	g_pServer->PackDataToClient(Player[target].m_nNetConnectIdx, &Invite, sizeof(Invite));
+	g_DebugLog("[Trade] Invite player=%d target=%d", m_nPlayerIndex, target);
 }
 #endif
 
@@ -4154,6 +4193,9 @@ void	KPlayer::TradeApplyStart(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 void	KPlayer::TradeMoveMoney(BYTE* pProtocol)
 {
+	if (!pProtocol || !CanTradeWith(m_cTrade.m_nTradeDest) ||
+		!Player[m_cTrade.m_nTradeDest].CheckTrading() ||
+		Player[m_cTrade.m_nTradeDest].m_cTrade.m_nTradeDest != m_nPlayerIndex) return;
 	if ( !CheckTrading() )
 		return;
 	if (this->m_cTrade.m_nTradeLock)
@@ -4165,6 +4207,8 @@ void	KPlayer::TradeMoveMoney(BYTE* pProtocol)
 		nMoney = 0;
 	else
 		nMoney = pMoney->m_nMoney;
+	m_cTrade.m_nTradeState = 0;
+	Player[m_cTrade.m_nTradeDest].m_cTrade.m_nTradeState = 0;
 	m_ItemList.TradeMoveMoney(nMoney);
 }
 #endif
@@ -4173,230 +4217,101 @@ void	KPlayer::TradeMoveMoney(BYTE* pProtocol)
 //-------------------------------------------------------------------------
 //	功能：执行或取消交易
 //-------------------------------------------------------------------------
-void	KPlayer::TradeDecision(BYTE* pProtocol)
+void KPlayer::TradeDecision(BYTE* pProtocol)
 {
-	if ( !CheckTrading() )
-		return;
-	
-	TRADE_DECISION_COMMAND	*pDecision = (TRADE_DECISION_COMMAND*)pProtocol;
-	
-	if (pDecision->m_btDecision == 2)	// 己方锁定
+	if (!pProtocol || !CheckTrading()) return;
+	BYTE decision = ((TRADE_DECISION_COMMAND*)pProtocol)->m_btDecision;
+	int target = m_cTrade.m_nTradeDest;
+	BOOL peer = target > 0 && target < MAX_PLAYER && target != m_nPlayerIndex &&
+		Player[target].CheckTrading() && Player[target].m_cTrade.m_nTradeDest == m_nPlayerIndex;
+	if (!peer || !CanTradeWith(target)) decision = 0;
+	if (decision == 0)
 	{
-		if (this->m_cTrade.m_nTradeLock == 0)
+		int roles[2] = {m_nPlayerIndex, peer ? target : 0};
+		for (int n = 0; n < 2; n++)
 		{
-			this->m_cTrade.m_nTradeLock = 1;
-			this->m_cTrade.m_nTradeState = 0;
-			Player[m_cTrade.m_nTradeDest].m_cTrade.m_nTradeState = 0;
+			if (!roles[n]) continue;
+			KPlayer& Role = Player[roles[n]];
+			Role.m_ItemList.RecoverTrade();
+			Role.m_ItemList.ClearRoom(room_trade);
+			Role.m_ItemList.ClearRoom(room_trade1);
+			Role.m_cTrade.Release();
+			TRADE_DECISION_SYNC Done = {s2c_tradedecision, 0};
+			g_pServer->PackDataToClient(Role.m_nNetConnectIdx, &Done, sizeof(Done));
+			Role.m_cMenuState.RestoreBackupState(roles[n]);
+			Role.m_ItemList.SyncTradeInventory();
 		}
-		
-		SyncTradeState();
-		return;
-	}
-	else if (pDecision->m_btDecision == 3)	// 锁定取消
-	{
-		if (this->m_cTrade.m_nTradeLock == 1)
-		{
-			// 取消己方锁定的同时也取消了对方的锁定
-			this->m_cTrade.m_nTradeLock = 0;
-			this->m_cTrade.m_nTradeState = 0;
-			Player[m_cTrade.m_nTradeDest].m_cTrade.m_nTradeLock = 0;
-			Player[m_cTrade.m_nTradeDest].m_cTrade.m_nTradeState = 0;
-		}
-		SyncTradeState();
+		g_DebugLog("[Trade] Cancel player=%d target=%d peer=%d", m_nPlayerIndex, target, peer);
 		return;
 	}
-	else if (pDecision->m_btDecision == 4)	// 取消确定
+	KPlayer& Other = Player[target];
+	if (decision == 2)
 	{
-		if (m_cTrade.m_nTradeLock == 1 && Player[m_cTrade.m_nTradeDest].m_cTrade.m_nTradeLock == 1)
+		if (m_ItemList.Hand())
 		{
-			m_cTrade.m_nTradeState = 0;
-			SyncTradeState();
+			SendTradeNotice("请先将鼠标上的物品放回背包，再锁定交易。");
+			SyncTradeState(); return;
 		}
-		return;
+		if (!m_cTrade.m_nTradeLock)
+		{
+			m_cTrade.m_nTradeLock = 1;
+			m_cTrade.m_nTradeState = Other.m_cTrade.m_nTradeState = 0;
+		}
 	}
-	else if (pDecision->m_btDecision == 0)	// 取消交易
+	else if (decision == 3)
 	{
-		int	nDestIdx;
-		nDestIdx = this->m_cTrade.m_nTradeDest;
-		// 取消交易的数据恢复
-		this->m_ItemList.RecoverTrade();
-		this->m_ItemList.ClearRoom(room_trade);
-		this->m_ItemList.ClearRoom(room_trade1);
-		this->m_cTrade.Release();
-		Player[nDestIdx].m_ItemList.RecoverTrade();
-		Player[nDestIdx].m_ItemList.ClearRoom(room_trade);
-		Player[nDestIdx].m_ItemList.ClearRoom(room_trade1);
-		Player[nDestIdx].m_cTrade.Release();
-		
-		TRADE_DECISION_SYNC	sSync;
-		sSync.ProtocolType = s2c_tradedecision;
-		sSync.m_btDecision = 0;
-		g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSync, sizeof(TRADE_DECISION_SYNC));
-		g_pServer->PackDataToClient(Player[nDestIdx].m_nNetConnectIdx, (BYTE*)&sSync, sizeof(TRADE_DECISION_SYNC));
-		
-		// 取消交易的状态恢复(备份状态一定不会是 trading)(己方)
-		this->m_cMenuState.RestoreBackupState(m_nPlayerIndex);
-		
-		// 取消交易的状态恢复(备份状态一定不会是 trading)(对方)
-		Player[nDestIdx].m_cMenuState.RestoreBackupState(nDestIdx);
-		
-		return;
+		m_cTrade.m_nTradeLock = Other.m_cTrade.m_nTradeLock = 0;
+		m_cTrade.m_nTradeState = Other.m_cTrade.m_nTradeState = 0;
 	}
-	else if (pDecision->m_btDecision == 1)	// 执行交易
+	else if (decision == 4)
+		m_cTrade.m_nTradeState = 0;
+	else if (decision == 1)
 	{
-		// 如果双方没有同时锁定，不能确定
-		if (this->m_cTrade.m_nTradeLock != 1 ||
-			Player[m_cTrade.m_nTradeDest].m_cTrade.m_nTradeLock != 1)
+		if (!m_cTrade.m_nTradeLock || !Other.m_cTrade.m_nTradeLock)
 		{
-			SyncTradeState();
-			return;
+			SyncTradeState(); return;
 		}
-		// 对方还没确定，通知对方自己已确定
-		else if (Player[m_cTrade.m_nTradeDest].m_cTrade.m_nTradeState == 0)
+		m_cTrade.m_nTradeState = 1;
+		if (Other.m_cTrade.m_nTradeState)
 		{
-			m_cTrade.m_nTradeState = 1;
-			
-			SyncTradeState();
-			
-			return;
-		}
-		// 对方已确定，执行交易
-		else
-		{
-			// 执行交易之前，先检测一下是否有错误
-			// -------------------- 检查 money --------------------
-			int	nSM1, nSM2, nDM1, nDM2;
-			int	nDestIdx = m_cTrade.m_nTradeDest;
-			nSM1 = m_ItemList.GetMoney(room_equipment);
-			nSM2 = m_ItemList.GetMoney(room_trade);
-			nDM1 = Player[nDestIdx].m_ItemList.GetMoney(room_equipment);
-			nDM2 = Player[nDestIdx].m_ItemList.GetMoney(room_trade);
-			if (nSM2 < 0 || nSM1 + nDM2 - nSM2 < 0)
+			// Keep identifiers for removal after 88 closes the client's trade UI.
+			std::vector<int> Offered[2];
+			KPlayer* Roles[2] = {this, &Other};
+			for (int side = 0; side < 2; side++)
+				for (PlayerItem* Entry = Roles[side]->m_ItemList.GetFirstItem(); Entry;
+					Entry = Roles[side]->m_ItemList.GetNextItem())
+					if (Entry->nIdx > 0 && Entry->nPlace == pos_traderoom) Offered[side].push_back(Entry->nIdx);
+			int money[2] = {m_ItemList.GetMoney(room_trade), Other.m_ItemList.GetMoney(room_trade)};
+			if (!m_ItemList.CommitTrade(Other.m_ItemList))
 			{
-				this->m_ItemList.TradeMoveMoney(0);
-				// 通知客户端钱有问题 not end
-				return;
+				m_cTrade.m_nTradeState = Other.m_cTrade.m_nTradeState = 0;
+				m_cTrade.m_nTradeLock = Other.m_cTrade.m_nTradeLock = 0;
+				SendTradeNotice("交易未完成，请检查双方背包空间、物品及随身银两。");
+				Other.SendTradeNotice("交易未完成，请检查双方背包空间、物品及随身银两。");
+				SyncTradeState(); return;
 			}
-			if (nDM2 < 0 || nDM1 + nSM2 - nDM2 < 0)
+			for (int side = 0; side < 2; side++)
 			{
-				Player[nDestIdx].m_ItemList.TradeMoveMoney(0);
-				// 通知客户端钱有问题 not end
-				return;
-			}
-			// ------------------ 检查 money end ------------------
-			
-			// --------- 检查双方物品栏能否接受买进的物品 ---------
-			int		nSelfCanGet, nDestCanGet;
-			
-			// 判断己方物品栏能否接受买进的物品
-			Player[nDestIdx].m_ItemList.GetTradeRoomItemInfo();
-			nSelfCanGet = m_ItemList.TradeCheckCanPlace();
-			ItemSet.BackItemInfo();
-			
-			// 判断对方物品栏能否接受买进的物品
-			this->m_ItemList.GetTradeRoomItemInfo();
-			nDestCanGet = Player[nDestIdx].m_ItemList.TradeCheckCanPlace();
-			
-			if (!nSelfCanGet || !nDestCanGet)
-			{
-				if (!nSelfCanGet)
+				KPlayer& Role = *Roles[side];
+				TRADE_DECISION_SYNC Done = {s2c_tradedecision, 1};
+				g_pServer->PackDataToClient(Role.m_nNetConnectIdx, &Done, sizeof(Done));
+				Role.m_cTrade.Release();
+				Role.m_cMenuState.SetState(Role.m_nPlayerIndex, PLAYER_MENU_STATE_NORMAL);
+				for (size_t n = 0; n < Offered[side].size(); n++)
 				{
-					this->m_cTrade.m_nTradeState = 0;
-					
-					// 通知客户端买进的东西放不下
-					SHOW_MSG_SYNC	sMsg;
-					sMsg.ProtocolType = s2c_msgshow;
-					sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-					sMsg.m_wMsgID = enumMSG_ID_TRADE_SELF_ROOM_FULL;
-					g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-					sMsg.m_wMsgID = enumMSG_ID_TRADE_DEST_ROOM_FULL;
-					g_pServer->PackDataToClient(Player[nDestIdx].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
+					ITEM_REMOVE_SYNC Remove = {s2c_removeitem, Item[Offered[side][n]].GetID()};
+					g_pServer->PackDataToClient(Role.m_nNetConnectIdx, &Remove, sizeof(Remove));
 				}
-				if (!nDestCanGet)
-				{
-					Player[nDestIdx].m_cTrade.m_nTradeState = 0;
-					
-					// 通知客户端买进的东西放不下
-					SHOW_MSG_SYNC	sMsg;
-					sMsg.ProtocolType = s2c_msgshow;
-					sMsg.m_wLength = sizeof(SHOW_MSG_SYNC) - 1 - sizeof(LPVOID);
-					sMsg.m_wMsgID = enumMSG_ID_TRADE_SELF_ROOM_FULL;
-					g_pServer->PackDataToClient(Player[nDestIdx].m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-					sMsg.m_wMsgID = enumMSG_ID_TRADE_DEST_ROOM_FULL;
-					g_pServer->PackDataToClient(m_nNetConnectIdx, &sMsg, sMsg.m_wLength + 1);
-				}
-				SyncTradeState();
-				return;
+				Role.m_ItemList.SyncTradeInventory();
+				Role.m_ulLastSaveTime = g_SubWorldSet.GetGameTime();
+				Role.m_uMustSave = SAVE_REQUEST;
 			}
-			// ------- 检查双方物品栏能否接受买进的物品 end -------
-			
-			// 通知客户端交易完成
-			TRADE_DECISION_SYNC	sSync;
-			sSync.ProtocolType = s2c_tradedecision;
-			sSync.m_btDecision = 1;
-			g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSync, sizeof(TRADE_DECISION_SYNC));
-			g_pServer->PackDataToClient(Player[nDestIdx].m_nNetConnectIdx, (BYTE*)&sSync, sizeof(TRADE_DECISION_SYNC));
-			
-			// 服务器端结束交易状态
-			m_cMenuState.SetState(m_nPlayerIndex, PLAYER_MENU_STATE_NORMAL);
-			Player[nDestIdx].m_cMenuState.SetState(nDestIdx, PLAYER_MENU_STATE_NORMAL);
-			this->m_cTrade.Release();
-			Player[nDestIdx].m_cTrade.Release();
-			
-			// 交易中金钱的交换
-			if (nSM2 <= nDM2)
-			{
-				this->Earn(nDM2 - nSM2);
-				Player[nDestIdx].Pay(nDM2 - nSM2);
-			}
-			else
-			{
-				this->Pay(nSM2 - nDM2);
-				Player[nDestIdx].Earn(nSM2 - nDM2);
-			}
-			
-			//--------------- 交易中物品的交换 ---------------------
-			// 对方的物品给己方
-			int		nPos;
-			nPos = 0;
-			while (1)
-			{
-				if (nPos >= TRADE_ROOM_WIDTH * TRADE_ROOM_HEIGHT)
-					break;
-				if (!ItemSet.m_psBackItemInfo[nPos].m_nIdx)
-					break;
-				// 对方去除此物品
-				Player[nDestIdx].m_ItemList.Remove(ItemSet.m_psBackItemInfo[nPos].m_nIdx);
-				// 己方得到此物品
-				m_ItemList.Add(
-					ItemSet.m_psBackItemInfo[nPos].m_nIdx,
-					pos_equiproom,
-					ItemSet.m_psBackItemInfo[nPos].m_nX,
-					ItemSet.m_psBackItemInfo[nPos].m_nY);
-				nPos++;
-			}
-			// 己方的物品给对方
-			nPos = 0;
-			while (1)
-			{
-				if (nPos >= TRADE_ROOM_WIDTH * TRADE_ROOM_HEIGHT)
-					break;
-				if (!ItemSet.m_psItemInfo[nPos].m_nIdx)
-					break;
-				// 己方去除此物品
-				this->m_ItemList.Remove(ItemSet.m_psItemInfo[nPos].m_nIdx);
-				// 对方得到此物品
-				Player[nDestIdx].m_ItemList.Add(
-					ItemSet.m_psItemInfo[nPos].m_nIdx,
-					pos_equiproom,
-					ItemSet.m_psItemInfo[nPos].m_nX,
-					ItemSet.m_psItemInfo[nPos].m_nY);
-				nPos++;
-			}
-			//------------- 交易中物品的交换 end -------------------
+			g_DebugLog("[Trade] Complete player=%d target=%d items=%d,%d money=%d,%d", m_nPlayerIndex,
+				target, (int)Offered[0].size(), (int)Offered[1].size(), money[0], money[1]);
 			return;
 		}
 	}
+	SyncTradeState();
 }
 #endif
 
@@ -4417,8 +4332,13 @@ void	KPlayer::c2sTradeReplyStart(BYTE* pProtocol)
 		return;
 	if (Player[nPlayerIdx].m_nIndex <= 0)
 		return;
-	if (Player[nPlayerIdx].m_cTrade.m_nApplyIdx != this->m_nPlayerIndex)
+	if (Player[nPlayerIdx].m_cTrade.m_nApplyIdx != m_nPlayerIndex ||
+		Player[nPlayerIdx].m_cTrade.m_dwApplyID != Npc[m_nIndex].m_dwID ||
+		GetTickCount() - Player[nPlayerIdx].m_cTrade.m_dwApplyTime > 30000 ||
+		!CanTradeWith(nPlayerIdx) || Player[nPlayerIdx].CheckTrading() ||
+		m_uMustSave != SAVE_IDLE || Player[nPlayerIdx].m_uMustSave != SAVE_IDLE)
 		return;
+	Player[nPlayerIdx].m_cTrade.m_nApplyIdx = -1;
 	
 	// 拒绝
 	if (pReply->m_bDecision == 0)
@@ -4433,10 +4353,8 @@ void	KPlayer::c2sTradeReplyStart(BYTE* pProtocol)
 		return;
 	}
 	
-	if (this->m_cMenuState.m_nState != PLAYER_MENU_STATE_TRADEOPEN)
-	{
+	if (m_ItemList.Hand() || Player[nPlayerIdx].m_ItemList.Hand())
 		return;
-	}
 	
 	// 如果处于队伍开放状态，关闭之
 	if (Player[nPlayerIdx].m_cMenuState.m_nState == PLAYER_MENU_STATE_TEAMOPEN)
@@ -4455,6 +4373,10 @@ void	KPlayer::c2sTradeReplyStart(BYTE* pProtocol)
 		Npc[Player[nPlayerIdx].m_nIndex].SendCommand(do_stand);
 	}
 	
+	CloseStoreBox(); Player[nPlayerIdx].CloseStoreBox();
+	m_BuyInfo.Clear(); Player[nPlayerIdx].m_BuyInfo.Clear();
+	m_bWaitingPlayerFeedBack = Player[nPlayerIdx].m_bWaitingPlayerFeedBack = false;
+	ClearUseItemContext(); Player[nPlayerIdx].ClearUseItemContext();
 	// 服务器的处理：改变状态，备份数据
 	this->m_ItemList.StartTrade();
 	this->m_cTrade.Release();
@@ -4477,7 +4399,14 @@ void	KPlayer::SyncTradeState()
 	if ( !CheckTrading() )
 		return;
 	
-	TRADE_STATE_SYNC	sSync;
+	int target = m_cTrade.m_nTradeDest;
+	if (target <= 0 || target >= MAX_PLAYER || !Player[target].CheckTrading() ||
+		Player[target].m_cTrade.m_nTradeDest != m_nPlayerIndex) return;
+	TRADE_MONEY_SYNC Money = {s2c_trademoneysync, Player[target].m_ItemList.GetMoney(room_trade)};
+	g_pServer->PackDataToClient(m_nNetConnectIdx, &Money, sizeof(Money));
+	Money.m_nMoney = m_ItemList.GetMoney(room_trade);
+	g_pServer->PackDataToClient(Player[target].m_nNetConnectIdx, &Money, sizeof(Money));
+	TRADE_STATE_SYNC	sSync = {};
 	sSync.ProtocolType = s2c_tradepressoksync;
 	sSync.m_btSelfLock = this->m_cTrade.m_nTradeLock;
 	sSync.m_btDestLock = Player[m_cTrade.m_nTradeDest].m_cTrade.m_nTradeLock;

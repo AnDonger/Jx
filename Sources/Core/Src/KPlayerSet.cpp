@@ -493,7 +493,7 @@ int KPlayerSet::FindClient(int nClient)
 #ifdef _SERVER
 void KPlayerSet::ProcessClientMessage(int nIndex, const char* pChar, int nSize)
 {
-	if (nIndex <= 0 && nIndex >= MAX_PLAYER)
+	if (nIndex <= 0 || nIndex >= MAX_PLAYER)
 		return;
 
 	int i = Player[nIndex].m_nNetConnectIdx;

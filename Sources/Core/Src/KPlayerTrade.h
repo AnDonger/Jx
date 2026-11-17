@@ -25,6 +25,8 @@ public:
 
 #ifdef _SERVER
 	int			m_nApplyIdx;
+	DWORD		m_dwApplyID;
+	DWORD		m_dwApplyTime;
 #endif
 
 #ifndef _SERVER
