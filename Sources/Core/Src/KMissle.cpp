@@ -1269,6 +1269,13 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 		DWORD dwID;
 	};
 	std::vector<CollisionTarget> Targets;
+	// 定点单体近战必须命中本次选中的实例，不能被同格怪物或尸体抢占。
+	const KSkill* pSkill = (const KSkill*)g_SkillManager.GetSkill(m_nSkillId, m_nLevel);
+	BOOL bLockedTarget = nRange == 1 && m_bIsMelee && m_eMoveKind == MISSLE_MMK_Stand &&
+		pSkill && pSkill->IsTargetOnly();
+	if (bLockedTarget && (m_nFollowNpcIdx <= 0 || m_nFollowNpcIdx >= MAX_NPC ||
+		!Npc[m_nFollowNpcIdx].IsMatch(m_dwFollowNpcID)))
+		return 0;
 #endif
 
 	// 检查范围内的格子里的NPC
@@ -1293,7 +1300,10 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 			{
 				int nIndex = pNode->m_nIndex;
 				if (nIndex > 0 && nIndex < MAX_NPC && Npc[nIndex].m_MapX == nRMx &&
-					Npc[nIndex].m_MapY == nRMy && (NpcSet.GetRelation(nLauncherIdx, nIndex) & eRelation))
+					Npc[nIndex].m_MapY == nRMy && Npc[nIndex].m_CurrentLife > 0 &&
+					Npc[nIndex].m_Doing != do_death && Npc[nIndex].m_Doing != do_revive &&
+					(!bLockedTarget || nIndex == m_nFollowNpcIdx) &&
+					(NpcSet.GetRelation(nLauncherIdx, nIndex) & eRelation))
 				{
 					CollisionTarget Target;
 					Target.nIndex = nIndex;
