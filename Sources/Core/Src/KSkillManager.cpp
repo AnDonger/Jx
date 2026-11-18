@@ -112,6 +112,22 @@ BOOL KSkillManager::Init()
 			m_SkillInfo[nSkillId - 1].m_ulMaxSkillLevel = 0;
 		}
 	}
+
+	// Summon skills use their native table, independently of skills.txt.
+	if (!m_SummonSkills.Load("\\settings\\summonskill.txt"))
+		return FALSE;
+	for (int nRow = 2; nRow <= m_SummonSkills.GetHeight(); nRow++)
+	{
+		int nId = 0, nTemplate = -1;
+		m_SummonSkills.GetInteger(nRow, "id", 0, &nId);
+		m_SummonSkills.GetInteger(nRow, "summonnpcid", -1, &nTemplate);
+		if (nId <= 0 || nId > MAX_SKILL || nTemplate < 0 ||
+			!GetPlayerRule(nId) || m_SkillInfo[nId - 1].m_nTabFileRowId)
+			return FALSE;
+		m_SkillInfo[nId - 1].m_nSkillStyle = SKILL_SS_Summon;
+		m_SkillInfo[nId - 1].m_nTabFileRowId = nRow;
+		m_SkillInfo[nId - 1].m_ulMaxSkillLevel = MAX_SKILLLEVEL;
+	}
 	KTabFile ThiefSkillTab;
 	if (ThiefSkillTab.Load(THIEFSKILL_SETTINGFILE))
 	{
@@ -175,6 +191,20 @@ ISkill*	KSkillManager::InstanceSkill( unsigned long ulSkillID, unsigned long ulS
 		
         }    break;
 	
+
+	case SKILL_SS_Summon:
+		{
+			KSkill* pSkill = new KSkill;
+			if (!pSkill->LoadSummonSkill(&m_SummonSkills,
+				m_SkillInfo[ulSkillID - 1].m_nTabFileRowId, ulSkillLevel))
+			{
+				delete pSkill;
+				break;
+			}
+			m_pOrdinSkill[ulSkillID - 1][ulSkillLevel - 1] = pSkill;
+			pRetSkill = pSkill;
+		}
+		break;
 	case SKILL_SS_Thief:
 		{
 			if (!m_pOrdinSkill[ulSkillID - 1][0])

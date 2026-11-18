@@ -3576,6 +3576,16 @@ void KProtocolProcess::CurrentExtensionCommand(int nIndex, BYTE* pProtocol)
 	memcpy(&wLength, pProtocol + 1, sizeof(wLength));
 	if (wLength < 3)
 		return;
+	if (pProtocol[3] == 0x1C)
+	{
+		if (wLength + 1 != sizeof(GAME_TARGET_SELECTION_COMMAND))
+			return;
+		const GAME_TARGET_SELECTION_COMMAND* pSelection = (const GAME_TARGET_SELECTION_COMMAND*)pProtocol;
+		g_DebugLog("[TargetState] Select: player=%d target=%lu unknown_1=%u unknown_2=%u",
+			nIndex, pSelection->TargetId, pSelection->unknown_1, pSelection->unknown_2);
+		Player[nIndex].SelectTarget(pSelection->TargetId);
+		return;
+	}
 	if (pProtocol[3] == 0x34)
 	{
 		if (wLength + 1 == sizeof(GAME_CHARACTER_DETAILS_COMMAND))

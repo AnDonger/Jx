@@ -10,6 +10,7 @@
 #include "KWorldMsg.h"
 #include "KSubWorld.h"
 #ifdef _SERVER
+#include <vector>
 //#include "KNetServer.h"
 //#include "../MultiServer/Heaven/Interface/iServer.h"
 #endif
@@ -667,6 +668,41 @@ void KRegion::Activate()
 	KIndexNode *pTmpNode = NULL;
 	int	nCounter = 0;
 
+#ifdef _SERVER
+	// NPC activation may remove another node (for example an owner's summon).
+	// Snapshot identities before callbacks; a saved next pointer can be unlinked.
+	struct NpcActivation
+	{
+		int nIndex;
+		DWORD dwID;
+	};
+	std::vector<NpcActivation> Npcs;
+	pNode = (KIndexNode *)m_NpcList.GetHead();
+	while (pNode)
+	{
+		NpcActivation Entry;
+		Entry.nIndex = pNode->m_nIndex;
+		Entry.dwID = Npc[Entry.nIndex].m_dwID;
+		Npcs.push_back(Entry);
+		pNode = (KIndexNode *)pNode->GetNext();
+	}
+	for (size_t i = 0; i < Npcs.size(); i++)
+	{
+		int nNpcIdx = Npcs[i].nIndex;
+		KNpc& Current = Npc[nNpcIdx];
+		// A removed slot can already contain a different entity or region.
+		if (!Current.m_Index || Current.m_dwID != Npcs[i].dwID ||
+			!Current.m_Node.IsLinked() || Current.m_SubWorldIndex < 0 ||
+			Current.m_SubWorldIndex >= MAX_SUBWORLD || Current.m_RegionIndex < 0 ||
+			Current.m_RegionIndex >= SubWorld[Current.m_SubWorldIndex].m_nTotalRegion ||
+			&SubWorld[Current.m_SubWorldIndex].m_Region[Current.m_RegionIndex] != this)
+			continue;
+		if ((nCounter == m_nNpcSyncCounter / 2) && (m_nNpcSyncCounter & 1))
+			Current.NormalSync();
+		nCounter++;
+		Current.Activate();
+	}
+#else
 	pNode = (KIndexNode *)m_NpcList.GetHead();
 
 	while(pNode)
@@ -685,6 +721,7 @@ void KRegion::Activate()
 		Npc[nNpcIdx].Activate();
 		pNode = pTmpNode;
 	}
+#endif
 	m_nNpcSyncCounter++;
 	if (m_nNpcSyncCounter > m_NpcList.GetNodeCount() * 2)
 	{

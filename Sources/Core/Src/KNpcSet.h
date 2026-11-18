@@ -119,6 +119,7 @@ public:
 	void			Remove(int nIdx);
 	void			RemoveAll();
 	NPC_RELATION	GetRelation(int nIdx1, int nIdx2);
+	NPC_RELATION	GetSupportRelation(int nIdx1, int nIdx2);
 	int				GetNearestNpc(int nMapX, int nMapY, int nId, int nRelation);
 	static int		GetDistance(int nIdx1, int nIdx2);
 	static int		GetDistanceSquare(int nIdx1, int nIdx2);
@@ -188,9 +189,17 @@ public:
 	
 #endif
 #ifdef _SERVER
-	BOOL			SyncNpc(DWORD dwID, int nClientIdx);
+
+	BOOL CanSummon(int nOwner, const KSkill* pSkill, int nX, int nY);
+	int CreateSummon(int nOwner, const KSkill* pSkill, int nX, int nY);
+	void RemoveSummon(int nIndex);
+	void RemoveOwnedSummon(int nOwner);
+	void MoveOwnedSummon(int nOwner);
+	void NotifySummonAttacked(int nVictim, int nAttacker);
+	BOOL SyncNpc(DWORD dwID, int nClientIdx);
 #endif
 private:
+	void BroadcastRemove(int nIndex);
 	void			SetID(int m_nIndex);
 	int				FindFree();
 

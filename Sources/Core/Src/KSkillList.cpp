@@ -298,6 +298,9 @@ BOOL KSkillList::CanCast(int nSkillID, DWORD dwTime)
 
 	if (m_Skills[i].CurrentSkillLevel <= 0 || m_Skills[i].NextCastTime > dwTime
 #ifdef _SERVER
+		|| GetPlayerSkillCooldownFrames(nSkillID)
+#endif
+#ifdef _SERVER
 		|| (m_nNpcIndex > 0 && Npc[m_nNpcIndex].IsPlayer() && m_Skills[i].SkillStatus != 3)
 #endif
 		)
@@ -319,6 +322,17 @@ void KSkillList::SetNextCastTime(int nSkillID, DWORD dwTime, BOOL bSync)
 	
 	m_Skills[i].NextCastTime = dwTime;
 #ifdef _SERVER
+	KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(nSkillID, m_Skills[i].CurrentSkillLevel);
+	if (pSkill && pSkill->GetSkillStyle() == SKILL_SS_Summon)
+	{
+		for (int j = 1; j < MAX_NPCSKILL; j++)
+		{
+			KSkill* pOther = (KSkill*)g_SkillManager.GetSkill(m_Skills[j].SkillId, m_Skills[j].CurrentSkillLevel);
+			if (pOther && pOther->GetSkillStyle() == SKILL_SS_Summon)
+				m_Skills[j].NextCastTime = dwTime;
+		}
+	}
+
 	if (bSync)
 		SyncPlayerSkillCooldown(nSkillID);
 #endif
@@ -333,7 +347,20 @@ DWORD KSkillList::GetPlayerSkillCooldownFrames(int nSkillID)
 	if (nWorld < 0 || nWorld >= MAX_SUBWORLD)
 		return 0;
 	DWORD dwNow = SubWorld[nWorld].m_dwCurrentTime;
-	return m_Skills[nIndex].NextCastTime > dwNow ? m_Skills[nIndex].NextCastTime - dwNow : 0;
+	DWORD dwNext = m_Skills[nIndex].NextCastTime;
+	KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(nSkillID, m_Skills[nIndex].CurrentSkillLevel);
+	if (pSkill && pSkill->GetSkillStyle() == SKILL_SS_Summon)
+	{
+		for (int i = 1; i < MAX_NPCSKILL; i++)
+		{
+			if (m_Skills[i].NextCastTime <= dwNext)
+				continue;
+			KSkill* pOther = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId, m_Skills[i].CurrentSkillLevel);
+			if (pOther && pOther->GetSkillStyle() == SKILL_SS_Summon)
+				dwNext = m_Skills[i].NextCastTime;
+		}
+	}
+	return dwNext > dwNow ? dwNext - dwNow : 0;
 }
 
 // 存档使用自1601年起的毫秒到期时间，避免把本次服务端世界帧写入下次会话。
@@ -423,7 +450,8 @@ BOOL KSkillList::SyncPlayerSkillCooldowns(int nSkillID)
 			continue;
 		GAME_SKILL_COOLDOWN_RECORD& Record = pRecords[pHeader->Count++];
 		Record.SkillId = (WORD)m_Skills[i].SkillId;
-		Record.NextCastFrame = GetPlayerSkillCooldownFrames(m_Skills[i].SkillId) ? m_Skills[i].NextCastTime : 0;
+		DWORD dwFrames = GetPlayerSkillCooldownFrames(m_Skills[i].SkillId);
+		Record.NextCastFrame = dwFrames ? SubWorld[Npc[m_nNpcIndex].m_SubWorldIndex].m_dwCurrentTime + dwFrames : 0;
 	}
 	if (nSkillID && !pHeader->Count)
 		return FALSE;
@@ -998,17 +1026,28 @@ void KSkillList::AddMonsterSkillExp(int nExp)
 	ULONGLONG ullExp = (ULONGLONG)nExp * g_SkillManager.GetSupportSkillExpRate() *
 		GetSkillExpMultiplier() / 100;
 	DWORD dwExp = ullExp > MAXDWORD ? MAXDWORD : (DWORD)ullExp;
-	if (!dwExp)
-		return;
 	for (int i = 1; i < MAX_NPCSKILL; i++)
 	{
 		if (!IsPlayerSkillLearned(m_Skills[i].SkillId))
 			continue;
 		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(m_Skills[i].SkillId, GetCurrentLevel(m_Skills[i].SkillId));
-		if (pSkill && !pSkill->IsTargetEnemy() && !pSkill->IsAura() &&
+
+		if (pSkill && pSkill->GetSkillStyle() != SKILL_SS_Summon && !pSkill->IsTargetEnemy() && !pSkill->IsAura() &&
 			!pSkill->IsElementalMastery() && !pSkill->IsWeaponMastery())
 			IncreasePlayerSkillExp(m_Skills[i].SkillId, dwExp);
 	}
+}
+
+// The official capture awards one point per kill, independent of character experience.
+void KSkillList::AddSummonKillSkillExp()
+{
+	if (m_nNpcIndex <= 0 || m_nNpcIndex >= MAX_NPC || !Npc[m_nNpcIndex].IsPlayer())
+		return;
+	int nSummon = Npc[m_nNpcIndex].GetSummon();
+	if (!nSummon || Npc[nSummon].m_CurrentLife <= 0)
+		return;
+	IncreasePlayerSkillExp(Npc[nSummon].m_nSummonSkill,
+		g_SkillManager.GetSupportSkillExpRate() * GetSkillExpMultiplier());
 }
 
 // 命中修炼依据原技能伤害类型，不能让装备附带伤害训练无关的精通。

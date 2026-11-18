@@ -103,6 +103,10 @@ KPlayer::~KPlayer()
 void	KPlayer::Release()
 {
 #ifdef _SERVER
+	m_dwSelectedTargetId = 0;
+	m_nSelectedTargetIndex = 0;
+	m_nSelectedTargetWorld = -1;
+	m_SelectedTargetStates.clear();
 	m_dwLastCampChangeTime = 0;
 	m_nSyncedAttackSpeed = m_nSyncedCastSpeed = -32768;
 	m_nSyncedLifeMax = m_nSyncedManaMax = -1;
@@ -256,6 +260,7 @@ void	KPlayer::Active()
 	}
 	if (!CheckTrading()) m_TimerTask.Activate(g_PlayerTimerCallBackFun);
 	this->SendCurNormalSyncData();
+	SyncSelectedTargetStates();
 	// Team blood bars need B8 life data even outside the local visible region.
 	// Six simulation frames match the captured periodic update cadence.
 	if (m_bFinishLoading && m_cTeam.m_nFlag && m_cTeam.m_nID >= 0 && m_cTeam.m_nID < MAX_TEAM &&
@@ -2439,75 +2444,13 @@ void	KPlayer::UpdataCurData()
 	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC)
 		return;
 	
-	Npc[m_nIndex].m_CurrentLifeMax		= Npc[m_nIndex].m_LifeMax;
-	Npc[m_nIndex].m_CurrentManaMax		= Npc[m_nIndex].m_ManaMax;
-	Npc[m_nIndex].m_CurrentStaminaMax	= Npc[m_nIndex].m_StaminaMax;
-	Npc[m_nIndex].m_CurrentAttackRating	= Npc[m_nIndex].m_AttackRating;
-	Npc[m_nIndex].m_CurrentAttackSpeed	= Npc[m_nIndex].m_AttackSpeed;
-//	Npc[m_nIndex].m_CurrentCamp			= Npc[m_nIndex].m_Camp;
-	Npc[m_nIndex].m_CurrentCastSpeed	= Npc[m_nIndex].m_CastSpeed;
-	ZeroMemory(&Npc[m_nIndex].m_CurrentColdDamage, sizeof(KMagicAttrib));
-	Npc[m_nIndex].m_CurrentColdEnhance	= 0;
-	Npc[m_nIndex].m_CurrentColdResist	= Npc[m_nIndex].m_ColdResist;
-	Npc[m_nIndex].m_CurrentColdResistMax	= Npc[m_nIndex].m_ColdResistMax;
-	Npc[m_nIndex].m_CurrentDamage2Mana	= 0;
-	Npc[m_nIndex].m_CurrentDamageReduce	= 0;
-	Npc[m_nIndex].m_CurrentDeadlyStrike	= 0;
-	Npc[m_nIndex].m_CurrentExDefend = Npc[m_nIndex].m_ExDefend;
-	Npc[m_nIndex].m_CurrentDefend		= Npc[m_nIndex].m_Defend;
-	Npc[m_nIndex].m_CurrentElementDamageReduce = 0;
-	ZeroMemory(&Npc[m_nIndex].m_CurrentFireDamage, sizeof(KMagicAttrib));
-	Npc[m_nIndex].m_CurrentEarthEnhance = 0;
-	Npc[m_nIndex].m_CurrentEarthResist = Npc[m_nIndex].m_EarthResist;
-	Npc[m_nIndex].m_CurrentEarthResistMax = Npc[m_nIndex].m_EarthResistMax;
-	Npc[m_nIndex].m_CurrentFireEnhance	= 0;
-	Npc[m_nIndex].m_CurrentFireResist	= Npc[m_nIndex].m_FireResist;
-	Npc[m_nIndex].m_CurrentFireResistMax	= Npc[m_nIndex].m_FireResistMax;
-	Npc[m_nIndex].m_CurrentPhysicsEnhance = 0;
-	Npc[m_nIndex].m_CurrentHandEnhance	= 0;
-	Npc[m_nIndex].m_CurrentHitRecover	= Npc[m_nIndex].m_HitRecover;
-	Npc[m_nIndex].m_CurrentJumpSpeed	= Npc[m_nIndex].m_JumpSpeed;
-	Npc[m_nIndex].m_CurrentKnockBack	= 0;
-	Npc[m_nIndex].m_CurrentLifeReplenish	= Npc[m_nIndex].m_LifeReplenish;
-	Npc[m_nIndex].m_CurrentLifeStolen	= 0;
-	ZeroMemory(&Npc[m_nIndex].m_CurrentLightDamage, sizeof(KMagicAttrib));
-	Npc[m_nIndex].m_CurrentLightEnhance	= 0;
-	Npc[m_nIndex].m_CurrentLightResist	= Npc[m_nIndex].m_LightResist;
-	Npc[m_nIndex].m_CurrentLightResistMax = Npc[m_nIndex].m_LightResistMax;
-	Npc[m_nIndex].m_CurrentManaPerEnemy	= 0;
-	Npc[m_nIndex].m_CurrentManaReplenish	= Npc[m_nIndex].m_ManaReplenish;
-	Npc[m_nIndex].m_CurrentManaStolen	= 0;
-	Npc[m_nIndex].m_CurrentMeleeDmgRet	= 0;
-	Npc[m_nIndex].m_CurrentMeleeDmgRetPercent = 0;
-	ZeroMemory(&Npc[m_nIndex].m_CurrentMeleeEnhance, sizeof(Npc[m_nIndex].m_CurrentMeleeEnhance));
-	Npc[m_nIndex].m_CurrentPhysicsResist	= Npc[m_nIndex].m_PhysicsResist;
-	Npc[m_nIndex].m_CurrentPhysicsResistMax	= Npc[m_nIndex].m_PhysicsResistMax;
-	Npc[m_nIndex].m_CurrentPiercePercent	= 0;
-	ZeroMemory(&Npc[m_nIndex].m_CurrentPoisonDamage, sizeof(KMagicAttrib));
-	Npc[m_nIndex].m_CurrentPoisonEnhance	= 0;
-	Npc[m_nIndex].m_CurrentPoisonResist	= Npc[m_nIndex].m_PoisonResist;
-	Npc[m_nIndex].m_CurrentPoisonResistMax	= Npc[m_nIndex].m_PoisonResistMax;
-	Npc[m_nIndex].m_CurrentRangeDmgRet	= 0;
-	Npc[m_nIndex].m_CurrentRangeDmgRetPercent	= 0;
-	Npc[m_nIndex].m_CurrentRangeEnhance	= 0;
-	Npc[m_nIndex].m_CurrentRunSpeed	= Npc[m_nIndex].m_RunSpeed;
-	Npc[m_nIndex].m_CurrentSlowMissle	= 0;
-	Npc[m_nIndex].m_CurrentStaminaGain	= Npc[m_nIndex].m_StaminaGain;
-	Npc[m_nIndex].m_CurrentStaminaLoss	= Npc[m_nIndex].m_StaminaLoss;
-	Npc[m_nIndex].m_CurrentStaminaStolen	= 0;
-	Npc[m_nIndex].m_CurrentVisionRadius	= Npc[m_nIndex].m_VisionRadius;
-	Npc[m_nIndex].m_CurrentWalkSpeed	= Npc[m_nIndex].m_WalkSpeed;
-	Npc[m_nIndex].m_CurrentAddPhysicsDamage = 0;
+	Npc[m_nIndex].ResetCurrentAttributes();
 	m_nCurStrength						= m_nStrength;
 	m_nCurDexterity						= m_nDexterity;
 	m_nCurVitality						= m_nVitality;
 	m_nCurEngergy						= m_nEngergy;
 	m_nCurLucky							= m_nLucky;
 	
-	ZeroMemory(Npc[m_nIndex].m_CurrentAdditionalAttrib, sizeof(Npc[m_nIndex].m_CurrentAdditionalAttrib));
-	Npc[m_nIndex].m_CurrentFreezeTimeReducePercent = 0;
-	Npc[m_nIndex].m_CurrentPoisonTimeReducePercent = 0;
-	Npc[m_nIndex].m_CurrentStunTimeReducePercent = 0;
 	ReCalcEquip();
 #ifdef _SERVER
 	ApplyImmortalPetAttributes();
@@ -2517,12 +2460,18 @@ void	KPlayer::UpdataCurData()
 #ifdef _SERVER
 	// 装备变更也会改变被动技能有效等级，替换旧状态时先撤销其完整数值。
 	Npc[m_nIndex].m_SkillList.ApplyPlayerPassiveSkills();
+	int nSummon = Npc[m_nIndex].GetSummon();
+	if (nSummon)
+		Npc[nSummon].RefreshSummonAttributes();
 #endif
 }
 
-void KPlayer::ReCalcEquip()
+void KPlayer::ReCalcEquip(int nTarget)
 {
-	_ASSERT(m_nIndex > 0 && m_nIndex < MAX_NPC);
+	if (nTarget == 0)
+		nTarget = m_nIndex;
+	if (nTarget <= 0 || nTarget >= MAX_NPC)
+		return;
 	
 	for (int i = 0; i < itempart_num; i++)
 	{
@@ -2532,13 +2481,17 @@ void KPlayer::ReCalcEquip()
 		if (i == itempart_horse && !Npc[m_nIndex].m_bRideHorse)
 			continue;
 		int nActive = m_ItemList.GetEquipEnhance(i);
-		Item[nIdx].ApplyMagicAttribToNPC(&Npc[m_nIndex], nActive);
+		Item[nIdx].ApplyMagicAttribToNPC(&Npc[nTarget], nActive);
 	}
-	ReCalcEquipmentSet();
+	ReCalcEquipmentSet(nTarget);
 }
 
-void KPlayer::ReCalcEquipmentSet()
+void KPlayer::ReCalcEquipmentSet(int nTarget)
 {
+	if (nTarget == 0)
+		nTarget = m_nIndex;
+	if (nTarget <= 0 || nTarget >= MAX_NPC)
+		return;
 	int SetIds[itempart_num] = {};
 	int Versions[itempart_num] = {};
 	for (int i = 0; i < itempart_num; i++)
@@ -2583,7 +2536,7 @@ void KPlayer::ReCalcEquipmentSet()
 			pAddon = pOriginal;
 		int nAttribCount = nCount >= 5 ? 10 : 5;
 		for (int n = 0; n < nAttribCount; n++)
-			g_NpcAttribModify.ModifyEquipmentAttrib(&Npc[m_nIndex], &pAddon->Attrib[n]);
+			g_NpcAttribModify.ModifyEquipmentAttrib(&Npc[nTarget], &pAddon->Attrib[n]);
 		break;
 	}
 }
@@ -7564,5 +7517,129 @@ BOOL KPlayer::UseScriptItem(int nItem)
 		ClearUseItemContext();
 	TraceItemUse(*this, bResult ? "script_completed" : "script_failed", 0);
 	return bResult;
+}
+#endif
+
+#ifdef _SERVER
+BOOL KPlayer::IsSelectedTargetVisible() const
+{
+	if (!m_bFinishLoading || m_nIndex <= 0 || m_nIndex >= MAX_NPC ||
+		m_nSelectedTargetIndex <= 0 || m_nSelectedTargetIndex >= MAX_NPC)
+		return FALSE;
+	const KNpc& Owner = Npc[m_nIndex];
+	const KNpc& Target = Npc[m_nSelectedTargetIndex];
+	if (!m_dwSelectedTargetId || Target.m_dwID != m_dwSelectedTargetId ||
+		Owner.m_SubWorldIndex < 0 || Owner.m_SubWorldIndex >= MAX_SUBWORLD ||
+		Owner.m_SubWorldIndex != m_nSelectedTargetWorld ||
+		Target.m_SubWorldIndex != Owner.m_SubWorldIndex ||
+		Owner.m_RegionIndex < 0 || Target.m_RegionIndex < 0)
+		return FALSE;
+	if (Owner.m_RegionIndex == Target.m_RegionIndex)
+		return TRUE;
+	for (int i = 0; i < 8; i++)
+		if (SubWorld[Owner.m_SubWorldIndex].m_Region[Owner.m_RegionIndex].m_nConnectRegion[i] == Target.m_RegionIndex)
+			return TRUE;
+	return FALSE;
+}
+
+void KPlayer::SendTargetState(BYTE nSubType, const TargetStateSnapshot& State)
+{
+	GAME_TARGET_STATE_SYNC Sync;
+	Sync.ProtocolType = 0xF8;
+	Sync.Length = sizeof(Sync) - 1;
+	Sync.SubType = nSubType;
+	Sync.SkillId = State.SkillId;
+	Sync.Level = State.Level;
+	Sync.Time = State.Time;
+	g_pServer->PackDataToClient(m_nNetConnectIdx, &Sync, sizeof(Sync));
+}
+
+void KPlayer::ClearSelectedTarget()
+{
+	// F8/47 clears the core list; F8/46 also removes any still-visible UI icon.
+	if (g_pServer && m_nNetConnectIdx >= 0)
+	{
+		for (size_t i = 0; i < m_SelectedTargetStates.size(); i++)
+			SendTargetState(0x46, m_SelectedTargetStates[i]);
+		BYTE Clear[] = {0xF8, 3, 0, 0x47};
+		g_pServer->PackDataToClient(m_nNetConnectIdx, Clear, sizeof(Clear));
+	}
+	m_SelectedTargetStates.clear();
+	m_dwSelectedTargetId = 0;
+	m_nSelectedTargetIndex = 0;
+	m_nSelectedTargetWorld = -1;
+}
+
+void KPlayer::SelectTarget(DWORD dwTargetId)
+{
+	ClearSelectedTarget();
+	if (!dwTargetId || !m_bFinishLoading || m_nIndex <= 0 || m_nIndex >= MAX_NPC)
+		return;
+	m_dwSelectedTargetId = dwTargetId;
+	m_nSelectedTargetIndex = NpcSet.SearchID(dwTargetId);
+	m_nSelectedTargetWorld = Npc[m_nIndex].m_SubWorldIndex;
+	if (!IsSelectedTargetVisible())
+	{
+		m_dwSelectedTargetId = 0;
+		m_nSelectedTargetIndex = 0;
+		m_nSelectedTargetWorld = -1;
+		return;
+	}
+	SyncSelectedTargetStates();
+}
+
+void KPlayer::SyncSelectedTargetStates()
+{
+	if (!m_dwSelectedTargetId || !g_pServer || m_nNetConnectIdx < 0)
+		return;
+	if (!IsSelectedTargetVisible())
+	{
+		ClearSelectedTarget();
+		return;
+	}
+	std::vector<TargetStateSnapshot> Current;
+	KNpc& Target = Npc[m_nSelectedTargetIndex];
+	if (Target.m_Doing != do_death && Target.m_Doing != do_revive)
+	{
+		for (KStateNode* pNode = (KStateNode*)Target.m_StateSkillList.GetHead(); pNode;
+			pNode = (KStateNode*)pNode->GetNext())
+		{
+			// Passive equipment modifiers and item-buff IDs use other protocols.
+			// The client applies its existing skill_buff_mark.ini display rules.
+			if (pNode->m_LeftTime <= 0 || pNode->m_SkillID <= 0 || pNode->m_SkillID >= MAX_SKILL ||
+				pNode->m_Level <= 0 || pNode->m_Level >= MAX_SKILLLEVEL)
+				continue;
+			TargetStateSnapshot State;
+			State.SkillId = pNode->m_SkillID;
+			State.Level = pNode->m_Level;
+			State.Time = pNode->m_LeftTime;
+			State.Revision = pNode->m_dwTargetSyncRevision;
+			Current.push_back(State);
+		}
+	}
+	for (size_t i = 0; i < m_SelectedTargetStates.size(); i++)
+	{
+		const TargetStateSnapshot& Old = m_SelectedTargetStates[i];
+		size_t j = 0;
+		for (; j < Current.size(); j++)
+			if (Current[j].SkillId == Old.SkillId && Current[j].Level == Old.Level && Current[j].Revision == Old.Revision)
+				break;
+		if (j == Current.size())
+			SendTargetState(0x46, Old);
+	}
+	for (size_t i = 0; i < Current.size(); i++)
+	{
+		size_t j = 0;
+		for (; j < m_SelectedTargetStates.size(); j++)
+			if (m_SelectedTargetStates[j].SkillId == Current[i].SkillId &&
+				m_SelectedTargetStates[j].Level == Current[i].Level &&
+				m_SelectedTargetStates[j].Revision == Current[i].Revision)
+				break;
+		if (j == m_SelectedTargetStates.size())
+			SendTargetState(0x45, Current[i]);
+		else
+			Current[i].Time = m_SelectedTargetStates[j].Time;
+	}
+	m_SelectedTargetStates.swap(Current);
 }
 #endif

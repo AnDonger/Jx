@@ -80,6 +80,7 @@ public:
 	BOOL GetReforgeRule(int* pnBaseRate, int* pnLuckMin, int* pnLuckMax);
 	const KBASICPROP_EQUIPMENT* GetEquipmentTemplate(int nDetail, int nParticular, int nLevel, int nVersion);
 	int GetGreenMagicAttribCount(int nGreenId, int nVersion);
+	int GetUpgradeAttribValue(const KItem& Data, int nAttrib);
 	BOOL UsesClassMagicWeights(int nVersion = -1);
 	const KGREEN_ADDON* GetGreenAddon(int nGreenId, int nVersion);
 	BOOL PrepareReforge(const KItem& Source, int nParticular, int nLevel, BOOL bImprove, BOOL bFull, KItem* pResult);

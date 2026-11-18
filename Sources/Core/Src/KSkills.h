@@ -55,6 +55,8 @@ public:
 #endif
 	unsigned short		m_usReqLevel;//		技能需要的最小等级
 private:
+	int m_nSummonTemplate;
+	int m_nSummonDamageScale;
 	int					m_nCharClass;			//	属哪个系的
 	eSKillStyle			m_eSkillStyle;			//  当前的技能类型
 	int					m_nSkillTime;			//	该技能的作用时间
@@ -80,6 +82,7 @@ private:
 	DWORD				m_nId;					//	技能Id
 	BOOL				m_bBaseSkill;			//	是否为最基本技能
 	BOOL				m_bByMissle;			//	当由父技能产生时，是否是根据玩家为基点还是以当前的子弹为基点
+	BOOL				m_bAddBaseDamage;		// AddBaseDamage from the current skill table
 	BOOL				m_bIsPhysical;			//	是否为物理技能
 	int					m_nCost;				//	技能使用时所需要花费的内力、体力、精力、金钱的类型
 	NPCATTRIB			m_nSkillCostType;		//	发该技能所需的内力、体力等的消耗
@@ -129,6 +132,9 @@ private:
 
 public:
 	KSkill();
+	BOOL LoadSummonSkill(KTabFile* pTable, int nRow, int nLevel);
+	int GetSummonTemplate() const { return m_nSummonTemplate; }
+	int GetSummonDamageScale() const { return m_nSummonDamageScale; }
 	virtual ~KSkill();
 	//载入相对于g_OrdinSkillsSetting的列号
 	//BOOL				
@@ -158,6 +164,8 @@ public:
 	BOOL				ApplyItemState(int nLauncher, int nSeconds) const;
 	BOOL				ApplyStateSkill(int nLauncher) const;
 	BOOL				ApplyAuraSkill(int nLauncher) const;
+	BOOL				IsFriendlyAreaSkill() const;
+	BOOL				IsActiveAuraSource(int nLauncher) const;
 	BOOL				MatchesWeapon(int nLauncher) const;
 	BOOL				IsWeaponMastery() const;
 	BOOL				IsElementalMastery() const;
@@ -176,7 +184,15 @@ public:
 	NPCATTRIB			GetSkillCostType()const{return m_nSkillCostType;};
 	BOOL				GetItemLimit(int)const;
 	CLIENTACTION		GetActionType()const{return m_nCharActionId;};
-	int					GetDelayPerCast()const{return m_nMinTimePerCast;	};
+	int					GetDelayPerCast(int nLauncher = 0) const
+	{
+#ifdef _SERVER
+		if (m_eSkillStyle == SKILL_SS_Summon && nLauncher > 0 && nLauncher < MAX_NPC)
+			return (int)((__int64)m_nMinTimePerCast *
+				(100 - min(100, max(0, Npc[nLauncher].m_CurrentAdditionalAttrib[329]))) / 100);
+#endif
+		return m_nMinTimePerCast;
+	}
 	unsigned int		GetMissleGenerateTime(int nNo) const ;		
 	int					GetChildSkillNum() const {return m_nChildSkillNum;};
 	int					GetChildSkillId() const {return m_nChildSkillId;};

@@ -209,6 +209,7 @@ public:
 	int		GetMagicAttribCount() const;
 	int		GetRequireLevel() const;
 	BYTE	GetGenerationFlags() const { return m_btGenerationFlags; };
+	KItemNormalAttrib GetAppliedAttrib(const KItemNormalAttrib& Attrib, BOOL bMagic = FALSE) const;
 	DWORD	GetUpgradeData() const { return m_dwUpgradeData; };
 	const KItemSocket* GetSocket(int nSlot) const
 	{

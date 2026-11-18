@@ -164,7 +164,7 @@ struct GAME_NPC_SYNC
 	DWORD ID;
 	DWORD NpcSettingIdx;
 	WORD unknown_1;
-	DWORD unknown_2;
+	DWORD OwnerId; // Kind 6: summoning player entity ID; otherwise zero.
 	DWORD unknown_3;
 	WORD unknown_4;
 	WORD unknown_5;
@@ -186,6 +186,24 @@ struct GAME_NPC_SYNC
 	BYTE unknown_9;
 	char m_szName[35]; // NUL name, zero state flag, empty NUL title.
 };
+
+
+struct GAME_SUMMON_SYNC
+{
+	BYTE ProtocolType;
+	WORD SkillId;
+	WORD LifeMax;
+	WORD Life;
+	WORD DamageMax;
+	WORD DamageMin;
+	WORD Dodge;
+	WORD AttackRating;
+	WORD Defense;
+	BYTE unknown_1;
+	short AttackSpeed;
+	short CastSpeed;
+};
+static_assert(sizeof(GAME_SUMMON_SYNC) == 22, "C4 summon attributes");
 
 struct GAME_PLAYER_SYNC
 {
@@ -909,6 +927,31 @@ struct GAME_STATE_EFFECT_SYNC
 	LONG Time;
 	GAME_STATE_ATTRIBUTE Attributes[MAX_SKILL_STATE];
 };
+
+// Current target state list: F8/45 add, F8/46 remove; time is simulation frames.
+// These packets have no entity ID and are sent only to the selecting observer.
+struct GAME_TARGET_STATE_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	LONG SkillId;
+	LONG Level;
+	LONG Time;
+};
+
+struct GAME_TARGET_SELECTION_COMMAND
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	BYTE unknown_1;
+	DWORD TargetId;
+	BYTE unknown_2;
+};
+
+static_assert(sizeof(GAME_TARGET_STATE_SYNC) == 16, "F8/45,46 target state");
+static_assert(sizeof(GAME_TARGET_SELECTION_COMMAND) == 10, "B8/1C target selection");
 
 struct GAME_OBJECT_ADD_SYNC
 {

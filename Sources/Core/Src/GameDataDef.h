@@ -801,6 +801,7 @@ enum NPCKIND
 	kind_escape	= 0x0010,
 	kind_bird	= 0x0020,
 	*/
+				kind_summon = 6,
     kind_num
 };
 

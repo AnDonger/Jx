@@ -441,6 +441,11 @@ BOOL	InitMissleSetting()
 		int nMissleId = 0;
 		g_MisslesSetting.GetInteger(i + 2, "MissleId", -1, &nMissleId);
 		
+		if (nMissleId >= MAX_MISSLESTYLE)
+		{
+			g_DebugLog("[Missle] Template ID out of range: id=%d, capacity=%d", nMissleId, MAX_MISSLESTYLE);
+			return FALSE;
+		}
 		if (nMissleId > 0)
 		{
 			g_MisslesLib[nMissleId].GetInfoFromTabFile(i + 2);

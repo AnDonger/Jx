@@ -422,39 +422,8 @@ void KNpcSet::Remove(int nIdx)
 	if (nIdx <= 0 || nIdx >= MAX_NPC)
 		return;
 #ifdef _SERVER
-	NPC_REMOVE_SYNC	NetCommand;
-
-	NetCommand.ProtocolType = (BYTE)s2c_npcremove;
-	NetCommand.ID = Npc[nIdx].m_dwID;
-
-	int nSubWorld = Npc[nIdx].m_SubWorldIndex;
-	int nRegion = Npc[nIdx].m_RegionIndex;
-	
-	if (nSubWorld >= 0 && nSubWorld <= MAX_SUBWORLD && nRegion >= 0 && nRegion <= SubWorld[nSubWorld].m_nTotalRegion)
-	{	
-		POINT	POff[8] = 
-		{
-			{0, 32},
-			{-16, 32},
-			{-16, 0},
-			{-16, -32},
-			{0, -32},
-			{16, -32},
-			{16, 0},
-			{16, 32},
-		};
-		int nMaxCount = MAX_BROADCAST_COUNT;
-		SubWorld[nSubWorld].m_Region[nRegion].BroadCast(&NetCommand, sizeof(NetCommand), nMaxCount, Npc[nIdx].m_MapX, Npc[nIdx].m_MapY);
-		
-		int nConRegion;
-		for (int i = 0; i < 8; i++)
-		{
-			nConRegion = SubWorld[nSubWorld].m_Region[nRegion].m_nConnectRegion[i];
-			if (nConRegion == -1)
-				continue;
-			SubWorld[nSubWorld].m_Region[nConRegion].BroadCast(&NetCommand, sizeof(NetCommand), nMaxCount, Npc[nIdx].m_MapX - POff[i].x, Npc[nIdx].m_MapY - POff[i].y);
-		}	
-	}
+	RemoveOwnedSummon(nIdx);
+	BroadcastRemove(nIdx);
 #endif
 	Npc[nIdx].ClearNpcState();
 	Npc[nIdx].m_SkillList.Clear();
@@ -1100,8 +1069,57 @@ int KNpcSet::GetRequestIndex(DWORD dwID)
 }
 #endif
 
+
+// Beneficial player skills use owner/team/camp eligibility independently of attack PK rules.
+NPC_RELATION KNpcSet::GetSupportRelation(int nIdx1, int nIdx2)
+{
+#ifdef _SERVER
+	if (nIdx1 <= 0 || nIdx1 >= MAX_NPC || nIdx2 <= 0 || nIdx2 >= MAX_NPC)
+		return relation_none;
+	int nFirst = Npc[nIdx1].GetCombatOwner();
+	int nSecond = Npc[nIdx2].GetCombatOwner();
+	if (!nFirst || !nSecond)
+		return GetRelation(nIdx1, nIdx2);
+	if (nFirst == nSecond)
+		return nIdx1 == nIdx2 ? relation_self : relation_ally;
+	int nPlayer1 = Npc[nFirst].m_nPlayerIdx;
+	int nPlayer2 = Npc[nSecond].m_nPlayerIdx;
+	if (nPlayer1 <= 0 || nPlayer1 >= MAX_PLAYER || nPlayer2 <= 0 || nPlayer2 >= MAX_PLAYER ||
+		Player[nPlayer1].m_nIndex != nFirst || Player[nPlayer2].m_nIndex != nSecond)
+		return relation_none;
+	KPlayerTeam& FirstTeam = Player[nPlayer1].m_cTeam;
+	KPlayerTeam& SecondTeam = Player[nPlayer2].m_cTeam;
+	if (FirstTeam.m_nFlag && SecondTeam.m_nFlag && FirstTeam.m_nID >= 0 &&
+		FirstTeam.m_nID < MAX_TEAM && FirstTeam.m_nID == SecondTeam.m_nID &&
+		g_Team[FirstTeam.m_nID].CheckIn(nPlayer1) && g_Team[FirstTeam.m_nID].CheckIn(nPlayer2))
+		return relation_ally;
+	int nCamp1 = Npc[nFirst].m_CurrentCamp;
+	int nCamp2 = Npc[nSecond].m_CurrentCamp;
+	if (nCamp1 == camp_free || nCamp2 == camp_free)
+		return relation_none;
+	// Non-team players must share the actual camp, including PK-closed and nation-war camps.
+	return nCamp1 == nCamp2 ? relation_ally : relation_none;
+#else
+	return GetRelation(nIdx1, nIdx2);
+#endif
+}
+
 NPC_RELATION KNpcSet::GetRelation(int nId1, int nId2)
 {
+	if (nId1 <= 0 || nId1 >= MAX_NPC || nId2 <= 0 || nId2 >= MAX_NPC)
+		return relation_none;
+#ifdef _SERVER
+	if (Npc[nId1].m_Kind == kind_summon || Npc[nId2].m_Kind == kind_summon)
+	{
+		int nFirst = Npc[nId1].m_Kind == kind_summon ? Npc[nId1].GetCombatOwner() : nId1;
+		int nSecond = Npc[nId2].m_Kind == kind_summon ? Npc[nId2].GetCombatOwner() : nId2;
+		if (!nFirst || !nSecond)
+			return relation_none;
+		if (nFirst == nSecond)
+			return nId1 == nId2 ? relation_self : relation_ally;
+		return GetRelation(nFirst, nSecond);
+	}
+#endif
 	// 同一个人
 	if (nId1 == nId2)
 		return relation_self;
@@ -1289,3 +1307,205 @@ void	KInstantSpecial::PlaySound(int nNo)
 
 #endif
 //------------------------- class KInstantSpecial end --------------------------
+
+
+#ifdef _SERVER
+void KNpcSet::BroadcastRemove(int nIdx)
+{
+	NPC_REMOVE_SYNC	NetCommand;
+
+	NetCommand.ProtocolType = (BYTE)s2c_npcremove;
+	NetCommand.ID = Npc[nIdx].m_dwID;
+
+	int nSubWorld = Npc[nIdx].m_SubWorldIndex;
+	int nRegion = Npc[nIdx].m_RegionIndex;
+
+	if (nSubWorld >= 0 && nSubWorld <= MAX_SUBWORLD && nRegion >= 0 && nRegion <= SubWorld[nSubWorld].m_nTotalRegion)
+	{
+		POINT	POff[8] =
+		{
+			{0, 32},
+			{-16, 32},
+			{-16, 0},
+			{-16, -32},
+			{0, -32},
+			{16, -32},
+			{16, 0},
+			{16, 32},
+		};
+		int nMaxCount = MAX_BROADCAST_COUNT;
+		SubWorld[nSubWorld].m_Region[nRegion].BroadCast(&NetCommand, sizeof(NetCommand), nMaxCount, Npc[nIdx].m_MapX, Npc[nIdx].m_MapY);
+
+		int nConRegion;
+		for (int i = 0; i < 8; i++)
+		{
+			nConRegion = SubWorld[nSubWorld].m_Region[nRegion].m_nConnectRegion[i];
+			if (nConRegion == -1)
+				continue;
+			SubWorld[nSubWorld].m_Region[nConRegion].BroadCast(&NetCommand, sizeof(NetCommand), nMaxCount, Npc[nIdx].m_MapX - POff[i].x, Npc[nIdx].m_MapY - POff[i].y);
+		}
+	}
+}
+
+BOOL KNpcSet::CanSummon(int nOwner, const KSkill* pSkill, int nX, int nY)
+{
+	if (nOwner <= 0 || nOwner >= MAX_NPC || !pSkill ||
+		pSkill->GetSummonTemplate() < 0 || !FindFree())
+		return FALSE;
+	KNpc& Owner = Npc[nOwner];
+	if (!Owner.IsPlayer() || Owner.m_RegionIndex < 0 || Owner.m_bExchangeServer ||
+		Owner.m_CurrentLife <= 0 ||
+		Owner.m_Doing == do_death || Owner.m_Doing == do_revive)
+		return FALSE;
+	if (nX == -1)
+	{
+		if (nY <= 0 || nY >= MAX_NPC || Npc[nY].m_RegionIndex < 0 ||
+			Npc[nY].m_SubWorldIndex != Owner.m_SubWorldIndex)
+			return FALSE;
+		Npc[nY].GetMpsPos(&nX, &nY);
+	}
+	int nOwnerX, nOwnerY;
+	Owner.GetMpsPos(&nOwnerX, &nOwnerY);
+	return nX >= 0 && nY >= 0 &&
+		g_GetDistance(nOwnerX, nOwnerY, nX, nY) <= pSkill->GetAttackRadius();
+}
+
+int KNpcSet::CreateSummon(int nOwner, const KSkill* pSkill, int nX, int nY)
+{
+	if (!CanSummon(nOwner, pSkill, nX, nY))
+		return 0;
+	KNpc& Owner = Npc[nOwner];
+	// Both captures create the creature in the owner's current cell, not at the cursor.
+	int nWorld = Owner.m_SubWorldIndex;
+	int nIndex = Add(MAKELONG(pSkill->m_ulLevel, pSkill->GetSummonTemplate()),
+		nWorld, Owner.m_RegionIndex, Owner.m_MapX, Owner.m_MapY, 0, 0);
+	if (!nIndex)
+		return 0;
+	KNpc& Summon = Npc[nIndex];
+	// Create first: a failed allocation must preserve the previous summon.
+	RemoveOwnedSummon(nOwner);
+	Summon.m_Kind = kind_summon;
+	Summon.m_nSummonOwner = nOwner;
+	Summon.m_dwSummonOwner = Owner.m_dwID;
+	Summon.m_nSummonSkill = ((KSkill*)pSkill)->GetSkillId();
+	Summon.m_Camp = Owner.m_Camp;
+	Summon.m_CurrentCamp = Owner.m_CurrentCamp;
+	Summon.m_Experience = Summon.m_CurrentExperience = 0;
+	Summon.m_pDropRate = Summon.m_pDropRate1 = NULL;
+	Summon.ActionScript[0] = 0;
+	Summon.m_AIMAXTime = min(4, max(1, Summon.m_AIMAXTime));
+	Summon.m_NextAITime = SubWorld[nWorld].m_dwCurrentTime;
+	lstrcpyn(Summon.Name, Owner.Name, sizeof(Summon.Name));
+	Owner.m_nSummonIndex = nIndex;
+	Owner.m_dwSummonId = Summon.m_dwID;
+	Summon.SetActiveSkill(1);
+	Summon.RefreshSummonAttributes(TRUE);
+	// Scene broadcasting discovers it naturally; send immediately to its owner.
+	Summon.SendSyncData(Player[Owner.m_nPlayerIdx].m_nNetConnectIdx);
+	g_DebugLog("[Summon] owner=%lu skill=%d level=%d entity=%lu template=%d life=%d ar=%d defense=%d dodge=%d",
+		Owner.m_dwID, Summon.m_nSummonSkill, Summon.m_Level, Summon.m_dwID,
+		Summon.m_NpcSettingIdx, Summon.m_CurrentLifeMax, Summon.m_CurrentAttackRating,
+		Summon.m_CurrentDefend, Summon.m_CurrentExDefend);
+	return nIndex;
+}
+
+void KNpcSet::RemoveSummon(int nIndex)
+{
+	if (nIndex <= 0 || nIndex >= MAX_NPC || Npc[nIndex].m_Kind != kind_summon)
+		return;
+	KNpc& Summon = Npc[nIndex];
+	int nOwner = Summon.GetCombatOwner();
+	if (nOwner && Npc[nOwner].GetSummon() == nIndex)
+	{
+		Summon.SyncSummon(TRUE);
+		Npc[nOwner].m_nSummonIndex = 0;
+		Npc[nOwner].m_dwSummonId = 0;
+	}
+	if (Summon.m_RegionIndex >= 0)
+	{
+		SubWorld[Summon.m_SubWorldIndex].m_Region[Summon.m_RegionIndex].RemoveNpc(nIndex);
+		SubWorld[Summon.m_SubWorldIndex].m_Region[Summon.m_RegionIndex].DecRef(Summon.m_MapX, Summon.m_MapY, obj_npc);
+	}
+	Remove(nIndex);
+}
+
+void KNpcSet::NotifySummonAttacked(int nVictim, int nAttacker)
+{
+	if (nVictim <= 0 || nVictim >= MAX_NPC || nAttacker <= 0 || nAttacker >= MAX_NPC)
+		return;
+	KNpc& Victim = Npc[nVictim];
+	KNpc& Attacker = Npc[nAttacker];
+	int nOwner = Victim.GetCombatOwner();
+	if (!nOwner || Victim.m_CurrentLife <= 0 || Victim.m_Doing == do_death ||
+		Victim.m_Doing == do_revive || Victim.m_RegionIndex < 0 ||
+		Attacker.m_CurrentLife <= 0 || Attacker.m_Doing == do_death ||
+		Attacker.m_Doing == do_revive || Attacker.m_RegionIndex < 0 ||
+		Attacker.m_SubWorldIndex != Victim.m_SubWorldIndex ||
+		GetRelation(nVictim, nAttacker) != relation_enemy)
+		return;
+	int nSummon = Npc[nOwner].GetSummon();
+	if (!nSummon)
+		return;
+	KNpc& Summon = Npc[nSummon];
+	if (Summon.m_CurrentLife <= 0 || Summon.m_Doing == do_death ||
+		Summon.m_Doing == do_revive || Summon.m_RegionIndex < 0 ||
+		Summon.m_SubWorldIndex != Victim.m_SubWorldIndex ||
+		GetDistance(nOwner, nAttacker) > Summon.m_CurrentActiveRadius)
+		return;
+	Summon.m_nPeopleIdx = nAttacker;
+	Summon.m_dwSummonTarget = Attacker.m_dwID;
+	Summon.m_NextAITime = SubWorld[Summon.m_SubWorldIndex].m_dwCurrentTime;
+}
+
+void KNpcSet::MoveOwnedSummon(int nOwner)
+{
+	if (nOwner <= 0 || nOwner >= MAX_NPC)
+		return;
+	KNpc& Owner = Npc[nOwner];
+	int nSummon = Owner.GetSummon();
+	if (!nSummon || Owner.m_SubWorldIndex < 0 || Owner.m_RegionIndex < 0)
+		return;
+	KNpc& Summon = Npc[nSummon];
+	if (Summon.m_CurrentLife <= 0 || Summon.m_Doing == do_death || Summon.m_Doing == do_revive)
+	{
+		RemoveSummon(nSummon);
+		return;
+	}
+	// Keep the same creature and life; moving maps is not another summon cast.
+	BroadcastRemove(nSummon);
+	if (Summon.m_SubWorldIndex >= 0 && Summon.m_RegionIndex >= 0)
+	{
+		KRegion& OldRegion = SubWorld[Summon.m_SubWorldIndex].m_Region[Summon.m_RegionIndex];
+		OldRegion.RemoveNpc(nSummon);
+		OldRegion.DecRef(Summon.m_MapX, Summon.m_MapY, obj_npc);
+	}
+	Summon.m_SubWorldIndex = Owner.m_SubWorldIndex;
+	Summon.m_RegionIndex = Owner.m_RegionIndex;
+	Summon.m_MapX = Owner.m_MapX;
+	Summon.m_MapY = Owner.m_MapY;
+	Summon.m_MapZ = 0;
+	Summon.m_OffX = Owner.m_OffX;
+	Summon.m_OffY = Owner.m_OffY;
+	Owner.GetMpsPos(&Summon.m_OriginX, &Summon.m_OriginY);
+	Summon.m_DesX = Summon.m_OriginX;
+	Summon.m_DesY = Summon.m_OriginY;
+	Summon.m_nPeopleIdx = 0;
+	Summon.m_dwSummonTarget = 0;
+	Summon.m_nLastDamageIdx = Summon.m_nLastPoisonDamageIdx = 0;
+	Summon.m_SkillParam1 = Summon.m_SkillParam2 = 0;
+	Summon.SendCommand(do_none);
+	Summon.DoStand();
+	Summon.m_NextAITime = SubWorld[Summon.m_SubWorldIndex].m_dwCurrentTime;
+	KRegion& NewRegion = SubWorld[Summon.m_SubWorldIndex].m_Region[Summon.m_RegionIndex];
+	NewRegion.AddNpc(nSummon);
+	NewRegion.AddRef(Summon.m_MapX, Summon.m_MapY, obj_npc);
+	Summon.SyncSummon();
+	Summon.SendSyncData(Player[Owner.m_nPlayerIdx].m_nNetConnectIdx);
+}
+
+void KNpcSet::RemoveOwnedSummon(int nOwner)
+{
+	if (nOwner > 0 && nOwner < MAX_NPC)
+		RemoveSummon(Npc[nOwner].GetSummon());
+}
+#endif

@@ -17,6 +17,9 @@
 #include "KSkills.h"
 
 #include "KPlayerDef.h"
+#ifdef _SERVER
+#include <vector>
+#endif
 
 #define		MAX_ANSWERNUM					50
 #define		PLAYER_LIFE_REPLENISH			0
@@ -333,8 +336,8 @@ public:
 	void			LevelUp();								// 升一级
 	void			AddLeadExp(int nExp);					// 增加统率力经验
 	void			UpdataCurData();
-	void ReCalcEquipmentSet();
-	void			ReCalcEquip();							// 重新计算身上的装备
+	void ReCalcEquipmentSet(int nTarget = 0);
+	void			ReCalcEquip(int nTarget = 0);							// 重新计算身上的装备
 	void			ReCalcState();							// 重新计算身上的状态
 
 	void			ChangePlayerCamp(int nCamp);			// 改变玩家阵营
@@ -477,6 +480,22 @@ public:
 	int m_nSyncedCastSpeed;
 	int m_nSyncedLifeMax;
 	int m_nSyncedManaMax;
+	struct TargetStateSnapshot
+	{
+		int SkillId;
+		int Level;
+		int Time;
+		DWORD Revision;
+	};
+	DWORD m_dwSelectedTargetId;
+	int m_nSelectedTargetIndex;
+	int m_nSelectedTargetWorld;
+	std::vector<TargetStateSnapshot> m_SelectedTargetStates;
+	BOOL IsSelectedTargetVisible() const;
+	void SelectTarget(DWORD dwTargetId);
+	void SyncSelectedTargetStates();
+	void SendTargetState(BYTE nSubType, const TargetStateSnapshot& State);
+	void ClearSelectedTarget();
 	void			SendCurNormalSyncData();				// 发送平时给自己的同步数据
 	void			SetChatForbiddenFlag(int nFlag)
 	{

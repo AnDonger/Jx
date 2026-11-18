@@ -46,6 +46,7 @@ extern  const KScript * g_GetScript(DWORD dwScriptId);
 *****************************************************************************/
 KSkill::KSkill()
 {
+	m_bAddBaseDamage = FALSE;
 	m_nFlySkillId =  m_nCollideSkillId = m_nVanishedSkillId = 0;
 	
     // add by FreewayChen in 2003.6.6
@@ -54,6 +55,8 @@ KSkill::KSkill()
 	memset(m_StateAttribs, 0, sizeof(m_StateAttribs));
 	memset(m_ImmediateAttribs, 0, sizeof(m_ImmediateAttribs));
 	memset(m_MissleAttribs, 0, sizeof(m_MissleAttribs));
+	m_nSummonTemplate = -1;
+	m_nSummonDamageScale = 0;
 	m_nSkillCostType = attrib_mana;
     m_nWaitTime = 0;
 	m_nEquiptLimited = 0;
@@ -131,9 +134,66 @@ inline int	KSkill::Param2PCoordinate(int nLauncher, int nParam1, int nParam2 , i
 	return nTargetId;
 }
 
+
+BOOL KSkill::LoadSummonSkill(KTabFile* pTable, int nRow, int nLevel)
+{
+	if (!pTable || nLevel <= 0 || nLevel > MAX_SKILLLEVEL)
+		return FALSE;
+	int nId, nCostType, nCost, nCostParam, nScale, nScaleParam;
+	pTable->GetInteger(nRow, "id", 0, &nId);
+	pTable->GetInteger(nRow, "summonnpcid", -1, &m_nSummonTemplate);
+	pTable->GetInteger(nRow, "costtype", 0, &nCostType);
+	pTable->GetInteger(nRow, "costvalue", 0, &nCost);
+	pTable->GetInteger(nRow, "costparam", 0, &nCostParam);
+	pTable->GetInteger(nRow, "casttime", 0, &m_nMinTimePerCast);
+	pTable->GetInteger(nRow, "adddamagescale", 1, &nScale);
+	pTable->GetInteger(nRow, "scaleparam", 0, &nScaleParam);
+	pTable->GetString(nRow, "name", "", m_szName, sizeof(m_szName));
+	if (nId <= 0 || nId > MAX_SKILL || m_nSummonTemplate < 0 ||
+		nCostType < attrib_mana || nCostType > attrib_life || nCost < 0 || nCostParam < 0)
+		return FALSE;
+	m_nId = nId;
+	m_ulLevel = nLevel;
+	m_eSkillStyle = SKILL_SS_Summon;
+	m_nSkillCostType = (NPCATTRIB)nCostType;
+	// Current-client KSummonSkill uses 10-bit fixed point parameters.
+	m_nCost = nCost + ((nLevel * nCostParam) >> 10);
+	m_nSummonDamageScale = nScale + ((nLevel * nScaleParam) >> 10);
+	m_nCharClass = 3;
+	m_nCharActionId = cdo_magic;
+	m_nAttackRadius = 400;
+	m_nHorseLimited = 0;
+	m_nEquiptLimited = -2;
+	m_bClientSend = TRUE;
+	m_bHaveLoad = TRUE;
+	m_bAddBaseDamage = FALSE;
+	m_bIsPhysical = m_bIsMelee = m_bIsAura = m_bIsPassivity = FALSE;
+	m_bTargetOnly = m_bTargetEnemy = m_bTargetAlly = m_bTargetSelf = m_bTargetObj = FALSE;
+	m_bUseAttackRate = FALSE;
+	m_bStartEvent = m_bFlyingEvent = m_bCollideEvent = m_bVanishedEvent = FALSE;
+	m_bBaseSkill = TRUE;
+	m_usReqLevel = 0;
+	m_nSkillTime = m_nInteruptTypeWhenMove = 0;
+	m_bHeelAtParent = m_bByMissle = m_bMustBeHit = m_bNeedShadow = FALSE;
+	m_eRelation = 0;
+	m_nChildSkillNum = m_nValue1 = m_nValue2 = m_nEventSkillLevel = 0;
+	m_nFollowKindIndex = m_dwFollowKindID = 0;
+	m_nChildSkillId = m_nChildSkillLevel = m_nFlyEventTime = m_nStartSkillId = 0;
+	m_nMisslesGenerateData = m_nMaxShadowNum = m_nStateSpecialId = m_nMaxTimes = 0;
+	m_eMisslesForm = (eMisslesForm)0;
+	m_eMissleFollowKind = (eMissleFollowKind)0;
+	m_eMisslesGenerateStyle = (eMisslesGenerateStyle)0;
+	return TRUE;
+}
+
 BOOL KSkill::CanCastSkill(int nLauncher, int &nParam1, int &nParam2)  const 
 {
 	//对自已的主动辅助技能
+
+#ifdef _SERVER
+	if (m_eSkillStyle == SKILL_SS_Summon)
+		return NpcSet.CanSummon(nLauncher, this, nParam1, nParam2);
+#endif
 	if (Npc[nLauncher].IsPlayer() && (m_bIsAura || m_eSkillStyle == SKILL_SS_PassivityNpcState))
 		return FALSE;
 	if (m_bTargetSelf && nParam1 != -1) 
@@ -149,7 +209,8 @@ BOOL KSkill::CanCastSkill(int nLauncher, int &nParam1, int &nParam2)  const
 		if (nParam1 == -1)
 		{
 			if ( nParam2 <= 0 || nParam2 >= MAX_NPC) return FALSE;
-			NPC_RELATION  Relation = NpcSet.GetRelation(nLauncher, nParam2);
+			NPC_RELATION Relation = (!m_bTargetEnemy && (m_bTargetSelf || m_bTargetAlly)) ?
+				NpcSet.GetSupportRelation(nLauncher, nParam2) : NpcSet.GetRelation(nLauncher, nParam2);
 			
 			if (m_bTargetEnemy)
 			{
@@ -350,6 +411,10 @@ BOOL KSkill::CastWithSkillExp(int nLauncher, int nParam1, int nParam2, int nWait
 	
 	//------------------------------------------------------------------------------
 	
+#ifdef _SERVER
+	if (eLauncherType == SKILL_SLT_Npc && IsFriendlyAreaSkill())
+		return ApplyAuraSkill(nLauncher);
+#endif
 	switch(m_eSkillStyle)
 	{
 		
@@ -378,7 +443,16 @@ BOOL KSkill::CastWithSkillExp(int nLauncher, int nParam1, int nParam2, int nWait
 		}
 		break;
 		
-	case	SKILL_SS_CreateNpc:			//产生新的Npc、怪物 
+
+	case SKILL_SS_Summon:
+		{
+#ifdef _SERVER
+			return eLauncherType == SKILL_SLT_Npc && NpcSet.CreateSummon(nLauncher, this, nParam1, nParam2) > 0;
+#else
+			return TRUE;
+#endif
+		}
+	case SKILL_SS_CreateNpc:			//产生新的Npc、怪物
 		{
 			
 		}
@@ -1700,9 +1774,6 @@ int		KSkill::CastSpread(TOrdinSkillParam * pSkillParam, int nDir, int nRefPX, in
 	// Sin A = nYFactor
 	// Cos A = nXFactor
 	
-#ifdef _SERVER
-	KMissleMagicAttribsData * pNewMagicAttribsData = CreateMissleMagicAttribsData(nLauncher);
-#endif
 	
 	int nDesSubX = 0;
 	int nDesSubY = 0;
@@ -1714,13 +1785,24 @@ int		KSkill::CastSpread(TOrdinSkillParam * pSkillParam, int nDir, int nRefPX, in
 		int nTargetId = pSkillParam->nTargetId;
 		int nDistance = 0;
 		int nDesX, nDesY;
-		if (Npc[nTargetId].m_Index > 0 && Npc[nTargetId].m_SubWorldIndex >= 0) 
-			SubWorld[Npc[nTargetId].m_SubWorldIndex].Map2Mps(Npc[nTargetId].m_RegionIndex, Npc[nTargetId].m_MapX, Npc[nTargetId].m_MapY, Npc[nTargetId].m_OffX, Npc[nTargetId].m_OffY, &nDesX, &nDesY);
+		if (nTargetId >= MAX_NPC || !Npc[nTargetId].m_Index ||
+			Npc[nTargetId].m_SubWorldIndex < 0 || Npc[nTargetId].m_RegionIndex < 0)
+			return 0;
+		Npc[nTargetId].GetMpsPos(&nDesX, &nDesY);
 		// Fixed By MrChuCong@gmail.com
 		nDistance = (int)sqrt(double(nDesX - nRefPX)*(nDesX - nRefPX) +	(nDesY - nRefPY)*(nDesY - nRefPY));
 		
-		nXFactor = ((nDesX - nRefPX)<<10) / nDistance;
-		nYFactor = ((nDesY - nRefPY)<<10) / nDistance;
+		if (nDistance > 0)
+		{
+			nXFactor = ((nDesX - nRefPX)<<10) / nDistance;
+			nYFactor = ((nDesY - nRefPY)<<10) / nDistance;
+		}
+		else
+		{
+			// Overlapping summons and enemies still have a valid cast direction.
+			nXFactor = g_DirCos(nDir, MaxMissleDir);
+			nYFactor = g_DirSin(nDir, MaxMissleDir);
+		}
 		
 		nDesSubX = nRefPX + ((nXFactor * nFirstStep)>>10);
 		nDesSubY = nRefPY + ((nYFactor * nFirstStep)>>10);
@@ -1728,6 +1810,10 @@ int		KSkill::CastSpread(TOrdinSkillParam * pSkillParam, int nDir, int nRefPX, in
 		if (nDesSubX < 0  || nDesSubY < 0 ) return 0;
 	}
 	
+#ifdef _SERVER
+	KMissleMagicAttribsData * pNewMagicAttribsData = CreateMissleMagicAttribsData(nLauncher);
+#endif
+
 	int nTargetId = pSkillParam->nTargetId;
 	
 	//分别生成多个子弹
@@ -1984,6 +2070,7 @@ BOOL	KSkill::GetInfoFromTabFile(KITabFile *pSkillsSettingFile, int nRow)
 	pSkillsSettingFile->GetInteger(nRow, "SkillStyle",		0, (int *)&m_eSkillStyle, TRUE);
 	pSkillsSettingFile->GetInteger(nRow, "CharAnimId",		0, (int *)&m_nCharActionId, TRUE);
 	pSkillsSettingFile->GetInteger(nRow, "IsPhysical",		0, &m_bIsPhysical, TRUE);
+	pSkillsSettingFile->GetInteger(nRow, "AddBaseDamage",	0, &m_bAddBaseDamage, TRUE);
 	pSkillsSettingFile->GetInteger(nRow, "IsAura",			0, &m_bIsAura, TRUE);
 	pSkillsSettingFile->GetInteger(nRow, "IsUseAR",			0, &m_bUseAttackRate, TRUE);
 	pSkillsSettingFile->GetInteger(nRow, "TargetOnly",		0, &m_bTargetOnly, TRUE);
@@ -2191,7 +2278,18 @@ KMissleMagicAttribsData* KSkill::CreateMissleMagicAttribsData(int nLauncher)  co
 	//根据玩家的基本属性，确定子弹的伤害
 	if (nLauncher)
 	{
-		Npc[nLauncher].AppendSkillEffect(m_bIsPhysical, m_bIsMelee, (KMagicAttrib *)m_DamageAttribs, pDamageAttribs);
+		// Hostile curses may provide only state attributes but still request a base hit.
+		// Keep configured damage formulas and the physical/magic classification unchanged.
+		KMagicAttrib BaseDamageAttribs[MAX_MISSLE_DAMAGEATTRIB];
+		KMagicAttrib* pSource = (KMagicAttrib*)m_DamageAttribs;
+		if (m_bAddBaseDamage && m_bTargetEnemy && m_nDamageAttribsNum == 0)
+		{
+			memcpy(BaseDamageAttribs, m_DamageAttribs, sizeof(BaseDamageAttribs));
+			BaseDamageAttribs[2].nAttribType = magic_physicsenhance_p;
+			pSource = BaseDamageAttribs;
+			pMissleMagicAttribsData->m_nDamageMagicAttribsNum = 1;
+		}
+		Npc[nLauncher].AppendSkillEffect(m_bIsPhysical, m_bIsMelee, pSource, pDamageAttribs);
 	}
 	else
 	{
@@ -2331,11 +2429,35 @@ BOOL KSkill::ApplyStateSkill(int nLauncher) const
 }
 
 // 光环关系与半径来自子技能原表，复用区域索引，避免遍历全服NPC。
+BOOL KSkill::IsFriendlyAreaSkill() const
+{
+	return !m_bIsAura && m_bTargetSelf && m_bTargetAlly && !m_bTargetEnemy && !m_bTargetOnly &&
+		m_nDamageAttribsNum == 0 && (m_nStateAttribsNum > 0 || m_nImmediateAttribsNum > 0);
+}
+
+BOOL KSkill::IsActiveAuraSource(int nLauncher) const
+{
+#ifdef _SERVER
+	if (nLauncher <= 0 || nLauncher >= MAX_NPC)
+		return FALSE;
+	KNpc& Source = Npc[nLauncher];
+	if (Source.m_CurrentLife <= 0 || Source.m_Doing == do_death || Source.m_Doing == do_revive ||
+		Source.m_RegionIndex < 0 || Source.m_bExchangeServer || !Source.m_ActiveAuraID)
+		return FALSE;
+	int nLevel = Source.m_SkillList.GetCurrentLevel(Source.m_ActiveAuraID);
+	KSkill* pAura = (KSkill*)g_SkillManager.GetSkill(Source.m_ActiveAuraID, nLevel);
+	return pAura && pAura->IsAura() && pAura->GetChildSkillId() == m_nId && nLevel == (int)m_ulLevel &&
+		(!Source.IsPlayer() || Source.m_SkillList.IsPlayerSkillLearned(Source.m_ActiveAuraID));
+#else
+	return FALSE;
+#endif
+}
+
 BOOL KSkill::ApplyAuraSkill(int nLauncher) const
 {
 #ifdef _SERVER
-	if (nLauncher <= 0 || nLauncher >= MAX_NPC || m_nStateAttribsNum <= 0 ||
-		(!m_bTargetSelf && !m_bTargetAlly) || m_bTargetEnemy)
+	if (nLauncher <= 0 || nLauncher >= MAX_NPC || (m_nStateAttribsNum <= 0 && m_nImmediateAttribsNum <= 0) ||
+		(!m_bTargetSelf && !m_bTargetAlly && !m_bTargetEnemy))
 		return FALSE;
 	KNpc& Owner = Npc[nLauncher];
 	if (Owner.m_SubWorldIndex < 0 || Owner.m_SubWorldIndex >= MAX_SUBWORLD ||
@@ -2366,6 +2488,8 @@ BOOL KSkill::ApplyAuraSkill(int nLauncher) const
 					Npc[nTarget].m_RegionIndex < 0 || Npc[nTarget].m_bExchangeServer ||
 					Npc[nTarget].m_CurrentLife <= 0 || Npc[nTarget].m_Doing == do_death ||
 					Npc[nTarget].m_Doing == do_revive)
+					continue;
+				if (Owner.IsPlayer() && !m_bTargetEnemy && !Npc[nTarget].GetCombatOwner())
 					continue;
 				int nDistance = NpcSet.GetDistanceSquare(nLauncher, nTarget);
 				if (nDistance >= 0 && (LONGLONG)nDistance <= (LONGLONG)m_nAttackRadius * m_nAttackRadius &&
@@ -2468,7 +2592,8 @@ BOOL KSkill::CastInitiativeSkill(int nLauncher, int nParam1, int nParam2, int nW
 	{
 		if (nParam1 != -1 || nParam2 <= 0 || nParam2 >= MAX_NPC) return FALSE;
 		
-		NPC_RELATION  Relation = NpcSet.GetRelation(nLauncher, nParam2);
+		NPC_RELATION Relation = (!m_bTargetEnemy && (m_bTargetSelf || m_bTargetAlly)) ?
+				NpcSet.GetSupportRelation(nLauncher, nParam2) : NpcSet.GetRelation(nLauncher, nParam2);
 		
 		if (m_bTargetEnemy)
 		{

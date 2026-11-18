@@ -256,6 +256,26 @@ BOOL KLibOfBPT::Init(int nVersion)
 	if (m_BPTMagicAttrib.NumOfEntries() > 0)
 		InitMAIT();
 
+	// Client 0x72D420/0x72C510: per-level increments accumulate by upgrade group.
+	m_UpgradeAttrib.clear();
+	const char* ClassNames[] = { "甲士", "术士", "异人" };
+	const char* DetailNames[] = { "武器", "盔甲", "头盔", "鞋子", "腰带", "披风" };
+	const int Details[] = { 0, 2, 7, 5, 6, 9 };
+	for (int nClass = 0; nClass < 3; nClass++)
+	{
+		for (int nPart = 0; nPart < 6; nPart++)
+		{
+			char szName[128];
+			sprintf(szName, "%s%s升级数值表.txt", ClassNames[nClass], DetailNames[nPart]);
+			LoadUpgradeAttrib(nVersion, Details[nPart], nClass, szName);
+		}
+	}
+	LoadUpgradeAttrib(nVersion, 4, 0, "法宝升级数值表.txt");
+	LoadUpgradeAttrib(nVersion, 13, 0, "印篆强化成长数值表.txt");
+	if (nVersion >= 1)
+		LoadUpgradeAttrib(nVersion, 14, 0, "fa_qi_qiang_hua_biao.txt");
+	LoadUpgradeAttrib(nVersion, 15, 0, "zhou_yin_qiang_hua_shu_zhi_biao.txt");
+
 	return TRUE;
 }
 
@@ -2191,3 +2211,51 @@ BOOL KBPT_ClassifiedMAT::GetAll(int* pnaryBuf, int* pnCount) const
 	return bEC;
 }
 
+
+static __int64 UpgradeAttribKey(int nDetail, int nClass, int nGroup, int nAttrib)
+{
+	return ((__int64)(nDetail * 3 + nClass) << 40) | ((__int64)nGroup << 16) | nAttrib;
+}
+
+void KLibOfBPT::LoadUpgradeAttrib(int nVersion, int nDetail, int nClass, const char* pszName)
+{
+	char szPath[256];
+	sprintf(szPath, "\\settings\\item\\%03d\\%s", nVersion, pszName);
+	KTabFile Table;
+	if (!Table.Load(szPath))
+	{
+		g_DebugLog("[Item] Original upgrade table unavailable: %s", szPath);
+		return;
+	}
+	for (int nRow = 2; nRow <= Table.GetHeight(); nRow++)
+	{
+		int nGroup, nAttrib;
+		Table.GetInteger(nRow, 1, 0, &nGroup);
+		Table.GetInteger(nRow, 2, 0, &nAttrib);
+		if (nGroup < 0 || nGroup > 0xffffff || nAttrib <= 0 || nAttrib >= 65536)
+			continue;
+		UpgradeAttrib Entry = {};
+		int nTotal = 0;
+		for (int i = 0; i < 15; i++)
+		{
+			int nIncrement = 0;
+			// Version 000 ends after 12 levels; do not parse the description as a number.
+			if (nVersion >= 1 || i < 12)
+				Table.GetInteger(nRow, i + 3, 0, &nIncrement);
+			nTotal += nIncrement;
+			Entry.nTotal[i] = nTotal;
+		}
+		__int64 Key = UpgradeAttribKey(nDetail, nClass, nGroup, nAttrib);
+		if (m_UpgradeAttrib.find(Key) == m_UpgradeAttrib.end())
+			m_UpgradeAttrib[Key] = Entry;
+	}
+}
+
+int KLibOfBPT::GetUpgradeAttribValue(int nDetail, int nClass, int nGroup, int nAttrib, int nCount) const
+{
+	if (nCount < 1 || nCount > 15)
+		return 0;
+	std::map<__int64, UpgradeAttrib>::const_iterator it =
+		m_UpgradeAttrib.find(UpgradeAttribKey(nDetail, nClass, nGroup, nAttrib));
+	return it == m_UpgradeAttrib.end() ? 0 : it->second.nTotal[nCount - 1];
+}

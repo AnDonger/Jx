@@ -80,6 +80,72 @@ KLibOfBPT* KItemGenerator::GetVersionLibrary(int nVersion)
 	return pLibrary;
 }
 
+static int EquipmentUpgradeClass(int nDetail, int nParticular)
+{
+	if (nDetail == 4 || nDetail == 13 || nDetail == 14 || nDetail == 15)
+		return 0;
+	if (nParticular < 0 || nParticular >= 74)
+		return -1;
+	// Current client 0x7382F0; independent from the wearer's profession.
+	static const signed char Class0[74] = {
+		0, 0, 1, 2, 0, 0, 1, 2, -1, 0, 1, 2, -1, 0, 0, 0, 0, 0, 0, 1,
+		1, 1, 2, 2, 2, 0, 0, 0, 0, 1, 2, 0, 0, 1, 1, 2, 2, 0, 0, 1,
+		2, 0, 0, 1, 1, 2, 2, 0, 0, 1, 1, 2, 2, 0, 0, 1, 1, 2, 2, 0,
+		0, 1, 1, 2, 2, -1, -1, -1, 0, 0, 1, 2, -1, -1,
+	};
+	static const signed char Class2[74] = {
+		0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2,
+		2, 2, 0, 0, 1, 1, 2, 2, 0, 0, 1, 1, 2, 2, 0, 1, 2, 0, 1, 2,
+		0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 0, 0, 1, 1, 2, 2, 0, 1,
+		2, 0, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2,
+	};
+	static const signed char Class5[74] = {
+		0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 0, 0, 1, 1, 2, 2, 0, 0, 1, 1,
+		2, 2, 0, 1, 2, 0, 1, 2, 0, 0, 1, 1, 2, 2, 0, 1, 2, 0, 0, 1,
+		2, 0, 1, 2, 0, 1, 2, 0, 1, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	};
+	static const signed char Class6[74] = {
+		0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 0, 0, 1, 1, 2, 2, 0, 0, 1, 1,
+		2, 2, 0, 1, 2, 0, 1, 2, 0, 0, 1, 1, 2, 2, 0, 1, 2, 0, 0, 1,
+		2, 0, 1, 2, 0, 1, 2, 0, 1, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	};
+	static const signed char Class7[74] = {
+		0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 0, 0, 1, 1, 2, 2, 0, 0, 1, 1,
+		2, 2, 0, 1, 2, 0, 1, 2, 0, 0, 1, 1, 2, 2, 0, 1, 2, 0, 0, 1,
+		2, 0, 1, 2, 0, 1, 2, 0, 1, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	};
+	static const signed char Class9[74] = {
+		0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2,
+		2, 2, 0, 0, 1, 1, 2, 2, 0, 0, 1, 1, 2, 2, 0, 1, 2, 0, 1, 2,
+		0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 0, 0, 1, 1, 2, 2, 0, 1,
+		2, 0, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2,
+	};
+	switch (nDetail)
+	{
+	case 0: return Class0[nParticular];
+	case 2: return Class2[nParticular];
+	case 5: return Class5[nParticular];
+	case 6: return Class6[nParticular];
+	case 7: return Class7[nParticular];
+	case 9: return Class9[nParticular];
+	default: return -1;
+	}
+}
+
+int KItemGenerator::GetUpgradeAttribValue(const KItem& Data, int nAttrib)
+{
+	int nCount = Data.GetUpgradeData() & 0xff;
+	int nClass = EquipmentUpgradeClass(Data.GetDetailType(), Data.GetParticular());
+	if (Data.GetGenre() != item_equip || nCount <= 0 || nCount > 15 || nClass < 0)
+		return 0;
+	KLibOfBPT* pLibrary = GetVersionLibrary(Data.m_GeneratorParam.nVersion);
+	return pLibrary ? pLibrary->GetUpgradeAttribValue(Data.GetDetailType(), nClass,
+		Data.GetUpgradeData() >> 8, nAttrib, nCount) : 0;
+}
+
 BOOL KItemGenerator::UsesClassMagicWeights(int nVersion)
 {
 	KLibOfBPT* pLibrary = GetVersionLibrary(nVersion);

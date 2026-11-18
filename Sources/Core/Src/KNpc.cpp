@@ -125,6 +125,12 @@ void KNpc::Init()
 	m_dwMorphEndTime = 0;
 	m_ProcessAI = 1;
 	m_Kind = kind_normal;
+#ifdef _SERVER
+	m_dwStateSkillRevision = 0;
+	m_nSummonOwner = m_nSummonSkill = m_nSummonIndex = 0;
+	m_dwSummonTarget = 0;
+	m_dwSummonOwner = m_dwSummonId = 0;
+#endif
 	m_Series = series_metal;
 	m_Camp = camp_free;
 	m_CurrentCamp = camp_free;
@@ -414,6 +420,23 @@ void KNpc::Activate()
 		PolyMorph(-1, TRUE, 0, -1, 0);
 #endif
 
+
+#ifdef _SERVER
+	if (m_Kind == kind_summon)
+	{
+		int nOwner = GetCombatOwner();
+		if (!nOwner || Npc[nOwner].m_CurrentLife <= 0 || Npc[nOwner].m_bExchangeServer ||
+			Npc[nOwner].m_SubWorldIndex != m_SubWorldIndex || Npc[nOwner].m_RegionIndex < 0)
+		{
+			NpcSet.RemoveSummon(m_Index);
+			return;
+		}
+		m_Camp = Npc[nOwner].m_Camp;
+		m_CurrentCamp = Npc[nOwner].m_CurrentCamp;
+		if ((m_LoopFrames % 18) == 0)
+			SyncSummon();
+	}
+#endif
 	m_LoopFrames++;
 
 	// Process npc special state, such as curse, etc.
@@ -1039,6 +1062,7 @@ void KNpc::DoDeath(int nMode/* = 0*/)
 		Player[nPlayer].m_nIndex > 0 && Player[nPlayer].m_nIndex < MAX_NPC &&
 		NpcSet.GetRelation(Player[nPlayer].m_nIndex, m_Index) == relation_enemy)
 	{
+		Npc[Player[nPlayer].m_nIndex].m_SkillList.AddSummonKillSkillExp();
 		Player[nPlayer].CallPetEvent("PetOnKill", m_Index, 0);
 		// 可选击杀奖励单独提交，失败不撤销已取得的修炼进度。
 		Player[nPlayer].CallPetEvent("PetOnKillRewards", m_Index, 0);
@@ -1047,12 +1071,16 @@ void KNpc::DoDeath(int nMode/* = 0*/)
 		Player[m_nPlayerIdx].m_bPetStateDirty = TRUE;
 	int nOldExp = IsPlayer() ? Player[m_nPlayerIdx].m_nExp : 0;
 	//丢物品
-	DeathPunish(nMode, nPlayer);
+	if (m_Kind != kind_summon)
+		DeathPunish(nMode, nPlayer);
 
 	GAME_NPC_DEATH_SYNC	NetCommand;
 	memset(&NetCommand, 0, sizeof(NetCommand));
 	NetCommand.ProtocolType = (BYTE)s2c_npcdeath;
 	NetCommand.ID = m_dwID;
+
+	if (IsPlayer())
+		NpcSet.RemoveOwnedSummon(m_Index);
 
 	// Wire death kind is player=1 / monster=0, not the internal punishment mode.
 	NetCommand.DeathKind = IsPlayer() ? 1 : 0;
@@ -1165,6 +1193,14 @@ void KNpc::OnDeath()
 #endif
 
 		// 重生点
+
+#ifdef _SERVER
+		if (m_Kind == kind_summon)
+		{
+			NpcSet.RemoveSummon(m_Index);
+			return;
+		}
+#endif
 		if (m_Kind != kind_partner)//战斗Npc时
 		{
 			DoRevive();
@@ -1755,10 +1791,10 @@ void KNpc::DoSkill(int nX, int nY)
 		{
 #ifdef _SERVER
 			// 效果帧到达前也必须拒绝同一冷却技能，避免重复扣内力和重置动作。
-			if (((KSkill*)pSkill)->GetDelayPerCast() > 0)
+			if (((KSkill*)pSkill)->GetDelayPerCast(m_Index) > 0)
 			{
 				m_SkillList.SetNextCastTime(m_ActiveSkillID,
-					SubWorld[m_SubWorldIndex].m_dwCurrentTime + ((KSkill*)pSkill)->GetDelayPerCast(), FALSE);
+					SubWorld[m_SubWorldIndex].m_dwCurrentTime + ((KSkill*)pSkill)->GetDelayPerCast(m_Index), FALSE);
 				// 即使施法动作随后中断，已预留的冷却也必须让客户端可见。
 				m_SkillList.SyncPlayerSkillCooldowns(m_ActiveSkillID);
 			}
@@ -1804,6 +1840,9 @@ void KNpc::DoSkill(int nX, int nY)
 				NetCommand.nMpsY = nY;
 			}
 
+			if (nX == -1 && ((KSkill*)pSkill)->IsTargetEnemy())
+				NpcSet.NotifySummonAttacked(nY, m_Index);
+
 			m_SkillParam1 = nX;
 			m_SkillParam2 = nY;
 			m_DesX = nX;
@@ -1835,7 +1874,8 @@ void KNpc::DoSkill(int nX, int nY)
 				|| eStyle == SKILL_SS_Attack
 				|| eStyle == SKILL_SS_Melee 
 				|| eStyle == SKILL_SS_InitiativeNpcState 
-				|| eStyle == SKILL_SS_PassivityNpcState)
+				|| eStyle == SKILL_SS_PassivityNpcState
+				|| eStyle == SKILL_SS_Summon)
 			{
 				DoOrdinSkill((KSkill *) pSkill, nX, nY);
 			}
@@ -2117,7 +2157,7 @@ void KNpc::OnSkill()
 		if (pSkill)
 		{
 			pSkill->Cast(m_Index, m_DesX, m_DesY);
-			m_SkillList.SetNextCastTime(m_ActiveSkillID, SubWorld[m_SubWorldIndex].m_dwCurrentTime + pSkill->GetDelayPerCast());
+			m_SkillList.SetNextCastTime(m_ActiveSkillID, SubWorld[m_SubWorldIndex].m_dwCurrentTime + pSkill->GetDelayPerCast(m_Index));
 		}
 		
 Label_ProcessAI:
@@ -2378,13 +2418,23 @@ int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL 
 	else
 		nDamage = nMin + g_Random(nMax - nMin);
 	KNpc& Attacker = Npc[nAttacker];
+	int nSummonReduce = 0;
 	if (bCritical)
 	{
 		int nEnhance = Attacker.m_CurrentAdditionalAttrib[nType == damage_physics ? 284 : 285];
-		int nReduce = m_CurrentAdditionalAttrib[nType == damage_physics ? 314 : 315];
+		nSummonReduce = m_CurrentAdditionalAttrib[nType == damage_physics ? 314 : 315];
 		nDamage = (int)((__int64)nDamage * max(100, 200 + nEnhance) / 100);
-		nDamage = (int)((__int64)nDamage * (100 - min(100, max(0, nReduce))) / 100);
 	}
+
+	if (Attacker.m_Kind == kind_summon)
+		nSummonReduce += m_CurrentAdditionalAttrib[327];
+	if (m_Kind == kind_summon)
+	{
+		int nOwner = GetCombatOwner();
+		if (nOwner)
+			nSummonReduce += Npc[nOwner].m_CurrentAdditionalAttrib[341];
+	}
+	nDamage = (int)((__int64)nDamage * (100 - min(100, max(0, nSummonReduce))) / 100);
 	int nFlatReduceId = 0;
 	switch (nType)
 	{
@@ -2626,9 +2676,11 @@ int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL 
 	// PK处理，伤害乘一个系数
 	if (this->m_Kind == kind_player && Npc[nAttacker].m_Kind == kind_player)
 		nDamage = nDamage * NpcSet.m_nPKDamageRate / 100;
-	m_nLastDamageIdx = nAttacker;
-	if (m_Kind != kind_player && Npc[nAttacker].m_Kind == kind_player && Npc[nAttacker].m_nPlayerIdx > 0)
-		m_cDeathCalcExp.AddDamage(Npc[nAttacker].m_nPlayerIdx, (m_CurrentLife - nDamage > 0 ? nDamage : m_CurrentLife));
+
+	int nCredit = Npc[nAttacker].GetCombatOwner();
+	m_nLastDamageIdx = nCredit ? nCredit : nAttacker;
+	if (m_Kind == kind_normal && nCredit && Npc[nCredit].m_nPlayerIdx > 0)
+		m_cDeathCalcExp.AddDamage(Npc[nCredit].m_nPlayerIdx, min(max(0, m_CurrentLife), nDamage));
 	int nActualDamage = min(max(0, m_CurrentLife), nDamage);
 	m_CurrentLife -= nDamage;
 	if (m_CurrentLife < 0)
@@ -2672,6 +2724,9 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 
 	if (!pData)
 		return FALSE;
+
+	// Even a dodged hostile hit starts defensive assistance.
+	NpcSet.NotifySummonAttacked(m_Index, nLauncher);
 
 	KMagicAttrib *pTemp = NULL;
 
@@ -2863,7 +2918,7 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 		pDes->nValue[0] = nMinDamage;
 		pDes->nValue[2] = nMaxDamage;
 	}
-	if (IsPlayer() && bIsPhysical)
+	if (bIsPhysical)
 	{
 		pDes->nValue[0] += nMinDamage * m_CurrentPhysicsEnhance / 100;
 		pDes->nValue[2] += nMaxDamage * m_CurrentPhysicsEnhance / 100;
@@ -3811,6 +3866,7 @@ BOOL KNpc::SendSyncData(int nClient)
 	NpcSync.Camp				= (BYTE)m_Camp;
 	NpcSync.CurrentCamp			= (BYTE)m_CurrentCamp;
 	NpcSync.m_bySeries			= (BYTE)m_Series;
+	NpcSync.OwnerId = m_dwSummonOwner;
 	NpcSync.Series				= m_Series;
 	NpcSync.m_Doing				= (BYTE)m_Doing;
 	if (m_CurrentLifeMax > 0)
@@ -4584,6 +4640,42 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 #endif
 	if (!bItemState && (nSkillID >= MAX_SKILL || nLevel >= MAX_SKILLLEVEL))
 		return;
+#ifdef _SERVER
+	KSkill* pStateSkill = bItemState ? NULL : (KSkill*)g_SkillManager.GetSkill(nSkillID, nLevel);
+	BOOL bAura = pStateSkill && pStateSkill->IsActiveAuraSource(nLauncher);
+	KMagicAttrib RecoveryAttribs[MAX_SKILL_STATE];
+	if (pStateSkill && pStateSkill->IsFriendlyAreaSkill() && nDataNum <= MAX_SKILL_STATE)
+	{
+		memcpy(RecoveryAttribs, pData, nDataNum * sizeof(KMagicAttrib));
+		for (int i = 0; i < nDataNum; i++)
+			if (RecoveryAttribs[i].nAttribType == magic_lifepotion_v ||
+				RecoveryAttribs[i].nAttribType == magic_manapotion_v)
+				RecoveryAttribs[i].nValue[2] = 1;
+		pData = RecoveryAttribs;
+	}
+	if (bAura)
+	{
+		for (KStateNode* pExisting = (KStateNode*)m_StateSkillList.GetHead(); pExisting;
+			pExisting = (KStateNode*)pExisting->GetNext())
+		{
+			if (pExisting->m_SkillID != nSkillID || !pExisting->m_bAura || pExisting->m_Level <= nLevel ||
+				pExisting->m_LeftTime <= 0)
+				continue;
+			int nSource = pExisting->m_nLauncher;
+			KSkill* pHigher = (KSkill*)g_SkillManager.GetSkill(nSkillID, pExisting->m_Level);
+			if (nSource > 0 && nSource < MAX_NPC && Npc[nSource].m_dwID == pExisting->m_dwLauncher &&
+				pHigher && pHigher->IsActiveAuraSource(nSource) &&
+				Npc[nSource].m_SubWorldIndex == m_SubWorldIndex &&
+				(NpcSet.GetSupportRelation(nSource, m_Index) & (relation_self | relation_ally)))
+			{
+				int nDistance = NpcSet.GetDistanceSquare(nSource, m_Index);
+				int nRadius = pHigher->GetAttackRadius();
+				if (nDistance >= 0 && (LONGLONG)nDistance <= (LONGLONG)nRadius * nRadius)
+					return;
+			}
+		}
+	}
+#endif
 	_ASSERT(nDataNum < MAX_SKILL_STATE);
 	if (nDataNum >= MAX_SKILL_STATE)
 		nDataNum = MAX_SKILL_STATE;
@@ -4620,6 +4712,12 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 	{
 		if (pNode->m_SkillID == nSkillID)
 		{
+#ifdef _SERVER
+			pNode->m_nLauncher = nLauncher;
+			pNode->m_dwLauncher = nLauncher > 0 && nLauncher < MAX_NPC ? Npc[nLauncher].m_dwID : 0;
+			pNode->m_bAura = bAura;
+			pNode->m_dwTargetSyncRevision = ++m_dwStateSkillRevision;
+#endif
 			if (pNode->m_Level == nLevel)
 			{
 				pNode->m_LeftTime = nTime;
@@ -4630,6 +4728,13 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 				{
 					switch (pTemp[i].nAttribType)
 					{
+					case magic_lifepotion_v:
+					case magic_manapotion_v:
+#ifdef _SERVER
+						if (pStateSkill && pStateSkill->IsFriendlyAreaSkill())
+							ModifyAttrib(nLauncher, &pTemp[i]);
+#endif
+						break;
 					case magic_manashield_p:
 					case magic_physicsarmor_v:
 					case magic_coldarmor_v:
@@ -4664,6 +4769,12 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 	}
 	// 没有在循环中返回，说明是新技能
 	pNode = new KStateNode;
+#ifdef _SERVER
+	pNode->m_nLauncher = nLauncher;
+	pNode->m_dwLauncher = nLauncher > 0 && nLauncher < MAX_NPC ? Npc[nLauncher].m_dwID : 0;
+	pNode->m_bAura = bAura;
+	pNode->m_dwTargetSyncRevision = ++m_dwStateSkillRevision;
+#endif
 	memset(pNode->m_State, 0, sizeof(pNode->m_State));
 	pNode->m_SkillID = nSkillID;
 	pNode->m_Level = nLevel;
@@ -6196,7 +6307,10 @@ int KNpc::ChangeWorld(DWORD dwSubWorldID, int nX, int nY)
 	if (nTargetSubWorld == m_SubWorldIndex)
 	{
 		// 只需切换座标
-		return SetPos(nX, nY);
+		int nResult = SetPos(nX, nY);
+		if (nResult)
+			NpcSet.MoveOwnedSummon(m_Index);
+		return nResult;
 	}
 	
 	int nRegion, nMapX, nMapY, nOffX, nOffY;
@@ -6252,6 +6366,7 @@ int KNpc::ChangeWorld(DWORD dwSubWorldID, int nX, int nY)
 		// 49加载地图、4C建立主人后，F3重建区域位置和移动快照，清除旧图预测。
 		SendPositionSync(Player[m_nPlayerIdx].m_nNetConnectIdx);
 	}
+	NpcSet.MoveOwnedSummon(m_Index);
 	return 1;
 }
 #endif
@@ -6791,3 +6906,185 @@ void KNpc::SendMenuStateSync()
 	SendDataToNearRegion(Buffer, pSync->Length + 1);
 }
 #endif
+
+
+#ifdef _SERVER
+int KNpc::GetCombatOwner() const
+{
+	if (m_Kind == kind_player)
+		return m_Index;
+	if (m_Kind != kind_summon || m_nSummonOwner <= 0 || m_nSummonOwner >= MAX_NPC)
+		return 0;
+	const KNpc& Owner = Npc[m_nSummonOwner];
+	return Owner.m_dwID == m_dwSummonOwner && Owner.m_Kind == kind_player &&
+		Owner.m_nPlayerIdx > 0 && Owner.m_nPlayerIdx < MAX_PLAYER &&
+		Player[Owner.m_nPlayerIdx].m_nIndex == m_nSummonOwner ? m_nSummonOwner : 0;
+}
+
+int KNpc::GetSummon() const
+{
+	if (m_nSummonIndex <= 0 || m_nSummonIndex >= MAX_NPC)
+		return 0;
+	const KNpc& Summon = Npc[m_nSummonIndex];
+	return Summon.m_Kind == kind_summon && Summon.m_dwID == m_dwSummonId &&
+		Summon.m_nSummonOwner == m_Index && Summon.m_dwSummonOwner == m_dwID ? m_nSummonIndex : 0;
+}
+
+void KNpc::RefreshSummonAttributes(BOOL bCreated)
+{
+	int nOwner = GetCombatOwner();
+	if (!nOwner || m_Kind != kind_summon || m_NpcSettingIdx < 0 ||
+		m_NpcSettingIdx >= MAX_NPCSTYLE || m_Level < 1 || m_Level >= MAX_NPC_LEVEL ||
+		!g_pNpcTemplate[m_NpcSettingIdx][m_Level])
+		return;
+	int nLife = m_CurrentLife;
+	int nOldMax = m_CurrentLifeMax;
+	ResetCurrentAttributes();
+	KPlayer& Owner = Player[Npc[nOwner].m_nPlayerIdx];
+	m_PhysicsDamage = g_pNpcTemplate[m_NpcSettingIdx][m_Level]->m_PhysicsDamage;
+	int nWeapon = Owner.m_ItemList.GetEquipment(itempart_weapon);
+	if (nWeapon > 0 && Item[nWeapon].GetDurability() != 0)
+	{
+		int nMin, nMax;
+		Owner.m_ItemList.GetWeaponDamage(&nMin, &nMax);
+		m_PhysicsDamage.nValue[0] += nMin;
+		m_PhysicsDamage.nValue[2] += nMax;
+	}
+	Owner.ReCalcEquip(m_Index);
+	// Temporary states remain independent from inherited equipment bonuses.
+	for (KStateNode* pNode = (KStateNode*)m_StateSkillList.GetHead(); pNode;
+		pNode = (KStateNode*)pNode->GetNext())
+	{
+		for (int i = 0; i < MAX_SKILL_STATE; i++)
+		{
+			KMagicAttrib Attrib = pNode->m_State[i];
+			if (Attrib.nAttribType == magic_lifepotion_v || Attrib.nAttribType == magic_manapotion_v)
+				continue;
+			for (int value = 0; value < 3; value++)
+				Attrib.nValue[value] = -Attrib.nValue[value];
+			g_NpcAttribModify.ModifyAttrib(this, &Attrib);
+		}
+	}
+	m_CurrentLifeMax = max(1, m_CurrentLifeMax);
+	m_CurrentLife = bCreated ? m_CurrentLifeMax : min(nLife, m_CurrentLifeMax);
+	if (nOldMax != m_CurrentLifeMax)
+	{
+		BYTE Packet[] = { 0xF8, 11, 0, 0x21, 0, 0, 0, 0, 0, 0, 0, 0 };
+		memcpy(Packet + 4, &m_dwID, 4);
+		memcpy(Packet + 8, &m_CurrentLifeMax, 4);
+		SendDataToNearRegion(Packet, sizeof(Packet));
+	}
+	SyncSummon();
+}
+
+static WORD SummonWord(int nValue)
+{
+	return (WORD)min(65535, max(0, nValue));
+}
+
+void KNpc::SyncSummon(BOOL bRemoved)
+{
+	int nOwner = GetCombatOwner();
+	if (!nOwner || !g_pServer || m_Kind != kind_summon)
+		return;
+	GAME_SUMMON_SYNC Sync = {};
+	Sync.ProtocolType = 0xC4;
+	Sync.SkillId = bRemoved ? 0 : (WORD)m_nSummonSkill;
+	Sync.LifeMax = SummonWord(m_CurrentLifeMax);
+	Sync.Life = SummonWord(m_CurrentLife);
+	Sync.AttackRating = SummonWord(m_CurrentAttackRating);
+	Sync.Dodge = SummonWord(m_CurrentDefend);
+	Sync.Defense = SummonWord(m_CurrentExDefend);
+	int nMin = 0, nMax = 0;
+	KSkill* pAttack = (KSkill*)g_SkillManager.GetSkill(m_SkillList.GetSkillId(1),
+		m_SkillList.GetCurrentLevel(m_SkillList.GetSkillId(1)));
+	if (pAttack)
+	{
+		KMissleMagicAttribsData* pDamage = pAttack->CreateMissleMagicAttribsData(m_Index);
+		if (pDamage)
+		{
+			for (int i = 2; i <= 8; i++)
+			{
+				nMin += pDamage->m_pDamageMagicAttribs[i].nValue[0];
+				nMax += pDamage->m_pDamageMagicAttribs[i].nValue[2];
+			}
+			delete pDamage;
+		}
+	}
+	Sync.DamageMin = SummonWord(nMin);
+	Sync.DamageMax = SummonWord(nMax);
+	// Receiver 0x7BBE50 and actions 0x77F7A0: +18/+20 are signed action speeds.
+	// The flag at +17 is 1 in both official summon samples; its use is unknown.
+	Sync.unknown_1 = 1;
+	Sync.AttackSpeed = (short)min(32767, max(-32768, m_CurrentAttackSpeed));
+	Sync.CastSpeed = (short)min(32767, max(-32768, m_CurrentCastSpeed));
+	g_pServer->PackDataToClient(Player[Npc[nOwner].m_nPlayerIdx].m_nNetConnectIdx, &Sync, sizeof(Sync));
+}
+#endif
+
+void KNpc::ResetCurrentAttributes()
+{
+	m_CurrentLifeMax		= m_LifeMax;
+	m_CurrentManaMax		= m_ManaMax;
+	m_CurrentStaminaMax	= m_StaminaMax;
+	m_CurrentAttackRating	= m_AttackRating;
+	m_CurrentAttackSpeed	= m_AttackSpeed;
+//	m_CurrentCamp			= m_Camp;
+	m_CurrentCastSpeed	= m_CastSpeed;
+	ZeroMemory(&m_CurrentColdDamage, sizeof(KMagicAttrib));
+	m_CurrentColdEnhance	= 0;
+	m_CurrentColdResist	= m_ColdResist;
+	m_CurrentColdResistMax	= m_ColdResistMax;
+	m_CurrentDamage2Mana	= 0;
+	m_CurrentDamageReduce	= 0;
+	m_CurrentDeadlyStrike	= 0;
+	m_CurrentExDefend = m_ExDefend;
+	m_CurrentDefend		= m_Defend;
+	m_CurrentElementDamageReduce = 0;
+	ZeroMemory(&m_CurrentFireDamage, sizeof(KMagicAttrib));
+	m_CurrentEarthEnhance = 0;
+	m_CurrentEarthResist = m_EarthResist;
+	m_CurrentEarthResistMax = m_EarthResistMax;
+	m_CurrentFireEnhance	= 0;
+	m_CurrentFireResist	= m_FireResist;
+	m_CurrentFireResistMax	= m_FireResistMax;
+	m_CurrentPhysicsEnhance = 0;
+	m_CurrentHandEnhance	= 0;
+	m_CurrentHitRecover	= m_HitRecover;
+	m_CurrentJumpSpeed	= m_JumpSpeed;
+	m_CurrentKnockBack	= 0;
+	m_CurrentLifeReplenish	= m_LifeReplenish;
+	m_CurrentLifeStolen	= 0;
+	ZeroMemory(&m_CurrentLightDamage, sizeof(KMagicAttrib));
+	m_CurrentLightEnhance	= 0;
+	m_CurrentLightResist	= m_LightResist;
+	m_CurrentLightResistMax = m_LightResistMax;
+	m_CurrentManaPerEnemy	= 0;
+	m_CurrentManaReplenish	= m_ManaReplenish;
+	m_CurrentManaStolen	= 0;
+	m_CurrentMeleeDmgRet	= 0;
+	m_CurrentMeleeDmgRetPercent = 0;
+	ZeroMemory(&m_CurrentMeleeEnhance, sizeof(m_CurrentMeleeEnhance));
+	m_CurrentPhysicsResist	= m_PhysicsResist;
+	m_CurrentPhysicsResistMax	= m_PhysicsResistMax;
+	m_CurrentPiercePercent	= 0;
+	ZeroMemory(&m_CurrentPoisonDamage, sizeof(KMagicAttrib));
+	m_CurrentPoisonEnhance	= 0;
+	m_CurrentPoisonResist	= m_PoisonResist;
+	m_CurrentPoisonResistMax	= m_PoisonResistMax;
+	m_CurrentRangeDmgRet	= 0;
+	m_CurrentRangeDmgRetPercent	= 0;
+	m_CurrentRangeEnhance	= 0;
+	m_CurrentRunSpeed	= m_RunSpeed;
+	m_CurrentSlowMissle	= 0;
+	m_CurrentStaminaGain	= m_StaminaGain;
+	m_CurrentStaminaLoss	= m_StaminaLoss;
+	m_CurrentStaminaStolen	= 0;
+	m_CurrentVisionRadius	= m_VisionRadius;
+	m_CurrentWalkSpeed	= m_WalkSpeed;
+	m_CurrentAddPhysicsDamage = 0;
+	ZeroMemory(m_CurrentAdditionalAttrib, sizeof(m_CurrentAdditionalAttrib));
+	m_CurrentFreezeTimeReducePercent = 0;
+	m_CurrentPoisonTimeReducePercent = 0;
+	m_CurrentStunTimeReducePercent = 0;
+}

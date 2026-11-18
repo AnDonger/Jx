@@ -11,6 +11,8 @@
 #ifndef	KBasPropTblH
 #define	KBasPropTblH
 
+#include <map>
+
 #define		SZBUFLEN_0	80		// 典型的字符串缓冲区长度
 #define		SZBUFLEN_1	128		// 典型的字符串缓冲区长度
 
@@ -546,6 +548,13 @@ protected:
 	// 原 greenaddon.txt 中十条套装附加属性的有效条数，按资源版本分别保存。
 	int					m_nGreenMagicCount[100];
 	KGREEN_ADDON m_GreenAddon[100];
+	struct UpgradeAttrib
+	{
+		int nTotal[15];
+	};
+	std::map<__int64, UpgradeAttrib> m_UpgradeAttrib;
+	void LoadUpgradeAttrib(int nVersion, int nDetail, int nClass, const char* pszName);
+
 	int m_nModernMagicRateLimit[5][2];
 	int m_nModernMagicCount[4][10];
 	KBPT_Medicine			m_BPTMedicine;
@@ -581,6 +590,7 @@ protected:
 // 以下是对外接口
 public:
 	BOOL Init(int nVersion = -1);
+	int GetUpgradeAttribValue(int nDetail, int nClass, int nGroup, int nAttrib, int nCount) const;
 	int GetGreenMagicAttribCount(int nGreenId) const;
 	const KGREEN_ADDON* GetGreenAddon(int nGreenId) const;
 	int GetModernMagicRateLimit(int nSlot, int nPart) const;

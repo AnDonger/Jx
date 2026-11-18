@@ -35,6 +35,7 @@ private:
 	void			ProcessAIType04();		// 普通被动类1
 	void			ProcessAIType05();		// 普通被动类2
 	void			ProcessAIType06();		// 普通被动类3
+	void			ProcessSummon();
 	void			TriggerObjectTrap();
 	void			TriggerMapTrap();
 	void			FollowAttack(int nIdx);

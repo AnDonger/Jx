@@ -34,6 +34,11 @@ void KNpcAI::Activate(int nIndex)
 		return;
 	}
 #ifdef _SERVER
+	if (Npc[m_nIndex].m_Kind == kind_summon)
+	{
+		ProcessSummon();
+		return;
+	}
 	if (Npc[m_nIndex].m_CurrentLifeMax == 0)
 		return;
 	int nCurTime = SubWorld[Npc[m_nIndex].m_SubWorldIndex].m_dwCurrentTime;
@@ -2342,3 +2347,51 @@ void KNpcAI::ProcessAIType10()
 	return;
 }
 */
+
+
+#ifdef _SERVER
+void KNpcAI::ProcessSummon()
+{
+	KNpc& Summon = Npc[m_nIndex];
+	int nOwner = Summon.GetCombatOwner();
+	if (!nOwner || Summon.m_CurrentLife <= 0)
+		return;
+	DWORD dwNow = SubWorld[Summon.m_SubWorldIndex].m_dwCurrentTime;
+	if (Summon.m_NextAITime > dwNow)
+		return;
+	Summon.m_NextAITime = dwNow + Summon.m_AIMAXTime;
+	int nOwnerDistance = NpcSet.GetDistance(m_nIndex, nOwner);
+	int nTarget = Summon.m_nPeopleIdx;
+	if (nTarget <= 0 || nTarget >= MAX_NPC || Npc[nTarget].m_CurrentLife <= 0 ||
+		Npc[nTarget].m_dwID != Summon.m_dwSummonTarget ||
+		Npc[nTarget].m_Doing == do_death || Npc[nTarget].m_Doing == do_revive ||
+		Npc[nTarget].m_RegionIndex < 0 || Npc[nTarget].m_SubWorldIndex != Summon.m_SubWorldIndex ||
+		NpcSet.GetRelation(m_nIndex, nTarget) != relation_enemy ||
+		NpcSet.GetDistance(nOwner, nTarget) > Summon.m_CurrentActiveRadius)
+		nTarget = 0;
+	if (nOwnerDistance > Summon.m_CurrentActiveRadius)
+		nTarget = 0;
+
+	if (nTarget > 0 && Npc[nTarget].m_CurrentLife > 0 &&
+		NpcSet.GetDistance(nOwner, nTarget) <= Summon.m_CurrentActiveRadius && Summon.SetActiveSkill(1))
+	{
+		Summon.m_nPeopleIdx = nTarget;
+		// Summons can fire at close targets; ordinary AI tries to back away first.
+		if (NpcSet.GetDistance(m_nIndex, nTarget) <= Summon.m_CurrentAttackRadius && InEyeshot(nTarget))
+			Summon.SendCommand(do_skill, Summon.m_ActiveSkillID, -1, nTarget);
+		else
+			FollowAttack(nTarget);
+		return;
+	}
+	Summon.m_nPeopleIdx = 0;
+	Summon.m_dwSummonTarget = 0;
+	if (nOwnerDistance > 96)
+	{
+		int nX, nY;
+		Npc[nOwner].GetMpsPos(&nX, &nY);
+		Summon.SendCommand(do_walk, nX, nY);
+	}
+	else
+		Summon.SendCommand(do_stand);
+}
+#endif

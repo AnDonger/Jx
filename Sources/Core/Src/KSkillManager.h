@@ -71,6 +71,7 @@ private:
 	PLAYER_SKILL_BUFF_RULE m_PlayerBuffRules[3];
 	PLAYER_ITEM_BUFF_RULE m_ItemBuffRules[MAX_PLAYER_ITEM_BUFF_TEMPLATE];
 	BOOL m_ItemStateSkills[MAX_SKILL];
+	KTabFile m_SummonSkills;
 	int m_nHitSkillExpRate;
 	int m_EquipmentSkillSeries[8][MAX_SKILL];
 	int m_nSupportSkillExpRate;

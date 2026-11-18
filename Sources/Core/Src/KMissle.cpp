@@ -359,6 +359,17 @@ int KMissle::Activate()
 		}
 	}
 	
+	// A homing missile must never follow slot zero or a recycled/dead target.
+	if (m_eMoveKind == MISSLE_MMK_Follow &&
+		(m_nFollowNpcIdx <= 0 || m_nFollowNpcIdx >= MAX_NPC ||
+		!Npc[m_nFollowNpcIdx].IsMatch(m_dwFollowNpcID) ||
+		Npc[m_nFollowNpcIdx].m_RegionIndex < 0 || Npc[m_nFollowNpcIdx].m_CurrentLife <= 0 ||
+		Npc[m_nFollowNpcIdx].m_Doing == do_death || Npc[m_nFollowNpcIdx].m_Doing == do_revive))
+	{
+		DoVanish();
+		return 0;
+	}
+
 	eMissleStatus eLastStatus = m_eMissleStatus;
 	
 	//如果当前状态是子弹生命正常结束正准备消亡状态时，而不是消亡中或者已碰撞中
@@ -763,14 +774,13 @@ void KMissle::OnFly()
 			SubWorld[m_nSubWorldId].Map2Mps(Npc[m_nFollowNpcIdx].m_RegionIndex, Npc[m_nFollowNpcIdx].m_MapX, Npc[m_nFollowNpcIdx].m_MapY, Npc[m_nFollowNpcIdx].m_OffX, Npc[m_nFollowNpcIdx].m_OffY, &nDesMpsX, &nDesMpsY);
 			nDistance = SubWorld[m_nSubWorldId].GetDistance(nSrcMpsX, nSrcMpsY, nDesMpsX, nDesMpsY);
 			
-			if (nDistance != 0)
+			if (nDistance > 0)
 			{
-				int nXFactor = ((nDesMpsX - nSrcMpsY ) << 10) / nDistance;
-				int nYFactor = ((nDesMpsY - nSrcMpsY ) << 10) / nDistance;
-				int dx		 = nXFactor * m_nSpeed;
-				int dy		 = nYFactor * m_nSpeed;	
-				nDOffsetX	 = dx;
-				nDOffsetY	 = dy;
+				// Use the same axis for each delta and stop at a nearby target.
+				// Overshooting a target can skip its collision cell indefinitely.
+				int nStep = min(max(0, m_nSpeed), nDistance);
+				nDOffsetX = (int)((LONGLONG)(nDesMpsX - nSrcMpsX) * 1024 * nStep / nDistance);
+				nDOffsetY = (int)((LONGLONG)(nDesMpsY - nSrcMpsY) * 1024 * nStep / nDistance);
 			}
 			
 		}break;
@@ -1069,7 +1079,7 @@ BOOL KMissle::ProcessDamage(int nNpcId)
 		if (Npc[nNpcId].ReceiveDamage(m_nLauncher, m_bIsMelee, m_pMagicAttribsData->m_pDamageMagicAttribs, m_bUseAttackRating, m_bDoHurt))
 		{
 			if (Npc[m_nLauncher].IsPlayer() && Npc[nNpcId].m_Kind == kind_normal &&
-				Npc[nNpcId].m_CurrentLife < nOldLife)
+				(Npc[nNpcId].m_CurrentLife < nOldLife || m_pMagicAttribsData->m_nStateMagicAttribsNum > 0))
 			{
 				KSkillList& Skills = Npc[m_nLauncher].m_SkillList;
 				Skills.AddHitSkillExp(m_nExpSkillId);
@@ -1242,11 +1252,7 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 		{
 			return FALSE;
 		}
-		else
-		{
-			// 6.29 romandou missledamage interval 
-			m_ulNextCalDamageTime = g_SubWorldSet.GetGameTime() + m_ulDamageInterval;
-		}
+
 	}
 #endif
 	if (nLauncherIdx <= 0 ) return 0;
@@ -1343,6 +1349,12 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 			nRet++;
 		}
 	}
+#endif
+	// Empty probes must not consume the hit interval while a projectile approaches.
+	// Otherwise a short-range projectile can pass its target before the next probe.
+#ifdef _SERVER
+	if (nRet > 0 && m_ulDamageInterval)
+		m_ulNextCalDamageTime = g_SubWorldSet.GetGameTime() + m_ulDamageInterval;
 #endif
 	return nRet;
 }

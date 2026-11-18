@@ -154,23 +154,26 @@ void KItemList::GetWeaponDamage(int* nMin, int* nMax)
 			&& (Item[nWeaponIdx].m_CommonAttrib.nDetailType == equip_meleeweapon
 			|| Item[nWeaponIdx].m_CommonAttrib.nDetailType == equip_rangeweapon));
 		int nMinDamage, nMaxDamage, nEnhance;
-		int nDamageMinBase = Item[nWeaponIdx].m_aryBaseAttrib[0].nValue[0];
-		int	nDamageMaxBase = Item[nWeaponIdx].m_aryBaseAttrib[1].nValue[0];
+		int nDamageMinBase = Item[nWeaponIdx].GetAppliedAttrib(Item[nWeaponIdx].m_aryBaseAttrib[0]).nValue[0];
+		int	nDamageMaxBase = Item[nWeaponIdx].GetAppliedAttrib(Item[nWeaponIdx].m_aryBaseAttrib[1]).nValue[0];
 		nMinDamage = 0;
 		nMaxDamage = 0;
 		nEnhance = 0;
 		for (int i = 0; i < 6; i++)
 		{
-			switch(Item[nWeaponIdx].m_aryMagicAttrib[i].nAttribType)
+			KItemNormalAttrib Attrib = Item[nWeaponIdx].GetAppliedAttrib(Item[nWeaponIdx].m_aryMagicAttrib[i], TRUE);
+			int nType = ItemGen.UsesClassMagicWeights(Item[nWeaponIdx].m_GeneratorParam.nVersion) ?
+				GetInternalMagicAttribId(Attrib.nAttribType) : Attrib.nAttribType;
+			switch (nType)
 			{
 			case magic_weapondamagemin_v:
-				nMinDamage += Item[nWeaponIdx].m_aryMagicAttrib[i].nValue[0];
+				nMinDamage += Attrib.nValue[0];
 				break;
 			case magic_weapondamagemax_v:
-				nMaxDamage += Item[nWeaponIdx].m_aryMagicAttrib[i].nValue[0];
+				nMaxDamage += Attrib.nValue[0];
 				break;
 			case magic_weapondamageenhance_p:
-				nEnhance += Item[nWeaponIdx].m_aryMagicAttrib[i].nValue[0];
+				nEnhance += Attrib.nValue[0];
 				break;
 			default:
 				break;

@@ -5,7 +5,7 @@
 #define MAX_SKILLLEVEL 64
 #define MaxMissleDir	64
 #define MAXSKILLLEVELSETTINGNUM	10  //供填写技能升级时最大的相关数据种类
-#define MAX_MISSLESTYLE  200
+#define MAX_MISSLESTYLE  1024 // Native resource IDs include templates 200 through 247.
 #define MISSLE_MIN_COLLISION_ZHEIGHT 0	  //子弹落地碰撞的高度。
 #define MISSLE_MAX_COLLISION_ZHEIGHT 20   //子弹高于该高度时,不计算碰撞	
 
@@ -107,6 +107,7 @@ enum eSKillStyle
 		SKILL_SS_Mining,				//	采矿类		本技能用于采矿随机生成矿石
 		SKILL_SS_RepairWeapon,			//	修复类		本技能用于修复装备
 		SKILL_SS_Capture,				//	捕捉类		本技能用于捕捉动物Npc
+		SKILL_SS_Summon = 14,
 		SKILL_SS_Attack = 15,				// 当前资源的普通攻击、实体目标攻击
 		SKILL_SS_Thief = 13,					//	偷窃类
 };

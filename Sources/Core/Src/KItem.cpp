@@ -72,6 +72,19 @@ void* KItem::GetRequirement(IN int nReq)
 		具体工作由KNpc的成员函数完成。
 		KItem 对象本身没有成员变量被修改
 ******************************************************************************/
+KItemNormalAttrib KItem::GetAppliedAttrib(const KItemNormalAttrib& Attrib, BOOL bMagic) const
+{
+	KItemNormalAttrib Result = Attrib;
+	if (Result.nAttribType > 0 && GetGenre() == item_equip &&
+		ItemGen.UsesClassMagicWeights(m_GeneratorParam.nVersion))
+	{
+		Result.nValue[0] += ItemGen.GetUpgradeAttribValue(*this, Result.nAttribType);
+		if (bMagic && (Result.nAttribType == 36 || Result.nAttribType == 305))
+			Result.nValue[0] = min(200, Result.nValue[0]);
+	}
+	return Result;
+}
+
 void KItem::ApplyMagicAttribToNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 */) const
 {
 	_ASSERT(this != NULL);
@@ -86,7 +99,8 @@ void KItem::ApplyMagicAttribToNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 */) 
 	for (i = 0; i < sizeof(m_aryBaseAttrib)/sizeof(m_aryBaseAttrib[0]); i++)
 	{
 		const KItemNormalAttrib* pAttrib;
-		pAttrib = &(m_aryBaseAttrib[i]);
+		KItemNormalAttrib AppliedAttrib = GetAppliedAttrib(m_aryBaseAttrib[i]);
+		pAttrib = &AppliedAttrib;
 		if (INVALID_ATTRIB != pAttrib->nAttribType)
 		{
 			g_NpcAttribModify.ModifyEquipmentAttrib(pNPC, pAttrib);
@@ -104,7 +118,8 @@ void KItem::ApplyMagicAttribToNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 */) 
 		if (i == 4 && bUpgradeGate && (m_dwUpgradeData & 0xff) < 9)
 			continue;
 		const KItemNormalAttrib* pAttrib;
-		pAttrib = &(m_aryMagicAttrib[i]);
+		KItemNormalAttrib AppliedAttrib = GetAppliedAttrib(m_aryMagicAttrib[i], TRUE);
+		pAttrib = &AppliedAttrib;
 
 		if (INVALID_ATTRIB != pAttrib->nAttribType)
 		{
@@ -156,7 +171,8 @@ void KItem::RemoveMagicAttribFromNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 *
 	for (i = 0; i < sizeof(m_aryBaseAttrib)/sizeof(m_aryBaseAttrib[0]); i++)
 	{
 		const KItemNormalAttrib* pAttrib;
-		pAttrib = &(m_aryBaseAttrib[i]);
+		KItemNormalAttrib AppliedAttrib = GetAppliedAttrib(m_aryBaseAttrib[i]);
+		pAttrib = &AppliedAttrib;
 		if (INVALID_ATTRIB != pAttrib->nAttribType)
 		{
 			KItemNormalAttrib RemoveAttrib;
@@ -179,7 +195,8 @@ void KItem::RemoveMagicAttribFromNPC(IN KNpc* pNPC, IN int nMagicActive /* = 0 *
 		if (i == 4 && bUpgradeGate && (m_dwUpgradeData & 0xff) < 9)
 			continue;
 		const KItemNormalAttrib* pAttrib;
-		pAttrib = &(m_aryMagicAttrib[i]);
+		KItemNormalAttrib AppliedAttrib = GetAppliedAttrib(m_aryMagicAttrib[i], TRUE);
+		pAttrib = &AppliedAttrib;
 
 		if (INVALID_ATTRIB != pAttrib->nAttribType)		// TODO: 为 -1 定义一个常量?
 		{

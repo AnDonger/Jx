@@ -143,6 +143,7 @@ public:
 	BOOL	LearnPlayerSkill(int nSkillID);
 	BOOL	IncreasePlayerSkillExp(int nSkillID, DWORD dwExp);
 	void	AddMonsterSkillExp(int nExp);
+	void	AddSummonKillSkillExp();
 	void	AddHitSkillExp(int nSkillID);
 	void	UpdateAuraSkillExp();
 	void	ResetAuraSkillExp();

@@ -146,6 +146,13 @@ struct	KSyncPos
 class KStateNode : public KNode
 {
 public:
+#ifdef _SERVER
+	int m_nLauncher;
+	DWORD m_dwLauncher;
+	BOOL m_bAura;
+	DWORD m_dwTargetSyncRevision;
+	KStateNode() : m_nLauncher(0), m_dwLauncher(0), m_bAura(FALSE), m_dwTargetSyncRevision(0) {}
+#endif
 
 	int				m_SkillID;					// 技能ID
 	int				m_Level;					// 技能等级
@@ -192,6 +199,21 @@ class KNpc
 {
 	friend class KNpcSet;
 public:
+
+#ifdef _SERVER
+	int m_nSummonOwner;
+	DWORD m_dwSummonOwner;
+	int m_nSummonSkill;
+	int m_nSummonIndex;
+	DWORD m_dwSummonId;
+	DWORD m_dwSummonTarget;
+	int GetCombatOwner() const;
+	int GetSummon() const;
+	void SyncSummon(BOOL bRemoved = FALSE);
+	void RefreshSummonAttributes(BOOL bCreated = FALSE);
+
+#endif
+	void ResetCurrentAttributes();
 	DWORD				m_dwID;					// Npc的ID
 	int					m_Index;				// Npc的索引
 	KIndexNode			m_Node;					// Npc's Node
@@ -230,6 +252,9 @@ public:
 	KState				m_FireArmor;
 	KState				m_ManaShield;
 
+#ifdef _SERVER
+	DWORD m_dwStateSkillRevision;
+#endif
 	KList				m_StateSkillList;		// 附加状态技能列表（同技能不叠加）
 	int					m_Camp;					// Npc的阵营
 	int					m_CurrentCamp;			// Npc的当前阵营
