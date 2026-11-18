@@ -928,6 +928,19 @@ struct GAME_STATE_EFFECT_SYNC
 	GAME_STATE_ATTRIBUTE Attributes[MAX_SKILL_STATE];
 };
 
+// F8/04 replaces one native IB graphic bitmap. Effect 1 is group 0 bit 0.
+struct GAME_IB_STATE_GRAPHICS_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	BYTE Group;
+	DWORD EntityId;
+	DWORD Graphics;
+};
+
+static_assert(sizeof(GAME_IB_STATE_GRAPHICS_SYNC) == 13, "F8/04 IB graphics");
+
 // Current target state list: F8/45 add, F8/46 remove; time is simulation frames.
 // These packets have no entity ID and are sent only to the selecting observer.
 struct GAME_TARGET_STATE_SYNC

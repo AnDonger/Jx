@@ -46,6 +46,8 @@ struct PLAYER_ITEM_BUFF_RULE
 	int ExperiencePercent;
 	int SkillExpPercent;
 	BOOL Permanent;
+	BOOL StackTime;
+	DWORD StateGraphics[4];
 	int AttributeCount;
 	KMagicAttrib Attributes[18];
 };

@@ -466,6 +466,7 @@ static const CURRENT_MAGIC_NAME CurrentMagicNames[] =
 	{175, "addearthmagic_v"},
 	{177, "addearthdamage_v"},
 	{182, "addallattribute_v"},
+	{186, "addtakeweight"},
 	{191, "magic_deadlystrikeResist_p"},
 	{192, "magic_fatallystrikeResist_p"},
 	{194, "magic_jixuezhan_add"},

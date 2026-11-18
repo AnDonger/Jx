@@ -386,6 +386,20 @@ BOOL KSkillManager::LoadItemBuffRules()
 		if (nDetail == 0 && nSkillId > 0 && nSkillId < MAX_SKILL)
 			m_ItemStateSkills[nSkillId] = TRUE;
 	}
+	// Native attribute 289 refers to the buff-effect index, not a combat statistic.
+	BOOL ValidGraphics[129] = {};
+	KTabFile Graphics;
+	if (Graphics.Load("\\settings\\npcres\\buff特效状态参照表.txt"))
+	{
+		for (int i = 2; i <= Graphics.GetHeight(); i++)
+		{
+			int nEffect = 0, nState = 0;
+			Graphics.GetInteger(i, 1, 0, &nEffect);
+			Graphics.GetInteger(i, 2, 0, &nState);
+			if (nEffect > 0 && nEffect <= 128 && nState > 0)
+				ValidGraphics[nEffect] = TRUE;
+		}
+	}
 	KTabFile File;
 	if (!File.Load("\\settings\\item\\001\\ibitem.txt"))
 		return FALSE;
@@ -400,8 +414,8 @@ BOOL KSkillManager::LoadItemBuffRules()
 		File.GetInteger(nRow, "自身额外叠加最大数量", 0, &nMaxCount);
 		File.GetInteger(nRow, 14, -1, &nOffline);
 		File.GetInteger(nRow, 16, -1, &nMode);
-		if (Rule.Duration <= 0 || nMaxCount <= 0 || nMaxCount > 10000 || nMode != 0 ||
-			(nOffline != 0 && nOffline != 1 && nOffline != 2) || (__int64)Rule.Duration * nMaxCount > 0x7fffffff)
+		if (Rule.Duration <= 0 || nMaxCount < 0 || nMaxCount > 10000 || nMode != 0 ||
+			(nOffline != 0 && nOffline != 1 && nOffline != 2) || (__int64)Rule.Duration * max(1, nMaxCount) > 0x7fffffff)
 			continue;
 		BOOL bSupported = TRUE;
 		for (int nColumn = 31; nColumn <= 66; nColumn += 2)
@@ -430,6 +444,12 @@ BOOL KSkillManager::LoadItemBuffRules()
 			case 92: Rule.ManaReplenish += nValue; break;
 			case 181: Rule.ExperiencePercent += nValue; break;
 			case 187: Rule.SkillExpPercent += nValue; break;
+			case 289:
+				if (nValue <= 0 || nValue > 128 || !ValidGraphics[nValue])
+					bSupported = FALSE;
+				else
+					Rule.StateGraphics[(nValue - 1) / 32] |= 1UL << ((nValue - 1) % 32);
+				break;
 			default:
 				// Recovery and experience above have dedicated consumers, not equipment mappings.
 				if (GetInternalMagicAttribId(nAttribute) == INVALID_ATTRIB)
@@ -445,7 +465,14 @@ BOOL KSkillManager::LoadItemBuffRules()
 		if (!bSupported)
 			continue;
 		Rule.Permanent = nOffline == 2;
-		Rule.MaxDuration = Rule.Permanent ? 0x7fffffff : Rule.Duration * nMaxCount;
+		Rule.StackTime = nMaxCount > 0;
+		Rule.MaxDuration = Rule.Permanent ? 0x7fffffff : Rule.Duration * max(1, nMaxCount);
+		// Nonstacking graphical states can have several item variants with explicit
+		// script durations. Duration remains the table default; MaxDuration is only
+		// the serialization/argument ceiling, never a grant or a stacking allowance.
+		if (!Rule.StackTime && !Rule.Permanent &&
+			(Rule.StateGraphics[0] || Rule.StateGraphics[1] || Rule.StateGraphics[2] || Rule.StateGraphics[3]))
+			Rule.MaxDuration = max(Rule.MaxDuration, 365 * 86400);
 		Rule.OfflineTime = nOffline == 1;
 		Rule.Loaded = TRUE;
 		if (m_ItemBuffRules[nId].Loaded)

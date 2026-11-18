@@ -3855,6 +3855,40 @@ BOOL KNpc::SendPositionSync(int nClient)
 	return SUCCEEDED(g_pServer->PackDataToClient(nClient, (BYTE*)&Position, sizeof(Position)));
 }
 
+void KNpc::SendItemBuffGraphics(int nClient)
+{
+	if (!IsPlayer() || !g_pServer || m_SubWorldIndex < 0 || m_RegionIndex < 0)
+		return;
+	DWORD Graphics[4];
+	m_SkillList.GetItemBuffGraphics(Graphics);
+	const POINT Offsets[8] = {{0, 32}, {-16, 32}, {-16, 0}, {-16, -32},
+		{0, -32}, {16, -32}, {16, 0}, {16, 32}};
+	for (int i = 0; i < 4; i++)
+	{
+		GAME_IB_STATE_GRAPHICS_SYNC Sync = {};
+		Sync.ProtocolType = 0xF8;
+		Sync.Length = sizeof(Sync) - 1;
+		Sync.SubType = 4;
+		Sync.Group = (BYTE)i;
+		Sync.EntityId = m_dwID;
+		Sync.Graphics = Graphics[i];
+		if (nClient >= 0)
+		{
+			g_pServer->PackDataToClient(nClient, &Sync, sizeof(Sync));
+			continue;
+		}
+		int nCount = MAX_PLAYER;
+		CURREGION.BroadCast(&Sync, sizeof(Sync), nCount, m_MapX, m_MapY);
+		for (int j = 0; j < 8; j++)
+		{
+			int nRegion = CURREGION.m_nConnectRegion[j];
+			if (nRegion >= 0)
+				SubWorld[m_SubWorldIndex].m_Region[nRegion].BroadCast(&Sync, sizeof(Sync),
+					nCount, m_MapX - Offsets[j].x, m_MapY - Offsets[j].y);
+		}
+	}
+}
+
 BOOL KNpc::SendSyncData(int nClient)
 {
 	BOOL	bRet = FALSE;
@@ -3950,6 +3984,8 @@ BOOL KNpc::SendSyncData(int nClient)
 		}
 		if (GetMorphType() >= 0)
 			SendMorphSync(nClient);
+		// Entity creation must precede effects, including nearby entrants and map changes.
+		SendItemBuffGraphics(nClient);
 		// 人物外观初始化会重置附属状态，宠物必须排在4C、4A之后。
 		// 初次登录等44和装备等初始化完成，在STEP_SYNC_END统一创建。
 		if (nClient != Player[m_nPlayerIdx].m_nNetConnectIdx || Player[m_nPlayerIdx].m_bFinishLoading)

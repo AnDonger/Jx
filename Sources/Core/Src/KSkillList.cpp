@@ -1234,6 +1234,8 @@ BOOL KSkillList::CanAddItemBuff(int nTemplate, int nSeconds)
 	if (!nSeconds)
 		nSeconds = pRule->Duration;
 	DWORD dwStoredId = GetItemBuffStorageId(nTemplate);
+	if (!pRule->StackTime && GetPlayerSkillBuffTime(dwStoredId) > 0)
+		return FALSE;
 	if (nSeconds <= 0 || nSeconds > pRule->MaxDuration ||
 		(!pRule->Permanent && GetPlayerSkillBuffTime(dwStoredId) > pRule->MaxDuration - nSeconds))
 		return FALSE;
@@ -1274,6 +1276,25 @@ void KSkillList::ApplyItemBuffAttributes()
 		if (!pRule) continue;
 		for (int j = 0; j < pRule->AttributeCount; j++)
 			g_NpcAttribModify.ModifyEquipmentAttrib(&Npc[m_nNpcIndex], &pRule->Attributes[j]);
+	}
+}
+
+void KSkillList::GetItemBuffGraphics(DWORD* pGraphics) const
+{
+	if (!pGraphics)
+		return;
+	memset(pGraphics, 0, 4 * sizeof(DWORD));
+	DWORD dwNow = (DWORD)time(NULL);
+	for (int i = 0; i < 16; i++)
+	{
+		const PLAYER_SKILL_BUFF& Buff = m_SkillBuffs[i];
+		if (Buff.EndTime <= dwNow)
+			continue;
+		const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(GetItemBuffTemplateId(Buff.BuffId));
+		if (!pRule)
+			continue;
+		for (int j = 0; j < 4; j++)
+			pGraphics[j] |= pRule->StateGraphics[j];
 	}
 }
 
@@ -1350,6 +1371,8 @@ BOOL KSkillList::AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, 
 		return FALSE;
 	const PLAYER_ITEM_BUFF_RULE* pItemRule = g_SkillManager.GetItemBuffRule(GetItemBuffTemplateId(dwBuffId));
 	BOOL bPermanent = pItemRule && pItemRule->Permanent;
+	if (bAddTime && pItemRule && !pItemRule->StackTime && GetPlayerSkillBuffTime(dwBuffId) > 0)
+		return FALSE;
 	int nLeft = bAddTime && !bPermanent ? GetPlayerSkillBuffTime(dwBuffId) : 0;
 	int nMaxDuration = GetBuffMaxDuration(dwBuffId);
 	if (nLeft > nMaxDuration - nSeconds)
@@ -1478,6 +1501,7 @@ void KSkillList::SyncPlayerSkillBuffs(BOOL bInitial)
 	WORD wLength = nOffset - 1;
 	memcpy(Buffer + 1, &wLength, sizeof(wLength));
 	g_pServer->PackDataToClient(nClient, Buffer, nOffset);
+	Npc[m_nNpcIndex].SendItemBuffGraphics(bInitial ? nClient : -1);
 	Player[nPlayer].SendCurNormalSyncData();
 }
 #endif

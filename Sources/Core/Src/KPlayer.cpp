@@ -905,7 +905,7 @@ BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 			sSync.WorldRank = (WORD)m_nWorldStat;
 			sSync.Money = m_ItemList.GetMoney(room_equipment);
 			sSync.Reputation = m_cTask.GetSaveVal(TASKVALUE_REPUTE);
-			sSync.WeightMax = m_nWeightMax;
+			sSync.WeightMax = max(0, m_nWeightMax + Npc[m_nIndex].m_CurrentAdditionalAttrib[186]);
 			sSync.ServerTime = (DWORD)time(NULL);
 			if (SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSync, sizeof(GAME_CURPLAYER_SYNC))))
 			{

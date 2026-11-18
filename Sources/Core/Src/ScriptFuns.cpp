@@ -621,9 +621,11 @@ int LuaGetUseItemInfo(Lua_State* L)
 // 发奖失败由外层快照完整恢复，不按模板另找同名礼包扣取。
 int LuaConsumeUseItem(Lua_State* L)
 {
-	int nPlayer = GetPlayerIndex(L);
-	KNpcScriptExchange* pState = nPlayer > 0 ? g_NpcScriptExchange[nPlayer] : NULL;
 	int nArguments = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	// Legacy GetPlayerIndex pushes its context global; it is not a Lua argument.
+	Lua_SetTopIndex(L, nArguments);
+	KNpcScriptExchange* pState = nPlayer > 0 ? g_NpcScriptExchange[nPlayer] : NULL;
 	double Count = nArguments == 0 ? 1 : Lua_ValueToNumber(L, 1);
 	int nItem = nPlayer > 0 ? Player[nPlayer].FindUseScriptItem() : 0;
 	BOOL bConsumeOnUse = FALSE;

@@ -663,6 +663,7 @@ public:
 	void				ExecuteRevive(){DoRevive();};
 	BOOL				SendSyncData(int nClient);						// 向一个客户端发完整同步数据
 	BOOL				SendPositionSync(int nClient);
+	void SendItemBuffGraphics(int nClient = -1);
 	BOOL CanPolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds);
 	BOOL PolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds);
 	int GetMorphType() const;
