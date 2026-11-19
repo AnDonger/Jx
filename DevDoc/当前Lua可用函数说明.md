@@ -220,18 +220,19 @@ Say("请选择", 2, "继续/OnContinue", "关闭/OnClose")
 状态：实现已核对。作用域：游戏／NPC脚本。
 
 ```lua
-SayTask(textOrId, options)
+SayTask(textOrId, options [, layout])
 ```
 
 - 参数：textOrId：对白或文本ID；options：连续数组，每项 {"按钮文本", "回调名", show=1}；show省略则显示，show=0则隐藏。
 - 返回：无。
-- 限制／说明：扫描最多256行；回调名不带“文本/”前缀。回调必须是当前脚本的普通函数名，不支持括号参数表达式。先构造完整options数组，再调用SayTask；调用后修改数组不会补发选项。文字正文按0x79 Selector=0、Value=0发送普通列表，数字资源ID按Selector=1、Value=1发送资源列表；不能将文字列表固定发成类型1，否则新版客户端可能把选项挤在对话顶部。
-- 实现：[`LuaSayTask`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:788)。
+- 限制／说明：扫描最多256行；回调名不带“文本/”前缀。回调必须是当前脚本的普通函数名，不支持括号参数表达式。先构造完整options数组，再调用SayTask；调用后修改数组不会补发选项。正文来源与布局互相独立：文字正文Selector=0，数字资源ID正文Selector=1；layout省略为1（逐项按钮），显式传0为文字列表，显式传1为按钮。仅接受数字0或1，其他值／多余参数不发送菜单，也不改写已有回调状态。不要根据正文是否为文字来自动选择布局；雷震子等文字正文菜单原为按钮，彩云仙子外装配方列表须显式传0。过滤show、选项顺序、回调绑定、延迟UI与事务回滚范围不变，不直接访问数据库。
+- 实现：[`LuaSayTask`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1285)。
 
 用法示例：
 
 ```lua
-SayTask("请选择", {{"继续", "OnContinue"}, {"关闭", "OnClose"}})
+SayTask("请选择", {{"继续", "OnContinue"}, {"关闭", "OnClose"}}) -- 默认逐项按钮
+SayTask("请选择配方", {{"配方一", "RecipeOne"}, {"返回", "main"}}, 0) -- 文字列表
 ```
 
 ### `Talk`

@@ -1286,8 +1286,20 @@ int LuaSayTask(Lua_State *L)
 {
 	int nParamNum = Lua_GetTopIndex(L);
 	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex <= 0 || nParamNum < 2 || !Lua_IsTable(L, 2))
+	if (nPlayerIndex <= 0 || nParamNum < 2 || nParamNum > 3 || !Lua_IsTable(L, 2))
 		return 0;
+
+	// 正文来源与选项布局独立：默认按钮，明确传0才使用文字列表。
+	int nDialogType = 1;
+	if (nParamNum == 3)
+	{
+		if (!Lua_IsNumber(L, 3))
+			return 0;
+		double fDialogType = Lua_ValueToNumber(L, 3);
+		if (fDialogType != 0 && fDialogType != 1)
+			return 0;
+		nDialogType = (int)fDialogType;
+	}
 
 	KPlayer& Role = Player[nPlayerIndex];
 	Role.m_bWaitingPlayerFeedBack = false;
@@ -1297,13 +1309,12 @@ int LuaSayTask(Lua_State *L)
 	UiInfo.m_bUIId = UI_SELECTDIALOG;
 	UiInfo.m_bParam2 = 1;
 	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
+	UiInfo.m_nParam = nDialogType;
 	int nLength = 0;
 	if (Lua_IsNumber(L, 1))
 	{
 		int nQuestion = (int)Lua_ValueToNumber(L, 1);
 		UiInfo.m_bParam1 = 1;
-		// 资源ID对白为类型1，字面量列表保留类型0；与正式服0x79布局一致。
-		UiInfo.m_nParam = 1;
 		memcpy(UiInfo.m_pContent, &nQuestion, sizeof(nQuestion));
 		nLength = sizeof(nQuestion);
 	}
