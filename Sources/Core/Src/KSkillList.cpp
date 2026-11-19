@@ -1156,7 +1156,7 @@ void KSkillList::RefreshPlayerSkillLevels()
 	}
 }
 
-int KSkillList::GetPlayerSkillBuffTime(DWORD dwBuffId)
+int KSkillList::GetPlayerSkillBuffTime(DWORD dwBuffId) const
 {
 	DWORD dwNow = (DWORD)time(NULL);
 	for (int i = 0; i < 16; i++)

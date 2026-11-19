@@ -123,6 +123,8 @@ void KNpc::Init()
 	m_nMorphType = -1;
 	m_bMorphCanCast = TRUE;
 	m_dwMorphEndTime = 0;
+	m_nMorphBuffTemplate = 0;
+	m_dwMorphItemEndTime = 0;
 	m_ProcessAI = 1;
 	m_Kind = kind_normal;
 #ifdef _SERVER
@@ -416,7 +418,7 @@ void KNpc::Activate()
 //	m_bActivateFlag = TRUE;
 
 #ifdef _SERVER
-	if (m_nMorphType >= 0 && m_dwMorphEndTime <= (DWORD)time(NULL))
+	if (m_nMorphType >= 0 && GetMorphType() < 0)
 		PolyMorph(-1, TRUE, 0, -1, 0);
 #endif
 
@@ -3772,13 +3774,21 @@ BOOL KNpc::SetPlayerIdx(int nIdx)
 
 #ifdef _SERVER
 // 只开放已实现的通用参数组合；护身和独立移速尚无可靠协议时明确拒绝。
-BOOL KNpc::CanPolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds)
+BOOL KNpc::CanPolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds, int nBuffTemplate)
 {
 	if (!IsPlayer() || nSafeGuard != 0 || nSpeed != -1 || (bCanCast != 0 && bCanCast != 1))
 		return FALSE;
 	if (nType == -1)
 		return nSeconds == 0;
-	if (nType < 0 || nType >= 0x7FFF || nSeconds <= 0 || nSeconds > 100 * 3600 ||
+	int nMaxSeconds = 100 * 3600;
+	if (nBuffTemplate)
+	{
+		const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(nBuffTemplate);
+		if (!pRule || pRule->Permanent || pRule->StackTime || pRule->OfflineTime)
+			return FALSE;
+		nMaxSeconds = pRule->MaxDuration;
+	}
+	if (nType < 0 || nType >= 0x7FFF || nSeconds <= 0 || nSeconds > nMaxSeconds ||
 		nType + 2 > g_NpcSetting.GetHeight())
 		return FALSE;
 	char szResource[128];
@@ -3788,16 +3798,29 @@ BOOL KNpc::CanPolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, in
 
 int KNpc::GetMorphType() const
 {
-	return m_nMorphType >= 0 && m_dwMorphEndTime > (DWORD)time(NULL) ? m_nMorphType : -1;
+	DWORD dwNow = (DWORD)time(NULL);
+	if (m_nMorphType < 0 || m_dwMorphEndTime <= dwNow ||
+		(m_dwMorphItemEndTime && m_dwMorphItemEndTime <= dwNow))
+		return -1;
+	if (m_nMorphBuffTemplate && !m_SkillList.GetPlayerSkillBuffTime(KSkillList::GetItemBuffStorageId(m_nMorphBuffTemplate)))
+		return -1;
+	return m_nMorphType;
 }
 
-BOOL KNpc::PolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds)
+BOOL KNpc::PolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds, int nBuffTemplate, DWORD dwItemEndTime)
 {
-	if (!CanPolyMorph(nType, bCanCast, nSafeGuard, nSpeed, nSeconds))
+	if (!CanPolyMorph(nType, bCanCast, nSafeGuard, nSpeed, nSeconds, nBuffTemplate))
 		return FALSE;
+	if (nBuffTemplate && (nType < 0 ||
+		!m_SkillList.GetPlayerSkillBuffTime(KSkillList::GetItemBuffStorageId(nBuffTemplate))))
+		return FALSE;
+	if (m_nMorphBuffTemplate && m_nMorphBuffTemplate != nBuffTemplate)
+		m_SkillList.RemovePlayerSkillBuff(KSkillList::GetItemBuffStorageId(m_nMorphBuffTemplate));
 	m_nMorphType = nType;
 	m_bMorphCanCast = nType >= 0 ? bCanCast : TRUE;
 	m_dwMorphEndTime = nType >= 0 ? (DWORD)time(NULL) + nSeconds : 0;
+	m_nMorphBuffTemplate = nType >= 0 ? nBuffTemplate : 0;
+	m_dwMorphItemEndTime = nType >= 0 ? dwItemEndTime : 0;
 	// 当前客户端4B尾部flags=08、WORD=99由正式服太阳变身记录确认。
 	if (m_RegionIndex >= 0 && m_SubWorldIndex >= 0)
 	{

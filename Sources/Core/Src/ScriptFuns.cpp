@@ -213,6 +213,8 @@ struct KNpcScriptExchange
 	int MorphType;
 	BOOL MorphCanCast;
 	int MorphSeconds;
+	int MorphBuffTemplate;
+	DWORD MorphItemEndTime;
 	std::vector<KNpcScriptItem> Items;
 	std::vector<KNpcScriptNotice> Notices;
 	int Money[room_num];
@@ -265,6 +267,8 @@ KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
 	pState->Expansion = Player[m_nPlayer].m_InventoryExpansion;
 	memcpy(pState->Buffs, Npc[Player[m_nPlayer].m_nIndex].m_SkillList.m_SkillBuffs, sizeof(pState->Buffs));
 	pState->HasMorph = FALSE;
+	pState->MorphBuffTemplate = 0;
+	pState->MorphItemEndTime = 0;
 	pState->Depth = 1;
 	pState->Experience = 0;
 	pState->Failed = FALSE;
@@ -368,7 +372,8 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 		}
 	}
 	if (!pState->Failed && pState->HasMorph &&
-		!Npc[Role.m_nIndex].PolyMorph(pState->MorphType, pState->MorphCanCast, 0, -1, pState->MorphSeconds))
+		!Npc[Role.m_nIndex].PolyMorph(pState->MorphType, pState->MorphCanCast, 0, -1, pState->MorphSeconds,
+			pState->MorphBuffTemplate, pState->MorphItemEndTime))
 		pState->Failed = TRUE;
 	if (pState->Failed)
 	{
@@ -590,7 +595,7 @@ int KNpcScriptSelection::GetResult() const
 	return m_nPlayer ? g_NpcSelectedItems[m_nPlayer]->Result : -1;
 }
 
-static void SetScriptItemInteger(Lua_State* L, int nTable, const char* pszName, int nValue)
+static void SetScriptItemInteger(Lua_State* L, int nTable, const char* pszName, double nValue)
 {
 	Lua_PushString(L, pszName);
 	Lua_PushNumber(L, nValue);
@@ -614,6 +619,8 @@ int LuaGetUseItemInfo(Lua_State* L)
 	SetScriptItemInteger(L, nTable, "Particular", Item[nItem].GetParticular());
 	SetScriptItemInteger(L, nTable, "Level", Item[nItem].GetLevel());
 	SetScriptItemInteger(L, nTable, "Count", Item[nItem].GetStackCount());
+	SetScriptItemInteger(L, nTable, "ObtainedTime", Item[nItem].GetValidityStartTime());
+	SetScriptItemInteger(L, nTable, "EndTime", Item[nItem].GetValidityEndTime());
 	return 1;
 }
 
@@ -1290,12 +1297,13 @@ int LuaSayTask(Lua_State *L)
 	UiInfo.m_bUIId = UI_SELECTDIALOG;
 	UiInfo.m_bParam2 = 1;
 	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
-	UiInfo.m_nParam = 1;
 	int nLength = 0;
 	if (Lua_IsNumber(L, 1))
 	{
 		int nQuestion = (int)Lua_ValueToNumber(L, 1);
 		UiInfo.m_bParam1 = 1;
+		// 资源ID对白为类型1，字面量列表保留类型0；与正式服0x79布局一致。
+		UiInfo.m_nParam = 1;
 		memcpy(UiInfo.m_pContent, &nQuestion, sizeof(nQuestion));
 		nLength = sizeof(nQuestion);
 	}
@@ -1497,6 +1505,73 @@ int LuaGetMorphType(Lua_State* L)
 {
 	int nPlayer = GetPlayerIndex(L);
 	Lua_PushNumber(L, nPlayer > 0 ? Npc[Player[nPlayer].m_nIndex].GetMorphType() : -1);
+	return 1;
+}
+
+// 通用外观与原IB状态联动；只允许当前真实道具的自动事务，提交前不改形态。
+int LuaSetItemAppearance(Lua_State* L)
+{
+	int nCount = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nCount);
+	KNpcScriptExchange* pState = nPlayer > 0 ? g_NpcScriptExchange[nPlayer] : NULL;
+	int nItem = nPlayer > 0 ? Player[nPlayer].FindUseScriptItem() : 0;
+	BOOL bConsumeOnUse = FALSE;
+	if (nItem)
+		ItemGen.GetUseItemScript(Item[nItem], &bConsumeOnUse);
+	int Args[3] = {0};
+	BOOL bValid = pState && nItem && !pState->HasMorph && !pState->HasTeleport && !pState->ConsumedUseItem &&
+		(nCount == 2 || nCount == 3) && !bConsumeOnUse;
+	for (int i = 0; i < nCount && bValid; i++)
+	{
+		double Value = Lua_ValueToNumber(L, i + 1);
+		bValid = Lua_IsNumber(L, i + 1) && Value >= (i ? 0 : -1) && Value <= 0x7fffffff && Value == (int)Value;
+		Args[i] = (int)Value;
+	}
+	const PLAYER_ITEM_BUFF_RULE* pRule = bValid && Args[1] > 0 ? g_SkillManager.GetItemBuffRule(Args[1]) : NULL;
+	DWORD dwItemEndTime = 0;
+	int nSeconds = 0;
+	if (bValid && Args[0] >= 0)
+	{
+		bValid = pRule && !pRule->Permanent && !pRule->StackTime && !pRule->OfflineTime;
+		if (bValid)
+		{
+			nSeconds = nCount == 3 ? Args[2] : pRule->Duration;
+			bValid = nSeconds > 0 && nSeconds <= pRule->MaxDuration;
+			__int64 EndTime = Item[nItem].GetValidityEndTime();
+			DWORD dwNow = (DWORD)time(NULL);
+			if (EndTime)
+			{
+				bValid = bValid && EndTime >= dwNow && EndTime < MAXDWORD;
+				dwItemEndTime = (DWORD)EndTime + 1;
+				nSeconds = (int)min((__int64)nSeconds, EndTime + 1 - dwNow);
+			}
+		}
+	}
+	else if (bValid)
+		bValid = Args[0] == -1 && Args[1] == 0 && nCount == 2;
+	if (!bValid || !Npc[Player[nPlayer].m_nIndex].CanPolyMorph(Args[0], TRUE, 0, -1, nSeconds, Args[1]))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	KNpc& Owner = Npc[Player[nPlayer].m_nIndex];
+	if (Owner.m_nMorphBuffTemplate)
+		Owner.m_SkillList.RemovePlayerSkillBuff(KSkillList::GetItemBuffStorageId(Owner.m_nMorphBuffTemplate), FALSE);
+	if (Args[0] >= 0 && !Owner.m_SkillList.SetItemBuff(Args[1], nSeconds, FALSE))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	pState->HasMorph = TRUE;
+	pState->MorphType = Args[0];
+	pState->MorphCanCast = TRUE;
+	pState->MorphSeconds = nSeconds;
+	pState->MorphBuffTemplate = Args[1];
+	pState->MorphItemEndTime = dwItemEndTime;
+	Lua_PushNumber(L, 1);
 	return 1;
 }
 
@@ -7762,6 +7837,7 @@ TLua_Funcs GameScriptFuns[] =
 	{"Roulette", LuaRoulette},
 	{"GetMorphType", LuaGetMorphType},
 	{"PolyMorph", LuaPolyMorph},
+	{"SetItemAppearance", LuaSetItemAppearance},
 	{"GetLastSkillIdx", LuaGetLastSkillIdx},
 	{"IsSkillActivedByIdx", LuaIsSkillActivedByIdx},
 	{"GetSelectedItems", LuaGetSelectedItems},

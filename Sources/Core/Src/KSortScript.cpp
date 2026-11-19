@@ -182,7 +182,7 @@ static BOOL IsItemTransactionFunction(const std::string& Function)
 	{
 		"Say", "SayTask", "Talk", "MsgBox", "CloseDialog", "PutMessage", "Msg2Player", "WriteLog",
 		"HaveNormalItem", "HaveItem2", "IsExistItem", "DelNormalItem", "AddNormalItem", "AddNormalItem2", "AddNormalItemPile",
-		"AddEventItem", "AddOwnExp", "GetMorphType", "GetExtPoint", "GetBit", "SetBit",
+		"AddEventItem", "AddOwnExp", "GetMorphType", "SetItemAppearance", "GetExtPoint", "GetBit", "SetBit",
 		"GetCash", "Pay", "Earn", "GetCopperCashCount", "WasteCopperCash",
 		"GetTask", "SetTask", "GetTaskTemp", "SetTaskTemp", "GetTaskByte", "SetTaskByte",
 		"GetName", "GetLevel", "GetSex", "GetSeries", "GetPlayerType", "SystemTime",

@@ -158,7 +158,7 @@ public:
 	BOOL	AddItemStateBuff(int nSkillId, int nLevel, BOOL bSync = TRUE, BOOL bPeaceOnly = FALSE);
 	BOOL	AddPlayerSkillBuff(DWORD dwBuffId, int nSeconds, int nSkillId, int nValue, BOOL bAddTime, BOOL bSync = TRUE);
 	BOOL	RemovePlayerSkillBuff(DWORD dwBuffId, BOOL bSync = TRUE);
-	int		GetPlayerSkillBuffTime(DWORD dwBuffId);
+	int		GetPlayerSkillBuffTime(DWORD dwBuffId) const;
 	void	ExpirePlayerSkillBuffs();
 	void	SyncPlayerSkillBuffs(BOOL bInitial = FALSE);
 	int		GetSkillExpMultiplier();

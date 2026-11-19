@@ -59,6 +59,14 @@ struct PLAYER_MORPH_DATA
 };
 static_assert(sizeof(PLAYER_MORPH_DATA) == 12, "SPG1 v4 morph record");
 
+// v9追加变身所关联的原IB状态与道具绝对期限；在线时长沿用原Buff记录。
+struct PLAYER_MORPH_BUFF_DATA
+{
+	DWORD Template;
+	DWORD ItemEndTime;
+};
+static_assert(sizeof(PLAYER_MORPH_BUFF_DATA) == 8, "SPG1 v9 linked morph");
+
 static const DWORD PLAYER_SKILL_EXT_MAGIC = 0x31475053; // SPG1
 
 static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, KPlayer& Player)
@@ -78,14 +86,15 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	PLAYER_SKILL_EXT_HEADER Header;
 	memcpy(&Header, pData, sizeof(Header));
 	DWORD dwRecordSize = Header.Version >= 3 ? sizeof(PLAYER_SKILL_EXT_RECORD_V3) : sizeof(PLAYER_SKILL_EXT_RECORD);
-	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 8) ||
+	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 9) ||
 		Header.SkillCount != pRole->nFightSkillCount || Header.SkillCount >= MAX_NPCSKILL || Header.BuffCount > 16 ||
 		dwLength != sizeof(Header) + Header.SkillCount * dwRecordSize +
 		Header.BuffCount * sizeof(PLAYER_SKILL_BUFF) +
 		(Header.Version >= 2 ? (Header.Version >= 8 ? sizeof(PLAYER_PET_DATA) : (Header.Version >= 7 ? 68 : 48)) : 0) +
 		(Header.Version >= 4 ? sizeof(PLAYER_MORPH_DATA) : 0) +
 		(Header.Version >= 5 ? sizeof(PLAYER_INVENTORY_EXPANSION) : 0) +
-		(Header.Version >= 6 ? sizeof(DWORD) : 0))
+		(Header.Version >= 6 ? sizeof(DWORD) : 0) +
+		(Header.Version >= 9 ? sizeof(PLAYER_MORPH_BUFF_DATA) : 0))
 		return FALSE;
 	BOOL Seen[MAX_NPCSKILL];
 	PLAYER_SKILL_EXT_RECORD Records[MAX_NPCSKILL];
@@ -206,10 +215,10 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 		{
 			if (Morph.Type < 0 || Morph.Type >= 0x7FFF ||
 				(Morph.CanCast != FALSE && Morph.CanCast != TRUE) ||
-				(Morph.EndTime > dwNow && Morph.EndTime - dwNow > 100 * 3600) ||
+				(Header.Version < 9 && Morph.EndTime > dwNow && Morph.EndTime - dwNow > 100 * 3600) ||
 				!Npc[Player.m_nIndex].CanPolyMorph(Morph.Type, Morph.CanCast, 0, -1, 1))
 				return FALSE;
-			if (Morph.EndTime <= dwNow)
+			if (Header.Version < 9 && Morph.EndTime <= dwNow)
 			{
 				Morph.Type = -1;
 				Morph.CanCast = TRUE;
@@ -232,8 +241,43 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	if (Header.Version >= 6)
 	{
 		memcpy(&LastCampChangeTime, pData, sizeof(LastCampChangeTime));
+		pData += sizeof(LastCampChangeTime);
 		if (LastCampChangeTime > dwNow && LastCampChangeTime - dwNow > 180)
 			return FALSE;
+	}
+	PLAYER_MORPH_BUFF_DATA MorphBuff = {};
+	if (Header.Version >= 9)
+	{
+		memcpy(&MorphBuff, pData, sizeof(MorphBuff));
+		if (!MorphBuff.Template)
+		{
+			if (MorphBuff.ItemEndTime ||
+				(Morph.EndTime > dwNow && Morph.EndTime - dwNow > 100 * 3600))
+				return FALSE;
+		}
+		else
+		{
+			const PLAYER_ITEM_BUFF_RULE* pRule = g_SkillManager.GetItemBuffRule(MorphBuff.Template);
+			if (Morph.Type < 0 || !pRule || pRule->Permanent || pRule->StackTime || pRule->OfflineTime)
+				return FALSE;
+			DWORD dwBuffId = KSkillList::GetItemBuffStorageId(MorphBuff.Template);
+			Morph.EndTime = 0;
+			for (DWORD i = 0; i < Header.BuffCount; i++)
+			{
+				if (Buffs[i].BuffId != dwBuffId)
+					continue;
+				if (MorphBuff.ItemEndTime)
+					Buffs[i].EndTime = min(Buffs[i].EndTime, MorphBuff.ItemEndTime);
+				Morph.EndTime = Buffs[i].EndTime;
+			}
+		}
+		if (Morph.Type >= 0 && Morph.EndTime <= dwNow)
+		{
+			Morph.Type = -1;
+			Morph.CanCast = TRUE;
+			Morph.EndTime = 0;
+			MorphBuff.Template = MorphBuff.ItemEndTime = 0;
+		}
 	}
 	DWORD PreviousCastTimes[MAX_NPCSKILL];
 	for (int i = 0; i < MAX_NPCSKILL; i++)
@@ -253,6 +297,8 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	Npc[Player.m_nIndex].m_nMorphType = Morph.Type;
 	Npc[Player.m_nIndex].m_bMorphCanCast = Morph.CanCast;
 	Npc[Player.m_nIndex].m_dwMorphEndTime = Morph.EndTime;
+	Npc[Player.m_nIndex].m_nMorphBuffTemplate = MorphBuff.Template;
+	Npc[Player.m_nIndex].m_dwMorphItemEndTime = MorphBuff.ItemEndTime;
 	// 完整验证后再恢复状态，损坏的扩展不能写入一半技能或BUFF。
 	for (int i = 1; i < MAX_NPCSKILL; i++)
 	{
@@ -280,9 +326,9 @@ static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_
 		if (List.m_SkillBuffs[i].BuffId && List.m_SkillBuffs[i].EndTime > dwNow)
 			dwBuffCount++;
 	}
-	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 8, List.GetCount(), dwBuffCount};
+	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 9, List.GetCount(), dwBuffCount};
 	DWORD dwSize = sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD_V3) +
-		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet) + sizeof(PLAYER_MORPH_DATA) + sizeof(Expansion) + sizeof(LastCampChangeTime);
+		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet) + sizeof(PLAYER_MORPH_DATA) + sizeof(Expansion) + sizeof(LastCampChangeTime) + sizeof(PLAYER_MORPH_BUFF_DATA);
 	if (dwSize > dwCapacity)
 		return -1;
 	memcpy(pData, &Header, sizeof(Header));
@@ -324,6 +370,14 @@ static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_
 	memcpy(pData, &Expansion, sizeof(Expansion));
 	pData += sizeof(Expansion);
 	memcpy(pData, &LastCampChangeTime, sizeof(LastCampChangeTime));
+	pData += sizeof(LastCampChangeTime);
+	PLAYER_MORPH_BUFF_DATA MorphBuff = {};
+	if (Morph.Type >= 0 && Owner.m_nMorphBuffTemplate)
+	{
+		MorphBuff.Template = Owner.m_nMorphBuffTemplate;
+		MorphBuff.ItemEndTime = Owner.m_dwMorphItemEndTime;
+	}
+	memcpy(pData, &MorphBuff, sizeof(MorphBuff));
 	return dwSize;
 }
 

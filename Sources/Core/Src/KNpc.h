@@ -373,6 +373,8 @@ public:
 	int m_nMorphType;
 	BOOL m_bMorphCanCast;
 	DWORD m_dwMorphEndTime;
+	int m_nMorphBuffTemplate;
+	DWORD m_dwMorphItemEndTime;
 
 	char				Name[32];				// Npc的名称
 	int					m_nSex;					// Npc的性别0为男，1为女
@@ -664,8 +666,8 @@ public:
 	BOOL				SendSyncData(int nClient);						// 向一个客户端发完整同步数据
 	BOOL				SendPositionSync(int nClient);
 	void SendItemBuffGraphics(int nClient = -1);
-	BOOL CanPolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds);
-	BOOL PolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds);
+	BOOL CanPolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds, int nBuffTemplate = 0);
+	BOOL PolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds, int nBuffTemplate = 0, DWORD dwItemEndTime = 0);
 	int GetMorphType() const;
 	BOOL SendMorphSync(int nClient);
 	BYTE GetClientMenuState();
