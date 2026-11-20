@@ -3287,7 +3287,7 @@ void KProtocolProcess::RemoveRole(int nIndex, BYTE * pProtocol)
 void KProtocolProcess::NpcRequestCommand(int nIndex, BYTE* pProtocol)
 {
 	NPC_REQUEST_COMMAND *pNpcRequestSync = (NPC_REQUEST_COMMAND *)pProtocol;
-	NpcSet.SyncNpc(pNpcRequestSync->ID, Player[nIndex].m_nNetConnectIdx);
+	NpcSet.SyncNpc(pNpcRequestSync->ID, nIndex);
 }
 
 //-------------------------------------------------------------------------

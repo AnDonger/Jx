@@ -6513,6 +6513,9 @@ int KNpc::ChangeWorld(DWORD dwSubWorldID, int nX, int nY)
 	if (Player[m_nPlayerIdx].m_Pet.Type)
 		Player[m_nPlayerIdx].SendPetRemoveData(Player[m_nPlayerIdx].m_nNetConnectIdx);
 
+	// 在旧地图坐标及区域仍有效时通知观察者，不能只删除服务端链表。
+	NpcSet.BroadcastRemove(m_Index, Player[m_nPlayerIdx].m_nNetConnectIdx);
+
 	// 真正开始切换工作
 	if (m_SubWorldIndex >= 0 && m_RegionIndex >= 0)
 	{

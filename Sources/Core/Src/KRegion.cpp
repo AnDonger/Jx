@@ -697,7 +697,9 @@ void KRegion::Activate()
 			Current.m_RegionIndex >= SubWorld[Current.m_SubWorldIndex].m_nTotalRegion ||
 			&SubWorld[Current.m_SubWorldIndex].m_Region[Current.m_RegionIndex] != this)
 			continue;
-		if ((nCounter == m_nNpcSyncCounter / 2) && (m_nNpcSyncCounter & 1))
+		// 玩家固定每秒校正，不能随本区域怪物数量延长到数十秒。
+		if (Current.IsPlayer() ? ((SubWorld[Current.m_SubWorldIndex].m_dwCurrentTime + nNpcIdx) % 18 == 0) :
+			((nCounter == m_nNpcSyncCounter / 2) && (m_nNpcSyncCounter & 1)))
 			Current.NormalSync();
 		nCounter++;
 		Current.Activate();
@@ -1215,27 +1217,35 @@ void KRegion::SendSyncData(int nClient)
 	}
 }
 
-void KRegion::BroadCast(void* pBuffer, DWORD dwSize, int &nMaxCount, int nOX, int nOY)
+void KRegion::BroadCast(void* pBuffer, DWORD dwSize, int &nMaxCount, int nOX, int nOY, int nExceptClient)
 {
-#define	MAX_SYNC_RANGE	25
-	KIndexNode *pNode = NULL;
+	if (!g_pServer || !pBuffer || !dwSize || nMaxCount <= 0)
+		return;
 
-	pNode = (KIndexNode *)m_PlayerList.GetHead();
-	while(pNode && nMaxCount > 0)
+	// 调用者已选择周围九区域，与实体补同步的可见范围一致。
+	// 待机只表示角色空闲，不能停止接收附近动作或离场消息。
+	KIndexNode *pNode = (KIndexNode *)m_PlayerList.GetHead();
+	while (pNode && nMaxCount > 0)
 	{
-		_ASSERT(pNode->m_nIndex > 0 && pNode->m_nIndex < MAX_PLAYER);
 		int nPlayerIndex = pNode->m_nIndex;
-		int nNpcIndex = Player[nPlayerIndex].m_nIndex;
-		int nTX = Npc[nNpcIndex].m_MapX;
-		int nTY = Npc[nNpcIndex].m_MapY;
-		int nDX = nTX - nOX;
-		int nDY = nTY - nOY;
-		if (Player[pNode->m_nIndex].m_nNetConnectIdx >= 0 
-			&& (nDX * nDX + nDY * nDY) <= MAX_SYNC_RANGE * MAX_SYNC_RANGE
-			&& Player[pNode->m_nIndex].m_bSleepMode == FALSE)
-			g_pServer->PackDataToClient(Player[pNode->m_nIndex].m_nNetConnectIdx, (BYTE*)pBuffer, dwSize);
-		nMaxCount--;
 		pNode = (KIndexNode *)pNode->GetNext();
+		if (nPlayerIndex <= 0 || nPlayerIndex >= MAX_PLAYER)
+			continue;
+		int nNpcIndex = Player[nPlayerIndex].m_nIndex;
+		if (nNpcIndex <= 0 || nNpcIndex >= MAX_NPC ||
+			Player[nPlayerIndex].m_nNetConnectIdx < 0 ||
+			Player[nPlayerIndex].m_nNetConnectIdx == nExceptClient)
+			continue;
+		KNpc& Recipient = Npc[nNpcIndex];
+		if (!Recipient.IsPlayer() || Recipient.GetPlayerIdx() != nPlayerIndex ||
+			Recipient.m_SubWorldIndex < 0 || Recipient.m_SubWorldIndex >= MAX_SUBWORLD ||
+			Recipient.m_RegionIndex < 0 ||
+			Recipient.m_RegionIndex >= SubWorld[Recipient.m_SubWorldIndex].m_nTotalRegion ||
+			&SubWorld[Recipient.m_SubWorldIndex].m_Region[Recipient.m_RegionIndex] != this)
+			continue;
+		if (SUCCEEDED(g_pServer->PackDataToClient(Player[nPlayerIndex].m_nNetConnectIdx,
+			(BYTE*)pBuffer, dwSize)))
+			nMaxCount--;
 	}
 }
 

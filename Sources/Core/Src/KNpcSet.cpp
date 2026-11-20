@@ -571,25 +571,31 @@ int		KNpcSet::GetNextIdx(int nIdx)
 }
 
 #ifdef _SERVER
-BOOL KNpcSet::SyncNpc(DWORD dwID, int nClientIdx)
+BOOL KNpcSet::SyncNpc(DWORD dwID, int nPlayerIdx)
 {
-	int		nFindIndex;
+	if (!g_pServer || nPlayerIdx <= 0 || nPlayerIdx >= MAX_PLAYER ||
+		Player[nPlayerIdx].m_nNetConnectIdx < 0)
+		return FALSE;
+	int nObserver = Player[nPlayerIdx].m_nIndex;
+	if (nObserver <= 0 || nObserver >= MAX_NPC ||
+		Npc[nObserver].m_SubWorldIndex < 0 || Npc[nObserver].m_SubWorldIndex >= MAX_SUBWORLD ||
+		Npc[nObserver].m_RegionIndex < 0 ||
+		Npc[nObserver].m_RegionIndex >= SubWorld[Npc[nObserver].m_SubWorldIndex].m_nTotalRegion)
+		return FALSE;
 
-	nFindIndex = SearchID(dwID);
-	if (nFindIndex <= 0)
+	// 迟到的补实体请求不能把已过图角色重新建立在旧地图上。
+	int nFindIndex = Player[nPlayerIdx].FindAroundNpc(dwID);
+	if (nFindIndex <= 0 || Npc[nFindIndex].m_bExchangeServer)
 	{
-		NPC_REQUEST_FAIL	RequestFail;
-
+		NPC_REQUEST_FAIL RequestFail = {};
 		RequestFail.ProtocolType = s2c_requestnpcfail;
 		RequestFail.ID = dwID;
-		
-		if (g_pServer)
-			g_pServer->PackDataToClient(nClientIdx, &RequestFail, sizeof(NPC_REQUEST_FAIL));
+		g_pServer->PackDataToClient(Player[nPlayerIdx].m_nNetConnectIdx, &RequestFail, sizeof(RequestFail));
 		return FALSE;
 	}
-	Npc[nFindIndex].SendSyncData(nClientIdx);
-	return TRUE;
+	return Npc[nFindIndex].SendSyncData(Player[nPlayerIdx].m_nNetConnectIdx);
 }
+
 #endif
 
 #ifndef _SERVER
@@ -1307,8 +1313,10 @@ void	KInstantSpecial::PlaySound(int nNo)
 
 
 #ifdef _SERVER
-void KNpcSet::BroadcastRemove(int nIdx)
+void KNpcSet::BroadcastRemove(int nIdx, int nExceptClient)
 {
+	if (!g_pServer || nIdx <= 0 || nIdx >= MAX_NPC || !Npc[nIdx].m_dwID)
+		return;
 	NPC_REMOVE_SYNC	NetCommand;
 
 	NetCommand.ProtocolType = (BYTE)s2c_npcremove;
@@ -1317,7 +1325,7 @@ void KNpcSet::BroadcastRemove(int nIdx)
 	int nSubWorld = Npc[nIdx].m_SubWorldIndex;
 	int nRegion = Npc[nIdx].m_RegionIndex;
 
-	if (nSubWorld >= 0 && nSubWorld <= MAX_SUBWORLD && nRegion >= 0 && nRegion <= SubWorld[nSubWorld].m_nTotalRegion)
+	if (nSubWorld >= 0 && nSubWorld < MAX_SUBWORLD && nRegion >= 0 && nRegion < SubWorld[nSubWorld].m_nTotalRegion)
 	{
 		POINT	POff[8] =
 		{
@@ -1331,7 +1339,7 @@ void KNpcSet::BroadcastRemove(int nIdx)
 			{16, 32},
 		};
 		int nMaxCount = MAX_BROADCAST_COUNT;
-		SubWorld[nSubWorld].m_Region[nRegion].BroadCast(&NetCommand, sizeof(NetCommand), nMaxCount, Npc[nIdx].m_MapX, Npc[nIdx].m_MapY);
+		SubWorld[nSubWorld].m_Region[nRegion].BroadCast(&NetCommand, sizeof(NetCommand), nMaxCount, Npc[nIdx].m_MapX, Npc[nIdx].m_MapY, nExceptClient);
 
 		int nConRegion;
 		for (int i = 0; i < 8; i++)
@@ -1339,7 +1347,7 @@ void KNpcSet::BroadcastRemove(int nIdx)
 			nConRegion = SubWorld[nSubWorld].m_Region[nRegion].m_nConnectRegion[i];
 			if (nConRegion == -1)
 				continue;
-			SubWorld[nSubWorld].m_Region[nConRegion].BroadCast(&NetCommand, sizeof(NetCommand), nMaxCount, Npc[nIdx].m_MapX - POff[i].x, Npc[nIdx].m_MapY - POff[i].y);
+			SubWorld[nSubWorld].m_Region[nConRegion].BroadCast(&NetCommand, sizeof(NetCommand), nMaxCount, Npc[nIdx].m_MapX - POff[i].x, Npc[nIdx].m_MapY - POff[i].y, nExceptClient);
 		}
 	}
 }

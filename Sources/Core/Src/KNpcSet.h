@@ -196,10 +196,10 @@ public:
 	void RemoveOwnedSummon(int nOwner);
 	void MoveOwnedSummon(int nOwner);
 	void NotifySummonAttacked(int nVictim, int nAttacker);
-	BOOL SyncNpc(DWORD dwID, int nClientIdx);
+	BOOL SyncNpc(DWORD dwID, int nPlayerIdx);
+	void BroadcastRemove(int nIndex, int nExceptClient = -1);
 #endif
 private:
-	void BroadcastRemove(int nIndex);
 	void			SetID(int m_nIndex);
 	int				FindFree();
 

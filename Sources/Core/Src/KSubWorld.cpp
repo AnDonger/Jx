@@ -1076,10 +1076,45 @@ void KSubWorld::ProcessMsg(KWorldMsgNode *pMsg)
 }
 
 #ifdef _SERVER
+static BOOL IsRegionInView(KSubWorld& World, int nCenter, int nRegion)
+{
+	if (nCenter < 0 || nCenter >= World.m_nTotalRegion ||
+		nRegion < 0 || nRegion >= World.m_nTotalRegion)
+		return FALSE;
+	if (nCenter == nRegion)
+		return TRUE;
+	for (int i = 0; i < 8; i++)
+		if (World.m_Region[nCenter].m_nConnectRegion[i] == nRegion)
+			return TRUE;
+	return FALSE;
+}
+
 void KSubWorld::NpcChangeRegion(int nSrcRnidx, int nDesRnIdx, int nIdx)
 {
 	if (nIdx <= 0 || nIdx >= MAX_NPC)
 		return;
+
+	// 跨区域只通知旧视野减去新视野的观察者，重叠区域不能误删。
+	if (g_pServer && nSrcRnidx >= 0 && nSrcRnidx < m_nTotalRegion &&
+		nDesRnIdx >= 0 && nDesRnIdx < m_nTotalRegion && nSrcRnidx != nDesRnIdx)
+	{
+		NPC_REMOVE_SYNC Remove = {};
+		Remove.ProtocolType = (BYTE)s2c_npcremove;
+		Remove.ID = Npc[nIdx].m_dwID;
+		int nExceptClient = -1;
+		int nPlayer = Npc[nIdx].GetPlayerIdx();
+		if (Npc[nIdx].IsPlayer() && nPlayer > 0 && nPlayer < MAX_PLAYER)
+			nExceptClient = Player[nPlayer].m_nNetConnectIdx;
+		int nMaxCount = MAX_PLAYER;
+		for (int i = -1; i < 8; i++)
+		{
+			int nOldRegion = i < 0 ? nSrcRnidx : m_Region[nSrcRnidx].m_nConnectRegion[i];
+			if (nOldRegion < 0 || nOldRegion >= m_nTotalRegion ||
+				IsRegionInView(*this, nDesRnIdx, nOldRegion))
+				continue;
+			m_Region[nOldRegion].BroadCast(&Remove, sizeof(Remove), nMaxCount, 0, 0, nExceptClient);
+		}
+	}
 
 	Npc[nIdx].SetActiveFlag(TRUE);
 	if (nSrcRnidx == -1)
@@ -1217,6 +1252,35 @@ void KSubWorld::PlayerChangeRegion(int nSrcRnidx, int nDesRnIdx, int nIdx)
 
 	if (nSrcRnidx < 0)
 		return;
+
+	// 观察者自身移动时，也要清除离开其九区域视野的实体。
+	if (g_pServer && nSrcRnidx < m_nTotalRegion && nDesRnIdx >= 0 &&
+		nDesRnIdx < m_nTotalRegion && nSrcRnidx != nDesRnIdx &&
+		Player[nIdx].m_bFinishLoading && Player[nIdx].m_nNetConnectIdx >= 0)
+	{
+		for (int i = -1; i < 8; i++)
+		{
+			int nOldRegion = i < 0 ? nSrcRnidx : m_Region[nSrcRnidx].m_nConnectRegion[i];
+			if (nOldRegion < 0 || nOldRegion >= m_nTotalRegion ||
+				IsRegionInView(*this, nDesRnIdx, nOldRegion))
+				continue;
+			KIndexNode *pNode = (KIndexNode *)m_Region[nOldRegion].m_NpcList.GetHead();
+			while (pNode)
+			{
+				int nNpc = pNode->m_nIndex;
+				pNode = (KIndexNode *)pNode->GetNext();
+				if (nNpc <= 0 || nNpc >= MAX_NPC || nNpc == Player[nIdx].m_nIndex ||
+					!Npc[nNpc].m_dwID || Npc[nNpc].m_RegionIndex != nOldRegion ||
+					Npc[nNpc].m_SubWorldIndex < 0 || Npc[nNpc].m_SubWorldIndex >= MAX_SUBWORLD ||
+					&SubWorld[Npc[nNpc].m_SubWorldIndex] != this)
+					continue;
+				NPC_REMOVE_SYNC Remove = {};
+				Remove.ProtocolType = (BYTE)s2c_npcremove;
+				Remove.ID = Npc[nNpc].m_dwID;
+				g_pServer->PackDataToClient(Player[nIdx].m_nNetConnectIdx, &Remove, sizeof(Remove));
+			}
+		}
+	}
 
 	RemovePlayer(nSrcRnidx, nIdx);
 	
@@ -1476,7 +1540,7 @@ void KSubWorld::AddPlayer(int nRegion, int nIdx, int nPreviousRegion)
 		}
 
 #ifdef _SERVER
-		// 初次进图同步周边物件；跨区域时仅补发新进入视野的区域。
+		// 初次进图同步周边实体及物件；跨区域时仅补发新进入视野的区域。
 		// 复用原 4F SyncAdd，固定箱子与已落地物品走同一条场景同步路径。
 		if (nIdx > 0 && nIdx < MAX_PLAYER && Player[nIdx].m_bFinishLoading &&
 			Player[nIdx].m_nNetConnectIdx >= 0 && g_pServer)
@@ -1495,6 +1559,18 @@ void KSubWorld::AddPlayer(int nRegion, int nIdx, int nPreviousRegion)
 				}
 				if (bAlreadyVisible)
 					continue;
+				// 新进入视野的角色、怪物及召唤物立即创建，不等待轮转同步。
+				KIndexNode *pNpcNode = (KIndexNode *)m_Region[nVisibleRegion].m_NpcList.GetHead();
+				while (pNpcNode)
+				{
+					int nNpc = pNpcNode->m_nIndex;
+					pNpcNode = (KIndexNode *)pNpcNode->GetNext();
+					if (nNpc > 0 && nNpc < MAX_NPC && nNpc != Player[nIdx].m_nIndex &&
+						Npc[nNpc].m_RegionIndex == nVisibleRegion &&
+						Npc[nNpc].m_SubWorldIndex >= 0 && Npc[nNpc].m_SubWorldIndex < MAX_SUBWORLD &&
+						&SubWorld[Npc[nNpc].m_SubWorldIndex] == this)
+						Npc[nNpc].SendSyncData(Player[nIdx].m_nNetConnectIdx);
+				}
 				KIndexNode *pNode = (KIndexNode *)m_Region[nVisibleRegion].m_ObjList.GetHead();
 				while (pNode)
 				{

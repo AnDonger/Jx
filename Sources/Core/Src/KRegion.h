@@ -6,7 +6,7 @@
 #include "KWorldMsg.h"
 //-----------------------------------------------------------------------
 #ifdef _SERVER
-#define	MAX_BROADCAST_COUNT		100
+#define	MAX_BROADCAST_COUNT		MAX_PLAYER
 #else
 #define	MAX_REGION		9
 #endif
@@ -112,7 +112,7 @@ public:
 	int			SearchNpc(DWORD dwNpcID);		// 寻找本区域内是否有某个指定 id 的 npc (zroc add)
 #ifdef _SERVER
 	void		SendSyncData(int nClient);
-	void		BroadCast(void *pBuffer, DWORD dwSize, int &nMaxCount, int nX, int nY);
+	void		BroadCast(void *pBuffer, DWORD dwSize, int &nMaxCount, int nX, int nY, int nExceptClient = -1);
 	int			FindPlayer(DWORD dwId);
 	BOOL		CheckPlayerIn(int nPlayerIdx);
 #endif
