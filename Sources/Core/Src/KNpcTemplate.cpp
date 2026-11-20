@@ -84,6 +84,53 @@ int operator==(KItemDropRateNode Left, KItemDropRateNode Right)
 #endif
 
 
+#ifdef _SERVER
+static void LoadHardNpcData(int nTemplate, KNpcTemplate::HardNpcData& Data)
+{
+	ZeroMemory(&Data, sizeof(Data));
+	static KTabFile Table;
+	static BOOL bLoaded = FALSE;
+	if (!bLoaded)
+	{
+		bLoaded = TRUE;
+		if (!Table.Load("\\settings\\npc\\hardnpc.txt"))
+			g_DebugLog("[BlueNpc] Cannot load hardnpc.txt; blue monsters disabled");
+	}
+	for (int row = 2; row <= Table.GetHeight(); row++)
+	{
+		int nId = -1;
+		Table.GetInteger(row, 1, -1, &nId);
+		if (nId != nTemplate)
+			continue;
+		Data.Enabled = TRUE;
+		Table.GetInteger(row, 5, 0, &Data.Treasure[0]);
+		Table.GetInteger(row, 6, 0, &Data.Treasure[1]);
+		Table.GetInteger(row, 7, 0, &Data.ExperiencePercent);
+		Table.GetInteger(row, 8, 0, &Data.VisionRadius);
+		Table.GetInteger(row, 9, 0, &Data.Color);
+		for (int i = 0; i < 4; i++)
+		{
+			Table.GetInteger(row, 10 + i * 2, 0, &Data.Skills[i]);
+			Table.GetInteger(row, 11 + i * 2, 0, &Data.SkillLevels[i]);
+		}
+		// 重复列名“数值”必须按原表列位置读取；表内是当前资源属性编号。
+		for (int i = 0; i < 8; i++)
+		{
+			int nFixed = 0, nRandom = 0;
+			Table.GetInteger(row, 18 + i * 2, 0, &nFixed);
+			Table.GetInteger(row, 19 + i * 2, 0, &Data.Fixed[i].nValue[0]);
+			Table.GetInteger(row, 34 + i * 2, 0, &nRandom);
+			Table.GetInteger(row, 35 + i * 2, 0, &Data.Random[i].nValue[0]);
+			Data.Fixed[i].nAttribType = nFixed ? GetInternalMagicAttribId(nFixed) : 0;
+			Data.Random[i].nAttribType = nRandom ? GetInternalMagicAttribId(nRandom) : 0;
+			if (nFixed && Data.Fixed[i].nAttribType <= 0 || nRandom && Data.Random[i].nAttribType <= 0)
+				Data.Enabled = FALSE;
+		}
+		return;
+	}
+}
+#endif
+
 void	KNpcTemplate::InitNpcBaseData(int nNpcTemplateId)
 {
 	if (nNpcTemplateId < 0 ) return;
@@ -112,6 +159,19 @@ void	KNpcTemplate::InitNpcBaseData(int nNpcTemplateId)
 
 #ifdef _SERVER	
 	g_NpcSetting.GetInteger(nNpcTempRow, "Treasure",		0, &m_Treasure);
+	g_NpcSetting.GetInteger(nNpcTempRow, "Treasure1", 1, &m_Treasure1);
+	g_NpcSetting.GetString(nNpcTempRow, "DeathScript", "", m_szDeathScript, sizeof(m_szDeathScript));
+	LoadHardNpcData(nNpcTemplateId, m_HardNpc);
+	int nLifeBarType = 0;
+	g_NpcSetting.GetInteger(nNpcTempRow, "LifeBarType", 0, &nLifeBarType);
+	if (m_Kind != kind_normal || nLifeBarType != 0)
+		m_HardNpc.Enabled = FALSE;
+	for (int i = 0; i < 2; i++)
+	{
+		char szFile[MAX_PATH];
+		g_NpcSetting.GetString(nNpcTempRow, i ? "DropRateFile3" : "DropRateFile2", "", szFile, sizeof(szFile));
+		m_pHardDropRate[i] = g_LoadItemDropRate(szFile);
+	}
 	g_NpcSetting.GetInteger(nNpcTempRow, "AIMode",	0, &m_AiMode);
 	g_NpcSetting.GetInteger(nNpcTempRow, "AIParam1",	0, &m_AiParam[0]);
 	g_NpcSetting.GetInteger(nNpcTempRow, "AIParam2",	0, &m_AiParam[1]);

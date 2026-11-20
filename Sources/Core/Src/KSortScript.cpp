@@ -238,6 +238,22 @@ static BOOL IsPlayerCallbackFunction(const std::string& Function, int nScope)
 	return nScope == 3 && (Function == "RepairItem" || Function == "Msg2Player");
 }
 
+// 死亡脚本仅开放任务/奖励事务和只读查询；未执行的旧活动分支不阻塞蓝怪掉落。
+BOOL g_IsNpcDeathScriptFunctionAllowed(const char* pszFunction)
+{
+	static const char* Names[] =
+	{
+		"GetHardNpcAttrib", "GetNpcLevel", "ThrowItem", "GetTeam", "GetTeamSize", "GetTeamMember",
+		"GetItemCount", "GetTask", "SetTask", "GetTaskTemp", "SetTaskTemp", "GetTaskByte", "SetTaskByte",
+		"GetName", "GetLevel", "GetSeries", "GetPlayerType", "GetWorldPos", "GetPos", "GetPK", "GetMorphType",
+		"HaveNormalItem", "IsExistItem", "AddNormalItem", "AddNormalItemPile", "AddEventItem", "DelNormalItem", "AddOwnExp",
+		"Msg2Player", "WriteLog", "TaskNote", "TopMessage", "ScrollMessage", "SystemTime"
+	};
+	for (int i = 0; i < sizeof(Names) / sizeof(Names[0]); i++)
+		if (!strcmp(pszFunction, Names[i])) return TRUE;
+	return FALSE;
+}
+
 static BOOL CheckNpcScriptCalls(KLuaScript *pScript, const KNpcScriptCalls& Calls,
 	const std::string& Function, std::set<std::string>& Visited, std::string& Missing,
 	int nScope)
@@ -259,8 +275,10 @@ static BOOL CheckNpcScriptCalls(KLuaScript *pScript, const KNpcScriptCalls& Call
 				return FALSE;
 			continue;
 		}
+		BOOL bDeathFunction = nScope == 5 && g_IsNpcDeathScriptFunctionAllowed(pCall->c_str());
 		if ((nScope == 1 && !IsItemTransactionFunction(*pCall)) ||
-			(nScope >= 2 && !IsPlayerCallbackFunction(*pCall, nScope)))
+			(nScope >= 2 && nScope != 5 && !IsPlayerCallbackFunction(*pCall, nScope)) ||
+			(nScope == 5 && !bDeathFunction))
 		{
 			Missing = *pCall;
 			return FALSE;

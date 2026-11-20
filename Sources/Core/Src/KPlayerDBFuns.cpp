@@ -69,6 +69,40 @@ static_assert(sizeof(PLAYER_MORPH_BUFF_DATA) == 8, "SPG1 v9 linked morph");
 
 static const DWORD PLAYER_SKILL_EXT_MAGIC = 0x31475053; // SPG1
 
+// Base synchronization precedes skill loading, so restore weight before its packet.
+static BOOL LoadPlayerMaximumWeight(const TRoleData* pRole, int& MaximumWeight)
+{
+	if (pRole->nFightSkillCount < 0 || pRole->nFightSkillCount >= MAX_NPCSKILL ||
+		pRole->dwDataLen < 4 || pRole->dwLSkillOffset > pRole->dwDataLen - 4)
+		return FALSE;
+	DWORD dwOffset = pRole->dwFSkillOffset + pRole->nFightSkillCount * sizeof(TDBSkillData);
+	if (dwOffset < pRole->dwFSkillOffset || dwOffset > pRole->dwLSkillOffset)
+		return FALSE;
+	DWORD dwLength = pRole->dwLSkillOffset - dwOffset;
+	if (!dwLength)
+		return TRUE;
+	if (dwLength < sizeof(PLAYER_SKILL_EXT_HEADER))
+		return FALSE;
+	PLAYER_SKILL_EXT_HEADER Header;
+	memcpy(&Header, (const BYTE*)pRole + dwOffset, sizeof(Header));
+	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || Header.Version < 1 || Header.Version > 10)
+		return FALSE;
+	if (Header.Version < 10)
+		return TRUE;
+	if (Header.SkillCount != pRole->nFightSkillCount || Header.BuffCount > 16 ||
+		dwLength != sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD_V3) +
+		Header.BuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(PLAYER_PET_DATA) +
+		sizeof(PLAYER_MORPH_DATA) + sizeof(PLAYER_INVENTORY_EXPANSION) + sizeof(DWORD) +
+		sizeof(PLAYER_MORPH_BUFF_DATA) + sizeof(int))
+		return FALSE;
+	int StoredWeight;
+	memcpy(&StoredWeight, (const BYTE*)pRole + pRole->dwLSkillOffset - sizeof(int), sizeof(StoredWeight));
+	if (StoredWeight < 0)
+		return FALSE;
+	MaximumWeight = StoredWeight;
+	return TRUE;
+}
+
 static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, KPlayer& Player)
 {
 	DWORD dwOffset = pRole->dwFSkillOffset + pRole->nFightSkillCount * sizeof(TDBSkillData);
@@ -86,7 +120,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	PLAYER_SKILL_EXT_HEADER Header;
 	memcpy(&Header, pData, sizeof(Header));
 	DWORD dwRecordSize = Header.Version >= 3 ? sizeof(PLAYER_SKILL_EXT_RECORD_V3) : sizeof(PLAYER_SKILL_EXT_RECORD);
-	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 9) ||
+	if (Header.Magic != PLAYER_SKILL_EXT_MAGIC || (Header.Version < 1 || Header.Version > 10) ||
 		Header.SkillCount != pRole->nFightSkillCount || Header.SkillCount >= MAX_NPCSKILL || Header.BuffCount > 16 ||
 		dwLength != sizeof(Header) + Header.SkillCount * dwRecordSize +
 		Header.BuffCount * sizeof(PLAYER_SKILL_BUFF) +
@@ -94,7 +128,8 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 		(Header.Version >= 4 ? sizeof(PLAYER_MORPH_DATA) : 0) +
 		(Header.Version >= 5 ? sizeof(PLAYER_INVENTORY_EXPANSION) : 0) +
 		(Header.Version >= 6 ? sizeof(DWORD) : 0) +
-		(Header.Version >= 9 ? sizeof(PLAYER_MORPH_BUFF_DATA) : 0))
+		(Header.Version >= 9 ? sizeof(PLAYER_MORPH_BUFF_DATA) : 0) +
+		(Header.Version >= 10 ? sizeof(int) : 0))
 		return FALSE;
 	BOOL Seen[MAX_NPCSKILL];
 	PLAYER_SKILL_EXT_RECORD Records[MAX_NPCSKILL];
@@ -249,6 +284,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	if (Header.Version >= 9)
 	{
 		memcpy(&MorphBuff, pData, sizeof(MorphBuff));
+		pData += sizeof(MorphBuff);
 		if (!MorphBuff.Template)
 		{
 			if (MorphBuff.ItemEndTime ||
@@ -279,6 +315,14 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 			MorphBuff.Template = MorphBuff.ItemEndTime = 0;
 		}
 	}
+	// SPG1 v10 appends the per-role base weight; older saves use the template.
+	int MaximumWeight = Player.m_nWeightMax;
+	if (Header.Version >= 10)
+	{
+		memcpy(&MaximumWeight, pData, sizeof(MaximumWeight));
+		if (MaximumWeight < 0)
+			return FALSE;
+	}
 	DWORD PreviousCastTimes[MAX_NPCSKILL];
 	for (int i = 0; i < MAX_NPCSKILL; i++)
 		PreviousCastTimes[i] = List.m_Skills[i].NextCastTime;
@@ -291,6 +335,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 			return FALSE;
 		}
 	}
+	Player.m_nWeightMax = MaximumWeight;
 	Player.m_dwLastCampChangeTime = LastCampChangeTime;
 	Player.m_Pet = Pet;
 	Player.m_InventoryExpansion = Expansion;
@@ -317,7 +362,7 @@ static BOOL LoadPlayerSkillExtension(const TRoleData* pRole, KSkillList& List, K
 	return TRUE;
 }
 
-static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_PET_DATA& Pet, const PLAYER_INVENTORY_EXPANSION& Expansion, DWORD LastCampChangeTime, BYTE* pData, DWORD dwCapacity)
+static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_PET_DATA& Pet, const PLAYER_INVENTORY_EXPANSION& Expansion, DWORD LastCampChangeTime, int MaximumWeight, BYTE* pData, DWORD dwCapacity)
 {
 	DWORD dwNow = (DWORD)time(NULL);
 	DWORD dwBuffCount = 0;
@@ -326,10 +371,10 @@ static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_
 		if (List.m_SkillBuffs[i].BuffId && List.m_SkillBuffs[i].EndTime > dwNow)
 			dwBuffCount++;
 	}
-	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 9, List.GetCount(), dwBuffCount};
+	PLAYER_SKILL_EXT_HEADER Header = {PLAYER_SKILL_EXT_MAGIC, 10, List.GetCount(), dwBuffCount};
 	DWORD dwSize = sizeof(Header) + Header.SkillCount * sizeof(PLAYER_SKILL_EXT_RECORD_V3) +
-		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet) + sizeof(PLAYER_MORPH_DATA) + sizeof(Expansion) + sizeof(LastCampChangeTime) + sizeof(PLAYER_MORPH_BUFF_DATA);
-	if (dwSize > dwCapacity)
+		dwBuffCount * sizeof(PLAYER_SKILL_BUFF) + sizeof(Pet) + sizeof(PLAYER_MORPH_DATA) + sizeof(Expansion) + sizeof(LastCampChangeTime) + sizeof(PLAYER_MORPH_BUFF_DATA) + sizeof(MaximumWeight);
+	if (dwSize > dwCapacity || MaximumWeight < 0)
 		return -1;
 	memcpy(pData, &Header, sizeof(Header));
 	pData += sizeof(Header);
@@ -378,6 +423,8 @@ static int SavePlayerSkillExtension(KNpc& Owner, KSkillList& List, const PLAYER_
 		MorphBuff.ItemEndTime = Owner.m_dwMorphItemEndTime;
 	}
 	memcpy(pData, &MorphBuff, sizeof(MorphBuff));
+	pData += sizeof(MorphBuff);
+	memcpy(pData, &MaximumWeight, sizeof(MaximumWeight));
 	return dwSize;
 }
 
@@ -794,10 +841,14 @@ int	KPlayer::LoadPlayerBaseInfo(BYTE  * pRoleBuffer, BYTE * &pCurData, unsigned 
 	char szPlayerTemplate[128];
 	sprintf(szPlayerTemplate, "\\settings\\npc\\player\\newplayerini%02d.ini",
 		pRoleData->BaseInfo.ifiveprop * 2 + (pRoleData->BaseInfo.bSex ? 1 : 0));
+	m_nWeightMax = 0;
 	if (playerTemplate.Load(szPlayerTemplate))
 	{
 		playerTemplate.GetInteger("ROLE", "iweightmax", 0, &m_nWeightMax);
 	}
+
+	if (!LoadPlayerMaximumWeight(pRoleData, m_nWeightMax))
+		return -1;
 
 	nLevel = pRoleData->BaseInfo.ifightlevel;
 	int nSeries = pRoleData->BaseInfo.ifiveprop;
@@ -1649,7 +1700,7 @@ int KPlayer::SavePlayerFightSkillList(BYTE* pRoleBuffer)
 		return -1;
 	pRoleData->nFightSkillCount = nCount;
 	dwOffset += dwStandardSize;
-	int nSize = SavePlayerSkillExtension(Npc[m_nIndex], List, m_Pet, m_InventoryExpansion, m_dwLastCampChangeTime, pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
+	int nSize = SavePlayerSkillExtension(Npc[m_nIndex], List, m_Pet, m_InventoryExpansion, m_dwLastCampChangeTime, m_nWeightMax, pRoleBuffer + dwOffset, sizeof(m_SaveBuffer) - dwOffset);
 	if (nSize < 0)
 		return -1;
 	pRoleData->dwLSkillOffset = dwOffset + nSize;

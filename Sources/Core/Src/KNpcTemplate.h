@@ -53,6 +53,21 @@ public:
 	int		m_LifeMax;
 
 #ifdef _SERVER	
+	struct HardNpcData
+	{
+		BOOL Enabled;
+		int Treasure[2];
+		int ExperiencePercent;
+		int VisionRadius;
+		int Color;
+		int Skills[4];
+		int SkillLevels[4];
+		KMagicAttrib Fixed[8];
+		KMagicAttrib Random[8];
+	} m_HardNpc;
+	char m_szDeathScript[MAX_PATH];
+	KItemDropRate* m_pHardDropRate[2];
+	int m_Treasure1;
 	DWORD	m_dwLevelSettingScript;
 	int		m_Treasure;
 	int		m_AiMode;

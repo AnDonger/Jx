@@ -1,5 +1,46 @@
 # 当前 Lua 可用函数说明（Lua函数表）
 
+## 2026-11-20 蓝怪与怪物死亡回调接口
+
+这批接口注册于GameScriptFuns；原野怪业务继续使用模板DeathScript指向的 `script/npcdeath/*.lua`。Lua不直接访问数据库。
+
+### `GetHardNpcAttrib`
+
+`GetHardNpcAttrib(npcIndex)`：参数为服务端NPC索引，不是客户端DWORD实体ID。普通怪／无效索引返回-1；蓝怪返回0～7，分别为普、火、冰、雷、土、速、狂（攻速）、狂（施速）。只读，NPC脚本及死亡回调可用。例如 `local attr = GetHardNpcAttrib(npcIndex); if attr >= 0 then ... end`。
+
+### `GetNpcLevel`
+
+`GetNpcLevel(npcIndex)`：有效NPC返回实际等级，无效索引返回0。只读，不修改怪物。例：`if GetLevel() - GetNpcLevel(npcIndex) <= 10 then ... end`。原蓝怪Lua以该等级差决定卦符掉落。
+
+### `ThrowItem`
+
+```lua
+-- 原死亡脚本：掉落材料(3,15,0)，等级1、五行0、幸运0。
+ThrowItem(npcIndex, PlayerIndex, 3, 15, 0, 1, 0, 0)
+```
+
+八参数依次为死亡NPC服务端索引、原击杀玩家索引、genre、detail、particular、level、series、luck，均需非负整数；物品还须能从真实模板生成。仅服务器同步调用的死亡事务有效，NPC和玩家参数必须匹配真实本次击杀上下文；普通NPC/道具脚本不可借此任意造地面物品。成功返回1，非法参数、模板失败或一次超过32件会报错。材料表无等级列时兼容原脚本level=1，按真实level=0模板生成。
+
+先预生成真实物品，等OnDeath整个成功后才逐个放到死亡位置附近地面，并设置击杀者归属；任一放置失败撤销本次已建地面对象、预留物品和玩家／真实队员事务中的任务、背包及金钱变更。原生普通掉落和已结算的战斗经验是独立步骤，不在死亡Lua事务内回滚。
+
+### `GetTeamMember`
+
+`GetTeamMember(ordinal)`：ordinal是1起始的队内序号；1为队长，随后按原队员槽位顺序跳过空位。返回在线队员的PlayerIndex，无队伍／越界／无有效角色返回0。查询当前脚本PlayerIndex的队伍，不返回角色名或客户端实体ID。
+
+```lua
+local original = PlayerIndex
+if GetTeam() ~= 0 then
+    for i = 1, GetTeamSize() do
+        PlayerIndex = GetTeamMember(i)
+        if PlayerIndex > 0 then SetTask(447, GetTask(447) + 1) end
+    end
+end
+PlayerIndex = original
+```
+
+死亡回调为真实击杀者和其真实队员分别建立事务；结束后恢复Lua的PlayerIndex、PlayerID和SubWorldIndex，不覆盖玩家正在使用的NPC对话上下文。死亡回调只开放已纳入事务的任务／奖励和只读查询；未执行的旧活动分支不阻止蓝怪处理，实际执行到未支持的NPC生成、树苗修改等分支时会报错并回滚，不以空接口假装成功。C++能力限制列表见 `g_IsNpcDeathScriptFunctionAllowed`；接口是否存在仍以注册表为准。
+
+
 
 ## 2026-11-17 仙兽培养与聚灵接口
 
@@ -3366,8 +3407,8 @@ GetTeam()
 ```
 
 - 参数：无。
-- 返回：已组队返回队伍运行时ID，未组队nil。
-- 限制／说明：0可能是有效队伍ID，不能用>0排除。
+- 返回：已组队返回非零队伍句柄（内部索引＋1），未组队返回0。
+- 限制／说明：不得将句柄直接当内部数组索引；可传给GetTeamSize。原脚本可用 `GetTeam() ~= 0` 判断组队，包括内部索引为0的队伍。
 - 实现：[`LuaGetTeamId`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2264)。
 
 用法示例：
@@ -3384,9 +3425,9 @@ local teamId = GetTeam()
 GetTeamSize([teamId])
 ```
 
-- 参数：teamId：可选有效队伍运行时ID，省略查询自身。
+- 参数：teamId：可选的GetTeam返回的非零整数句柄，省略查询当前PlayerIndex的队伍。
 - 返回：成员数（含队长）；无队伍0。
-- 限制／说明：显式teamId必须在有效数组范围且队伍确实存在，包装层未做完整上界检查。
+- 限制／说明：无队伍、非整数、越界或没有队长的句柄返回0；不能传原始内部索引。
 - 实现：[`LuaGetTeamSize`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2278)。
 
 用法示例：
@@ -6617,7 +6658,7 @@ debug()
 
 `Pay()`、`AddNormalItem()`、`Talk()`、`Msg2Player()`已提供；但它们不能代替原子事务入口。没有统一的“Lua直接保存角色”或“任意状态回滚”API，保存、同步、拒绝请求和完整恢复要由C++原通用流程负责。
 
-`GetTeamMember`、`GetNpcTask`、`SetNpcTask`、`SetNpcTimer`等资源脚本中的候选名，不在本次生效的Game/World注册表中。若当前脚本及其Include没有自行定义，就不能直接调用，也不能用固定返回值或空函数冒充实现。完整候选清单另见 `DevDoc/20261107-Lua接口缺口候选.md`。
+`GetNpcTask`、`SetNpcTask`、`SetNpcTimer`等资源脚本中的候选名，不在本次生效的Game/World注册表中。若当前脚本及其Include没有自行定义，就不能直接调用，也不能用固定返回值或空函数冒充实现。完整候选清单另见 `DevDoc/20261107-Lua接口缺口候选.md`。
 
 开发时依次核对：原NPC挂接脚本及其Include → 本表参数和状态 → 原Resources业务规则 → 已有通用接口及事务边界。已有脚本就修改原脚本；确认Resources中没有时，按AGENTS资源审批规则申请新增。需要补C++接口时，接口面向通用能力，完成真实校验、同步、存档、失败回滚后再接Lua，并维护本文。
 

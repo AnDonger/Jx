@@ -2289,7 +2289,9 @@ KMissleMagicAttribsData* KSkill::CreateMissleMagicAttribsData(int nLauncher)  co
 			pSource = BaseDamageAttribs;
 			pMissleMagicAttribsData->m_nDamageMagicAttribsNum = 1;
 		}
-		Npc[nLauncher].AppendSkillEffect(m_bIsPhysical, m_bIsMelee, pSource, pDamageAttribs);
+		// 只有实际攻击可携带蓝怪附伤，纯状态、光环和治疗不能凭空造成伤害。
+		BOOL bAddNpcElement = m_bTargetEnemy && (m_bAddBaseDamage || m_nDamageAttribsNum > 0);
+		Npc[nLauncher].AppendSkillEffect(m_bIsPhysical, m_bIsMelee, pSource, pDamageAttribs, bAddNpcElement);
 	}
 	else
 	{

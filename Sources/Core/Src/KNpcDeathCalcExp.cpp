@@ -117,7 +117,7 @@ int		KNpcDeathCalcExp::CalcExp()
 					nDamage = m_sCalcInfo[i].m_nTotalDamage;
 					nMaxPlayer = nPlayer;
 				}
-				Player[nPlayer].AddExp(m_sCalcInfo[i].m_nTotalDamage * Npc[m_nNpcIdx].m_Experience / Npc[m_nNpcIdx].m_CurrentLifeMax, Npc[m_nNpcIdx].m_Level);
+				Player[nPlayer].AddExp((int)min((__int64)2147483647, (__int64)m_sCalcInfo[i].m_nTotalDamage * Npc[m_nNpcIdx].m_Experience / Npc[m_nNpcIdx].m_CurrentLifeMax), Npc[m_nNpcIdx].m_Level);
 			}
 		}
 		// 如果没有组队
@@ -131,7 +131,7 @@ int		KNpcDeathCalcExp::CalcExp()
 				nDamage = m_sCalcInfo[i].m_nTotalDamage;
 				nMaxPlayer = m_sCalcInfo[i].m_nAttackIdx;
 			}
-			Player[m_sCalcInfo[i].m_nAttackIdx].AddExp(m_sCalcInfo[i].m_nTotalDamage * Npc[m_nNpcIdx].m_Experience / Npc[m_nNpcIdx].m_CurrentLifeMax, Npc[m_nNpcIdx].m_Level);
+			Player[m_sCalcInfo[i].m_nAttackIdx].AddExp((int)min((__int64)2147483647, (__int64)m_sCalcInfo[i].m_nTotalDamage * Npc[m_nNpcIdx].m_Experience / Npc[m_nNpcIdx].m_CurrentLifeMax), Npc[m_nNpcIdx].m_Level);
 		}
 	}
 	Clear();

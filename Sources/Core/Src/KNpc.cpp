@@ -16,6 +16,8 @@
 #include "KRegion.h"
 #include "KNpcTemplate.h"
 #include "KItemSet.h"
+#include "KItemGenerator.h"
+#include "KSortScript.h"
 #ifdef _SERVER
 //#include "KNetServer.h"
 //#include "../MultiServer/Heaven/Interface/iServer.h"
@@ -129,6 +131,11 @@ void KNpc::Init()
 	m_Kind = kind_normal;
 #ifdef _SERVER
 	m_dwStateSkillRevision = 0;
+	m_nHardNpcAttrib = -1;
+	m_bHardNpcSpawn = FALSE;
+	m_szDeathScript[0] = 0;
+	m_pHardDropRate[0] = m_pHardDropRate[1] = NULL;
+	m_Treasure1 = 0;
 	m_nSummonOwner = m_nSummonSkill = m_nSummonIndex = 0;
 	m_dwSummonTarget = 0;
 	m_dwSummonOwner = m_dwSummonId = 0;
@@ -1175,18 +1182,15 @@ void KNpc::OnDeath()
 			}
 		}
 		//如果死者是Npc，而打死他的是主角，并有死亡脚本则运行脚本
-		else  if (Npc[m_nLastDamageIdx].IsPlayer())
+		else if (m_nLastDamageIdx > 0 && m_nLastDamageIdx < MAX_NPC && Npc[m_nLastDamageIdx].IsPlayer())
 		{
 			int nIdx = Npc[m_nLastDamageIdx].m_nPlayerIdx;
 			if (nIdx)
 			{
-				// 执行战斗npc死亡脚本
-				if (ActionScript[0])
-				{
-					char szNpcIndex[30];
-					sprintf(szNpcIndex, "%d", m_nLastDamageIdx);
-					Player[nIdx].ExecuteScript(ActionScript, "OnDeath", szNpcIndex);		
-				}
+				if (m_szDeathScript[0])
+					g_CallNpcDeathScript(nIdx, m_Index, m_szDeathScript);
+				else if (ActionScript[0])
+					Player[nIdx].ExecuteScript(ActionScript, "OnDeath", m_Index);
 			}
 		}
 
@@ -2364,41 +2368,74 @@ int KNpc::GetSyncLifeRatio() const
 	return nRatio;
 }
 
-void KNpc::SyncDamage(int nDamage, BYTE bFlags)
+// 战斗文字只发送给对应攻守双方；周围玩家只接收场景生命同步。
+static void SendCombatMessage(int nOwner, const void* pData, int nSize)
 {
-	if (m_RegionIndex < 0 || m_SubWorldIndex < 0)
+	if (!g_pServer || nOwner <= 0 || nOwner >= MAX_NPC)
 		return;
-	GAME_DAMAGE_SYNC Sync;
-	memset(&Sync, 0, sizeof(Sync));
+	int nPlayer = Npc[nOwner].GetPlayerIdx();
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || Player[nPlayer].m_nIndex != nOwner ||
+		Player[nPlayer].m_nNetConnectIdx < 0)
+		return;
+	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, pData, nSize);
+}
+
+void KNpc::SyncDamage(int nAttacker, int nDamage, BYTE bFlags)
+{
+	if (m_RegionIndex < 0 || m_SubWorldIndex < 0 || nAttacker <= 0 ||
+		nAttacker >= MAX_NPC || !Npc[nAttacker].m_Index)
+		return;
+	KNpc& Attacker = Npc[nAttacker];
+	GAME_DAMAGE_SYNC Sync = {};
 	Sync.ProtocolType = 0xEA;
-	Sync.DamageFlags = bFlags;
+	Sync.DamageFlags = bFlags | (Attacker.m_Kind == kind_summon ? 0x20 : 0);
 	Sync.Damage = nDamage;
 	Sync.ID = m_dwID;
 	Sync.LifeMax = m_CurrentLifeMax;
 	int nRatio = GetSyncLifeRatio();
 	Sync.PackedLife = (BYTE)(((nRatio >> 3) & 0xE0) | (m_CurrentCamp & 15));
 	Sync.LifeRatio = (BYTE)nRatio;
-	int nMaxCount = MAX_BROADCAST_COUNT;
-	CURREGION.BroadCast(&Sync, sizeof(Sync), nMaxCount, m_MapX, m_MapY);
-	for (int i = 0; i < 8; i++)
-	{
-		if (CONREGIONIDX(i) >= 0)
-		{
-			static const POINT Offset[8] =
-			{
-				{0, 32},
-				{-16, 32},
-				{-16, 0},
-				{-16, -32},
-				{0, -32},
-				{16, -32},
-				{16, 0},
-				{16, 32},
-			};
-			CONREGION(i).BroadCast(&Sync, sizeof(Sync), nMaxCount,
-				m_MapX - Offset[i].x, m_MapY - Offset[i].y);
-		}
-	}
+	SendCombatMessage(Attacker.GetCombatOwner(), &Sync, sizeof(Sync));
+
+	GAME_RECEIVE_DAMAGE_SYNC Receive = {};
+	Receive.ProtocolType = 0xEB;
+	Receive.DamageFlags = bFlags | (m_Kind == kind_summon ? 0x20 : 0);
+	Receive.Damage = nDamage;
+	Receive.AttackerID = Attacker.m_dwID;
+	SendCombatMessage(GetCombatOwner(), &Receive, sizeof(Receive));
+
+	GAME_NPC_NORMAL_SYNC Scene = {};
+	Scene.ProtocolType = (BYTE)s2c_syncnpcmin;
+	Scene.ID = m_dwID;
+	Scene.LifeMax = m_CurrentLifeMax;
+	Scene.LifePerCent = (BYTE)nRatio;
+	Scene.Camp = Sync.PackedLife;
+	Scene.Doing = (BYTE)m_Doing;
+	int nMpsX, nMpsY;
+	GetMpsPos(&nMpsX, &nMpsY);
+	Scene.MapX = nMpsX;
+	Scene.MapY = nMpsY;
+	SendDataToNearRegion(&Scene, sizeof(Scene));
+	if (m_Kind == kind_player)
+		Player[m_nPlayerIdx].SendCurNormalSyncData();
+}
+
+void KNpc::SyncDodge(int nAttacker)
+{
+	if (nAttacker <= 0 || nAttacker >= MAX_NPC || !Npc[nAttacker].m_Index)
+		return;
+	KNpc& Attacker = Npc[nAttacker];
+	GAME_DODGE_SYNC Sync = {};
+	Sync.ProtocolType = 0xF8;
+	Sync.Length = sizeof(Sync) - 1;
+	Sync.Subtype = 0x51;
+	Sync.Reason = 1;
+	Sync.OtherID = m_dwID;
+	Sync.Flags = Attacker.m_Kind == kind_summon ? 0x20 : 0;
+	SendCombatMessage(Attacker.GetCombatOwner(), &Sync, sizeof(Sync));
+	Sync.OtherID = Attacker.m_dwID;
+	Sync.Flags = 0x10 | (m_Kind == kind_summon ? 0x20 : 0);
+	SendCombatMessage(GetCombatOwner(), &Sync, sizeof(Sync));
 }
 
 int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL bIsMelee, BOOL bDoHurt /* TRUE */, BOOL bReturn /* = FALSE */, BOOL bCritical /* = FALSE */)
@@ -2420,6 +2457,7 @@ int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL 
 	else
 		nDamage = nMin + g_Random(nMax - nMin);
 	KNpc& Attacker = Npc[nAttacker];
+	BOOL bMonsterPhysical = Attacker.m_Kind == kind_normal && nType == damage_physics && !bReturn;
 	int nSummonReduce = 0;
 	if (bCritical)
 	{
@@ -2455,9 +2493,10 @@ int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL 
 		// 装备防御与敏捷闪避分开，原始资源规定两点防御抵消一点伤害。
 		if (m_CurrentExDefend > 0)
 		{
+			// 正式服蓝怪样本保留1点物理伤害；只修正怪物攻击，不改变玩家伤害下限。
+			int nBeforeDefense = nDamage;
 			nDamage -= max(0, m_CurrentExDefend - max(0, Attacker.m_CurrentAdditionalAttrib[281])) / PlayerSet.m_cLevelAdd.GetHurtPerDefense();
-			if (nDamage < 0)
-				nDamage = 0;
+			nDamage = max(bMonsterPhysical && nBeforeDefense > 0 ? 1 : 0, nDamage);
 		}
 		nRes = m_CurrentPhysicsResist;
 		if (nRes > m_CurrentPhysicsResistMax)
@@ -2640,7 +2679,10 @@ int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL 
 			m_ManaShield.nTime = 0;
 		}
 	}
+	int nBeforeResist = nDamage;
 	nDamage = (int)((__int64)nDamage * (100 - min(100, nRes)) / 100);
+	if (bMonsterPhysical && nBeforeResist > 0 && nRes < 100)
+		nDamage = max(1, nDamage);
 	int nReduce = m_CurrentAdditionalAttrib[nType == damage_physics ? 339 : 340];
 	// 原属性modify_pkrate仅降低来自玩家的伤害，元素类别共用此扣血路径。
 	if (Attacker.IsPlayer())
@@ -2650,7 +2692,10 @@ int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL 
 		nDamage = (int)((__int64)nDamage * (100 + max(0, Attacker.m_CurrentAdditionalAttrib[342])) / 100);
 		nReduce += m_CurrentAdditionalAttrib[282];
 	}
+	int nBeforeReduce = nDamage;
 	nDamage = (int)((__int64)nDamage * (100 - min(100, max(0, nReduce))) / 100);
+	if (bMonsterPhysical && nBeforeReduce > 0 && nReduce < 100)
+		nDamage = max(1, nDamage);
 	if (nDamage <= 0)
 		return 0;
 	g_DebugLog("[数值]%s实际伤害：%d", Name, nDamage);
@@ -2687,9 +2732,6 @@ int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL 
 	m_CurrentLife -= nDamage;
 	if (m_CurrentLife < 0)
 		m_CurrentLife = 0;
-	// 当前EA低位：物理0、火1、冰2、雷3、毒4、未命中5、土6。
-	// 旧枚举的无属性值5与未命中冲突，未确认新编号前保持原普通伤害提示。
-	SyncDamage(nDamage, nType == damage_magic ? 0 : (BYTE)nType);
 
 	if (nDamage > 0)
 	{
@@ -2701,6 +2743,11 @@ int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL 
 		if (bDoHurt)
 			DoHurt();
 	}
+	// EA/EB低位：物理0、火1、冰2、雷3、毒4、反弹5、土6。
+	BYTE bDamageFlags = bReturn ? 5 : (nType == damage_magic ? 0 : (BYTE)nType);
+	if (bCritical)
+		bDamageFlags |= 0x80;
+	SyncDamage(nAttacker, nDamage, bDamageFlags);
 	if (m_CurrentLife <= 0)
 	{
 		int nMode = DeathCalcPKValue(nAttacker);
@@ -2744,7 +2791,7 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 		if (!g_RandPercent(Npc[nLauncher].m_CurrentAdditionalAttrib[338]) &&
 			!CheckHitTarget(nAr, m_CurrentDefend, nIgnoreAr))
 		{
-			SyncDamage(0, 5);
+			SyncDodge(nLauncher);
 			g_DebugLog("[数值]%s闪过攻击", Name);
 			return FALSE;
 		}
@@ -2871,10 +2918,16 @@ void KNpc::SetImmediatelySkillEffect(int nLauncher, void *pData, int nDataNum)
 	}
 }
 
-void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, void *pDesData)
+void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, void *pDesData, BOOL bAddNpcElement)
 {
 	int nMinDamage = m_PhysicsDamage.nValue[0] + m_CurrentAddPhysicsDamage;
 	int	nMaxDamage = m_PhysicsDamage.nValue[2] + m_CurrentAddPhysicsDamage;
+	// 蓝怪的攻击法术保留原技能伤害，再叠加原表元素；玩家仍沿用物理技能附伤规则。
+	BOOL bAppendElement = bIsPhysical;
+#ifdef _SERVER
+	if (bAddNpcElement && m_Kind == kind_normal && m_nHardNpcAttrib >= 0)
+		bAppendElement = TRUE;
+#endif
 
 	KMagicAttrib* pTemp = (KMagicAttrib *)pSrcData;
 	KMagicAttrib* pDes = (KMagicAttrib *)pDesData;
@@ -2934,7 +2987,7 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 		pDes->nValue[1] = pTemp->nValue[1] * (100 + m_CurrentColdEnhance) / 100;
 		pDes->nValue[2] = pTemp->nValue[2];
 	}
-	if (bIsPhysical)
+	if (bAppendElement)
 	{
 		pDes->nValue[0] += m_CurrentColdDamage.nValue[0];
 		pDes->nValue[1] = max(pDes->nValue[1], m_CurrentColdDamage.nValue[1] + m_CurrentColdEnhance);
@@ -2949,7 +3002,7 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 		pDes->nValue[0] = pTemp->nValue[0];
 		pDes->nValue[2] = pTemp->nValue[2] * (100 + m_CurrentFireEnhance) / 100;
 	}
-	if (bIsPhysical)
+	if (bAppendElement)
 	{
 		pDes->nValue[0] += m_CurrentFireDamage.nValue[0];
 		pDes->nValue[2] += m_CurrentFireDamage.nValue[2];
@@ -2962,7 +3015,7 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 		pDes->nValue[0] = pTemp->nValue[0] + (pTemp->nValue[2] - pTemp->nValue[0]) * m_CurrentLightEnhance / 100;
 		pDes->nValue[2] = pTemp->nValue[2];
 	}
-	if (bIsPhysical)
+	if (bAppendElement)
 	{
 		pDes->nValue[0] += m_CurrentLightDamage.nValue[0];
 		pDes->nValue[2] += m_CurrentLightDamage.nValue[2];
@@ -3002,7 +3055,7 @@ void KNpc::AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, vo
 	// 固定伤害槽与装备附伤分别叠加；不把火系武器误判为火系技能。
 	KMagicAttrib* pSource = (KMagicAttrib*)pSrcData;
 	KMagicAttrib* pDamage = (KMagicAttrib*)pDesData;
-	if (bIsPhysical)
+	if (bAppendElement)
 	{
 		pDamage[8].nAttribType = magic_earthdamage_v;
 		pDamage[8].nValue[0] += m_CurrentAdditionalAttrib[177];
@@ -3912,6 +3965,17 @@ void KNpc::SendItemBuffGraphics(int nClient)
 	}
 }
 
+BOOL KNpc::SendNpcColorSync(int nClient, BYTE Color)
+{
+	if (!g_pServer || nClient < 0 || !m_dwID)
+		return FALSE;
+	GAME_NPC_COLOR_SYNC Sync = {};
+	Sync.ProtocolType = 0xDD;
+	Sync.ID = m_dwID;
+	Sync.Color = Color;
+	return SUCCEEDED(g_pServer->PackDataToClient(nClient, &Sync, sizeof(Sync)));
+}
+
 BOOL KNpc::SendSyncData(int nClient)
 {
 	BOOL	bRet = FALSE;
@@ -3949,7 +4013,7 @@ BOOL KNpc::SendSyncData(int nClient)
 	NpcSync.NpcSettingIdx		= MAKELONG(m_Level, m_NpcSettingIdx);
 
 //	NpcSync.NpcEnchant			= (WORD)m_NpcEnchant;
-	// Gold/state extension is not part of the current fixed entity prefix.
+	// 蓝怪类型使用独立D2，在创建4C成功后同步。
 
 	strncpy(NpcSync.m_szName, Name, 31);
 	NpcSync.m_wLength			= sizeof(GAME_NPC_SYNC) - 1 - sizeof(NpcSync.m_szName) + strlen(NpcSync.m_szName) + 3;
@@ -3965,6 +4029,11 @@ BOOL KNpc::SendSyncData(int nClient)
 		return FALSE;
 	}
 	g_DebugLog("[Sync]%d:%s<%d> request to %d. size:%d", SubWorld[m_SubWorldIndex].m_dwCurrentTime, Name, m_Kind, nClient, NpcSync.m_wLength + 1);
+	if (m_Kind == kind_normal && m_nHardNpcAttrib >= 0 && !SendHardNpcSync(nClient))
+		return FALSE;
+	// 正式服NPC创建顺序为4C、可选D2、DD；DD=0覆盖偏色，保留蓝怪身份。
+	if (!IsPlayer() && !SendNpcColorSync(nClient, 0))
+		return FALSE;
 
 	if (IsPlayer())
 	{
@@ -5391,6 +5460,12 @@ void	KNpc::LoadDataFromTemplate(int nNpcTemplateId, int nLevel)
 	m_AiAddLifeTime	= 0;
 	m_pDropRate		= pNpcTemp->m_pItemDropRate;
 	m_pDropRate1		= pNpcTemp->m_pItemDropRate1;
+	m_nHardNpcAttrib = -1;
+	m_bHardNpcSpawn = FALSE;
+	m_pHardDropRate[0] = pNpcTemp->m_pHardDropRate[0];
+	m_pHardDropRate[1] = pNpcTemp->m_pHardDropRate[1];
+	m_Treasure1 = pNpcTemp->m_Treasure1;
+	g_StrCpyLen(m_szDeathScript, pNpcTemp->m_szDeathScript, sizeof(m_szDeathScript));
 
 	if (!m_AiSkillRadiusLoadFlag)
 	{
@@ -5605,24 +5680,29 @@ void KNpc::DeathPunish(int nMode, int nBelongPlayer)
 //	else if (m_nLastDamageIdx && Npc[m_nLastDamageIdx].IsPlayer())
 	else if (nBelongPlayer > 0)
 	{
-		if (m_pDropRate)
+		KItemDropRate* pGeneral = m_nHardNpcAttrib >= 0 ? m_pHardDropRate[0] : m_pDropRate;
+		if (pGeneral)
 		{
 			for (int i = 0; i < m_CurrentTreasure; i++)
 			{
-				if (g_RandPercent(m_pDropRate->nMoneyRate))
+				if (g_RandPercent(pGeneral->nMoneyRate))
 				{
 					LoseMoney(nBelongPlayer);
 				}
 				else
 				{
-					LoseSingleItem(m_pDropRate, nBelongPlayer);
+					LoseSingleItem(pGeneral, nBelongPlayer);
 				}
 			}
 		}
 
-		// 参考fsb2的分组掉落：专属表独立抽取一次，不依赖通用表是否抽中。
-		if (m_pDropRate1)
-			LoseSingleItem(m_pDropRate1, nBelongPlayer);
+		// 两组轮询分别使用普通/蓝怪表，不额外重复掉落普通表。
+		KItemDropRate* pExclusive = m_nHardNpcAttrib >= 0 ? m_pHardDropRate[1] : m_pDropRate1;
+		int nCount = m_Treasure1;
+		if (m_nHardNpcAttrib >= 0)
+			nCount = g_pNpcTemplate[m_NpcSettingIdx][m_Level]->m_HardNpc.Treasure[1];
+		for (int i = 0; pExclusive && i < nCount; i++)
+			LoseSingleItem(pExclusive, nBelongPlayer);
 	}
 }
 
@@ -5656,7 +5736,10 @@ void KNpc::LoseMoney(int nBelongPlayer)
 	POINT	ptLocal;
 	KMapPos	Pos;
 
-	int nMoney = m_CurrentExperience * m_pDropRate->nMoneyScale / 100;
+	KItemDropRate* pRate = m_nHardNpcAttrib >= 0 ? m_pHardDropRate[0] : m_pDropRate;
+	if (!pRate)
+		return;
+	int nMoney = (int)min((__int64)2147483647, (__int64)m_CurrentExperience * pRate->nMoneyScale / 100);
 	if (nMoney <= 0)
 		return;
 
@@ -5751,26 +5834,36 @@ void KNpc::LoseSingleItem(KItemDropRate *pDropRate, int nBelongPlayer)
 		nMaxLevel = nTemp;
 	}
 	
-	nLevel = g_Random(nMaxLevel - nMinLevel) + nMinLevel;
+	nLevel = g_Random(nMaxLevel - nMinLevel + 1) + nMinLevel;
 
-	BOOL	bSkip = FALSE;
-	for (int j = 0; j < 6; j++)
+	if (ItemGen.UsesClassMagicWeights(g_SubWorldSet.GetGameVersion()))
 	{
-		if (!bSkip)
+		// 当前词条数量和逐条出现概率由原magiccount/概率表及职业权重决定。
+		// MagicRate=1表示启用词条，不能交给旧版g_Random(1)而恒定生成白装。
+		for (int j = 0; j < 6; j++)
+			pnMagicLevel[j] = pDropRate->nMagicRate > 0 ? nLevel : 0;
+	}
+	else
+	{
+		BOOL	bSkip = FALSE;
+		for (int j = 0; j < 6; j++)
 		{
-			 if (g_Random(pDropRate->nMagicRate))
-			 {
-				 pnMagicLevel[j] = nLevel;
-			 }
-			 else
-			 {
-				 pnMagicLevel[j] = 0;
-				 bSkip = TRUE;
-			 }
-		}
-		else
-		{
-			pnMagicLevel[j] = 0;
+			if (!bSkip)
+			{
+				 if (g_Random(pDropRate->nMagicRate))
+				 {
+					 pnMagicLevel[j] = nLevel;
+				 }
+				 else
+				 {
+					 pnMagicLevel[j] = 0;
+					 bSkip = TRUE;
+				 }
+			}
+			else
+			{
+				pnMagicLevel[j] = 0;
+			}
 		}
 	}
 
@@ -5821,6 +5914,37 @@ void KNpc::LoseSingleItem(KItemDropRate *pDropRate, int nBelongPlayer)
 	}
 }
 
+
+// 返回真实地面对象索引，失败不消耗传入物品，供死亡Lua原子提交使用。
+int KNpc::DropScriptItem(int nItem, int nPlayer)
+{
+	if (nItem <= 0 || nItem >= MAX_ITEM || !Item[nItem].GetID() || m_RegionIndex < 0)
+		return 0;
+	POINT Point;
+	int nX = 0, nY = 0;
+	GetMpsPos(&nX, &nY);
+	Point.x = nX;
+	Point.y = nY;
+	SubWorld[m_SubWorldIndex].GetFreeObjPos(Point);
+	KMapPos Pos;
+	Pos.nSubWorld = m_SubWorldIndex;
+	SubWorld[m_SubWorldIndex].Mps2Map(Point.x, Point.y, &Pos.nRegion,
+		&Pos.nMapX, &Pos.nMapY, &Pos.nOffX, &Pos.nOffY);
+	if (Pos.nRegion < 0)
+		return 0;
+	KObjItemInfo Info = {};
+	Info.m_nItemID = nItem;
+	Info.m_nItemWidth = Item[nItem].GetWidth();
+	Info.m_nItemHeight = Item[nItem].GetHeight();
+	Info.m_nMovieFlag = Info.m_nSoundFlag = 1;
+	g_StrCpyLen(Info.m_szName, Item[nItem].GetName(), sizeof(Info.m_szName));
+	int nObject = ObjSet.Add(Item[nItem].GetObjIdx(), Pos, Info);
+	if (nObject <= 0)
+		return 0;
+	Object[nObject].SetItemBelong(nPlayer);
+	return nObject;
+}
+
 void KNpc::Revive()
 {	
 	//RestoreLiveData();
@@ -5847,7 +5971,7 @@ void KNpc::Revive()
 	m_ProcessState = 1;
 	m_AiAddLifeTime = 0;
 #ifdef _SERVER
-	this->m_cGold.RandChangeGold();
+	RefreshHardNpc();
 #endif
 }
 

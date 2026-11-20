@@ -443,6 +443,15 @@ public:
 	KNpcDeathCalcExp	m_cDeathCalcExp;		// 战斗npc死亡后送出经验给不同的player
 	KItemDropRate*		m_pDropRate;
 	KItemDropRate*		m_pDropRate1;
+	KItemDropRate* m_pHardDropRate[2];
+	int m_Treasure1;
+	int m_nHardNpcAttrib; // -1普通；0～7为hardnpc.txt原随机槽序。
+	BOOL m_bHardNpcSpawn; // 仅原生region放置的野怪参与刷新。
+	char m_szDeathScript[MAX_PATH];
+	void RefreshHardNpc();
+	BOOL SendHardNpcSync(int nClient);
+	BOOL SendNpcColorSync(int nClient, BYTE Color);
+	int DropScriptItem(int nItem, int nPlayer);
 	int					m_nCurPKPunishState;	// PK死亡时的惩罚性质，用于国战
 #endif
 #ifndef	_SERVER
@@ -625,7 +634,7 @@ public:
 	void				ReCalcStateEffect();
 	void				ClearNormalState();
 	void				SetImmediatelySkillEffect(int nLauncher, void *pData, int nDataNum);
-	void				AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, void *pDesData);
+	void				AppendSkillEffect(BOOL bIsPhysical, BOOL bIsMelee, void *pSrcData, void *pDesData, BOOL bAddNpcElement = FALSE);
 	int					ModifyMissleLifeTime(int nLifeTime);
 	int					ModifyMissleSpeed(int nSpeed);
 	BOOL				ModifyMissleCollsion(BOOL bCollsion);
@@ -678,7 +687,8 @@ public:
 	void				BroadCastRevive(int nType);
 	int					GetPlayerIdx();
 	int					GetSyncLifeRatio() const;
-	void				SyncDamage(int nDamage, BYTE bFlags);
+	void				SyncDamage(int nAttacker, int nDamage, BYTE bFlags);
+	void				SyncDodge(int nAttacker);
 	int					CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL bIsMelee, BOOL bDoHurt = TRUE, BOOL bReturn = FALSE, BOOL bCritical = FALSE);
 	BOOL				ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR, BOOL bDoHurt);
 

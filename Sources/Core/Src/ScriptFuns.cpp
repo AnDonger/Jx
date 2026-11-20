@@ -42,6 +42,8 @@
 #include <vector>
 #include <string>
 #include "KTabFile.h"
+#include "KObj.h"
+#include "KObjSet.h"
 #endif
 #include "KSortScript.h"
 #ifndef __linux
@@ -3058,6 +3060,214 @@ BOOL g_CallPetEventScript(int nPlayer, DWORD dwScript, const char* pszFunction, 
 	return bSuccess;
 }
 
+
+struct KNpcDeathContext
+{
+	int PlayerIndex;
+	int NpcIndex;
+	std::vector<int> Items;
+	std::vector<int> Members;
+};
+extern CORE_API TLua_Funcs GameScriptFuns[];
+extern CORE_API int g_GetGameScriptFunNum();
+static KNpcDeathContext* g_NpcDeathContext = NULL;
+
+static void AddDeathScriptMember(KNpcDeathContext& Context, int nPlayer)
+{
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || Player[nPlayer].m_nIndex <= 0 ||
+		Player[nPlayer].m_nIndex >= MAX_NPC)
+		return;
+	for (size_t i = 0; i < Context.Members.size(); i++)
+		if (Context.Members[i] == nPlayer)
+			return;
+	Context.Members.push_back(nPlayer);
+}
+
+// 死亡回调独立于玩家正在使用的NPC/物品上下文，支持原脚本的组队任务分发。
+BOOL g_CallNpcDeathScript(int nPlayer, int nNpc, const char* pszScript)
+{
+	if (g_NpcDeathContext || nNpc <= 0 || nNpc >= MAX_NPC ||
+		Npc[nNpc].m_Kind != kind_normal || Npc[nNpc].m_Doing != do_death ||
+		nPlayer <= 0 || nPlayer >= MAX_PLAYER || Player[nPlayer].m_nIndex <= 0 ||
+		!pszScript || !pszScript[0])
+		return FALSE;
+	KLuaScript* pScript = (KLuaScript*)g_GetScript(pszScript);
+	if (!pScript && ReLoadScript(pszScript))
+		pScript = (KLuaScript*)g_GetScript(pszScript);
+	if (!pScript)
+	{
+		g_DebugLog("[NpcDeathLua] Unsupported callback script=%s", pszScript);
+		return FALSE;
+	}
+	KNpcDeathContext Context;
+	Context.PlayerIndex = nPlayer;
+	Context.NpcIndex = nNpc;
+	AddDeathScriptMember(Context, nPlayer);
+	if (Player[nPlayer].m_cTeam.m_nFlag)
+	{
+		int nTeam = Player[nPlayer].m_cTeam.m_nID;
+		if (nTeam >= 0 && nTeam < MAX_TEAM)
+		{
+			AddDeathScriptMember(Context, g_Team[nTeam].m_nCaptain);
+			for (int i = 0; i < MAX_TEAM_MEMBER; i++)
+				AddDeathScriptMember(Context, g_Team[nTeam].m_nMember[i]);
+		}
+	}
+	std::vector<KNpcScriptTransaction*> Transactions;
+	for (size_t i = 0; i < Context.Members.size(); i++)
+	{
+		if (g_NpcScriptExchange[Context.Members[i]])
+			return FALSE;
+	}
+	for (size_t i = 0; i < Context.Members.size(); i++)
+		Transactions.push_back(new KNpcScriptTransaction(Context.Members[i]));
+	Lua_State* L = pScript->m_LuaState;
+	int nTop = Lua_GetTopIndex(L);
+	// 旧脚本包含未启用的任务分支，按实际调用限制能力，避免静态扫描拒绝整个回调。
+	// 保存并暂时隐藏未纳入本次事务的引擎接口；执行到该分支时Lua报错并完整回滚。
+	std::vector<std::pair<const char*, int> > HiddenFunctions;
+	for (int i = 0; i < g_GetGameScriptFunNum(); i++)
+	{
+		const char* pszName = GameScriptFuns[i].name;
+		if (g_IsNpcDeathScriptFunctionAllowed(pszName)) continue;
+		Lua_GetGlobal(L, pszName);
+		if (Lua_IsCFunction(L, -1))
+		{
+			HiddenFunctions.push_back(std::make_pair(pszName, Lua_SetRef(L, 1)));
+			Lua_PushNil(L); Lua_SetGlobal(L, pszName);
+		}
+		else Lua_SetTopIndex(L, Lua_GetTopIndex(L) - 1);
+	}
+	int nSavedTop = Lua_GetTopIndex(L);
+	const char* Names[] = {SCRIPT_PLAYERINDEX, SCRIPT_PLAYERID, SCRIPT_SUBWORLDINDEX};
+	for (int i = 0; i < 3; i++)
+		Lua_GetGlobal(L, Names[i]);
+	Lua_PushNumber(L, nPlayer); Lua_SetGlobal(L, SCRIPT_PLAYERINDEX);
+	Lua_PushNumber(L, Player[nPlayer].m_dwID); Lua_SetGlobal(L, SCRIPT_PLAYERID);
+	Lua_PushNumber(L, Npc[nNpc].m_SubWorldIndex); Lua_SetGlobal(L, SCRIPT_SUBWORLDINDEX);
+	g_NpcDeathContext = &Context;
+	BOOL bSuccess = pScript->CallFunction("OnDeath", 0, "n", (double)nNpc);
+	for (size_t i = 0; i < Transactions.size(); i++)
+		if (Transactions[i]->HasFailed()) bSuccess = FALSE;
+	// 先完成整个脚本，再生成地面物品；任何一个失败都撤回本次全部地面对象与任务。
+	std::vector<int> Objects;
+	if (bSuccess)
+	{
+		for (size_t i = 0; i < Context.Items.size(); i++)
+		{
+			int nObject = Npc[nNpc].DropScriptItem(Context.Items[i], nPlayer);
+			if (nObject <= 0)
+			{
+				bSuccess = FALSE;
+				break;
+			}
+			Objects.push_back(nObject);
+		}
+	}
+	if (!bSuccess)
+	{
+		for (size_t i = 0; i < Objects.size(); i++)
+			Object[Objects[i]].Remove(FALSE);
+		// 已挂到地面对象的物品由原对象删除流程回收，不能重复释放索引。
+		for (size_t i = Objects.size(); i < Context.Items.size(); i++)
+			ItemSet.Remove(Context.Items[i]);
+	}
+	for (int i = 0; i < 3; i++)
+	{
+		Lua_PushValue(L, nSavedTop + i + 1);
+		Lua_SetGlobal(L, Names[i]);
+	}
+	for (size_t i = 0; i < HiddenFunctions.size(); i++)
+	{
+		Lua_GetRef(L, HiddenFunctions[i].second);
+		Lua_SetGlobal(L, HiddenFunctions[i].first);
+		Lua_UnRef(L, HiddenFunctions[i].second);
+	}
+	Lua_SetTopIndex(L, nTop);
+	g_NpcDeathContext = NULL;
+	for (size_t i = 0; i < Transactions.size(); i++)
+	{
+		if (bSuccess) Transactions[i]->Commit();
+		delete Transactions[i];
+	}
+	g_DebugLog("[NpcDeathLua] player=%d npc=%lu script=%s result=%d items=%d",
+		nPlayer, Npc[nNpc].m_dwID, pszScript, bSuccess, (int)Context.Items.size());
+	return bSuccess;
+}
+
+int LuaGetHardNpcAttrib(Lua_State* L)
+{
+	int nNpc = 0;
+	int nResult = -1;
+	if (Lua_GetTopIndex(L) == 1 && ReadScriptInteger(L, 1, 1, MAX_NPC - 1, &nNpc) &&
+		Npc[nNpc].m_Index && Npc[nNpc].m_Kind == kind_normal)
+		nResult = Npc[nNpc].m_nHardNpcAttrib;
+	Lua_PushNumber(L, nResult);
+	return 1;
+}
+
+int LuaGetNpcLevel(Lua_State* L)
+{
+	int nNpc = 0;
+	int nLevel = 0;
+	if (Lua_GetTopIndex(L) == 1 && ReadScriptInteger(L, 1, 1, MAX_NPC - 1, &nNpc) && Npc[nNpc].m_Index)
+		nLevel = Npc[nNpc].m_Level;
+	Lua_PushNumber(L, nLevel);
+	return 1;
+}
+
+int LuaThrowItem(Lua_State* L)
+{
+	int Values[8];
+	BOOL bValid = g_NpcDeathContext && Lua_GetTopIndex(L) == 8 && g_NpcDeathContext->Items.size() < 32;
+	for (int i = 0; bValid && i < 8; i++)
+		bValid = ReadScriptInteger(L, i + 1, 0, 2147483647, &Values[i]);
+	if (bValid)
+		bValid = Values[0] == g_NpcDeathContext->NpcIndex && Values[1] == g_NpcDeathContext->PlayerIndex;
+	int nItem = 0;
+	if (bValid)
+	{
+		int Magic[6] = {0};
+		nItem = ItemSet.Add(Values[2], Values[6], Values[5], Values[7], Values[3], Values[4], Magic, g_SubWorldSet.GetGameVersion());
+		if (!nItem && Values[2] == item_materials && Values[5] == 1)
+			nItem = ItemSet.Add(Values[2], Values[6], 0, Values[7], Values[3], Values[4], Magic, g_SubWorldSet.GetGameVersion());
+	}
+	if (nItem <= 0)
+	{
+		lua_error(L, "ThrowItem requires a valid server-owned NPC death transaction and item template");
+		return 0;
+	}
+	g_NpcDeathContext->Items.push_back(nItem);
+	Lua_PushNumber(L, 1);
+	return 1;
+}
+
+int LuaGetTeamMember(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	int nOrdinal = 0, nResult = 0;
+	if (nTop == 1 && ReadScriptInteger(L, 1, 1, MAX_TEAM_MEMBER + 1, &nOrdinal) &&
+		nPlayer > 0 && nPlayer < MAX_PLAYER && Player[nPlayer].m_cTeam.m_nFlag)
+	{
+		int nTeam = Player[nPlayer].m_cTeam.m_nID;
+		if (nTeam >= 0 && nTeam < MAX_TEAM)
+		{
+			if (nOrdinal == 1) nResult = g_Team[nTeam].m_nCaptain;
+			else
+			{
+				int nCount = 1;
+				for (int i = 0; i < MAX_TEAM_MEMBER; i++)
+					if (g_Team[nTeam].m_nMember[i] > 0 && ++nCount == nOrdinal)
+						nResult = g_Team[nTeam].m_nMember[i];
+			}
+		}
+	}
+	Lua_PushNumber(L, nResult > 0 && nResult < MAX_PLAYER && Player[nResult].m_nIndex > 0 ? nResult : 0);
+	return 1;
+}
+
 int LuaSaleEx(Lua_State* L)
 {
 	int nTop = Lua_GetTopIndex(L);
@@ -3667,11 +3877,11 @@ int LuaGetTeamId(Lua_State * L)
 	if (nPlayerIndex > 0)
 	{
 		if (Player[nPlayerIndex].m_cTeam.m_nFlag)
-			Lua_PushNumber(L, Player[nPlayerIndex].m_cTeam.m_nID);
-		else Lua_PushNil(L);
+			Lua_PushNumber(L, Player[nPlayerIndex].m_cTeam.m_nID + 1);
+		else Lua_PushNumber(L, 0);
 	}
 	else 
-		Lua_PushNil(L);
+		Lua_PushNumber(L, 0);
 	return 1;
 }
 
@@ -3681,7 +3891,13 @@ int LuaGetTeamSize(Lua_State * L)
 	int nTeamId = -1;
 	if (Lua_GetTopIndex(L) >= 1)
 	{
-		nTeamId = Lua_ValueToNumber(L, 1);
+		int nHandle = 0;
+		if (!ReadScriptInteger(L, 1, 1, MAX_TEAM, &nHandle))
+		{
+			Lua_PushNumber(L, 0);
+			return 1;
+		}
+		nTeamId = nHandle - 1;
 	}
 	else
 	{
@@ -3695,7 +3911,7 @@ int LuaGetTeamSize(Lua_State * L)
 		}
 	}
 	
-	if (nTeamId < 0)
+	if (nTeamId < 0 || nTeamId >= MAX_TEAM || g_Team[nTeamId].m_nCaptain <= 0)
 		nTeamSize = 0;
 	else
 		nTeamSize = g_Team[nTeamId].m_nMemNum + 1;
@@ -7925,6 +8141,10 @@ TLua_Funcs GameScriptFuns[] =
 	{"GetTask",			LuaGetTaskValue},	//GetTask(任务号):获得当前玩家该任务号的值
 	{"SetTask",			LuaSetTaskValue},	//SetTask(任务号,值):设置任务值
 	{"IsCaptain",		LuaIsLeader},		//IsCaptain()是否为队长
+	{"GetHardNpcAttrib", LuaGetHardNpcAttrib},
+	{"GetNpcLevel", LuaGetNpcLevel},
+	{"ThrowItem", LuaThrowItem},
+	{"GetTeamMember", LuaGetTeamMember},
 	{"GetTeam",			LuaGetTeamId},		//GetTeam()返回玩家队伍ID
 	{"GetTeamSize",		LuaGetTeamSize},	//GetTeamSize()
 	{"LeaveTeam",		LuaLeaveTeam},		//LeaveTeam()让玩家离开自身队伍

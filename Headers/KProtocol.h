@@ -911,6 +911,26 @@ struct GAME_DAMAGE_SYNC
 	LONG LifeMax;
 };
 
+// 当前客户端受击文字，不包含攻击方EA中的目标生命字段。
+struct GAME_RECEIVE_DAMAGE_SYNC
+{
+	BYTE ProtocolType;
+	BYTE DamageFlags;
+	LONG Damage;
+	DWORD AttackerID;
+};
+
+// F8/51：Flags位0x10表示自身闪避，位0x20表示自身召唤物。
+struct GAME_DODGE_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE Subtype;
+	BYTE Flags;
+	DWORD OtherID;
+	WORD Reason;
+};
+
 struct GAME_STATE_ATTRIBUTE
 {
 	LONG Type;
@@ -1001,6 +1021,12 @@ static_assert(sizeof(GAME_REVIVE_COMMAND) == 2, "7E revive request");
 static_assert(sizeof(GAME_NPC_REVIVE_SYNC) == 10, "94 revive sync");
 static_assert(sizeof(GAME_DEATH_ACK_COMMAND) == 21, "B8/21 death acknowledgement");
 static_assert(sizeof(GAME_DAMAGE_SYNC) == 16, "EA damage");
+static_assert(sizeof(GAME_RECEIVE_DAMAGE_SYNC) == 10, "EB received damage");
+static_assert(offsetof(GAME_RECEIVE_DAMAGE_SYNC, AttackerID) == 6, "EB attacker offset");
+static_assert(sizeof(GAME_DODGE_SYNC) == 11, "F8/51 dodge");
+static_assert(offsetof(GAME_DODGE_SYNC, Flags) == 4, "F8/51 direction offset");
+static_assert(offsetof(GAME_DODGE_SYNC, OtherID) == 5, "F8/51 other entity offset");
+static_assert(offsetof(GAME_DODGE_SYNC, Reason) == 9, "F8/51 reason offset");
 static_assert(sizeof(GAME_STATE_ATTRIBUTE) == 52, "92 state attribute");
 static_assert(sizeof(GAME_OBJECT_ADD_SYNC) - 80 == 39, "4F object prefix");
 
@@ -3226,6 +3252,28 @@ typedef struct
 	DWORD	m_dwNpcID;
 	WORD	m_wGoldFlag;
 } NPC_GOLD_CHANGE_SYNC;
+
+// 正式服20261119两份日志：创建4C后发送D2、DWORD实体ID、BYTE随机属性槽。
+// 普通怪未发送；0～7由客户端原hardnpc/名称描述表解释，其他值语义未确认。
+typedef struct
+{
+	BYTE ProtocolType;
+	DWORD ID;
+	BYTE Attribute;
+} GAME_HARD_NPC_SYNC;
+
+// 正式服4C（蓝怪先跟D2）之后的DD覆盖颜色，不撤销蓝怪属性和名称。
+typedef struct
+{
+	BYTE ProtocolType;
+	DWORD ID;
+	BYTE Color;
+} GAME_NPC_COLOR_SYNC;
+
+static_assert(sizeof(GAME_HARD_NPC_SYNC) == 6, "D2 hard NPC state");
+static_assert(sizeof(GAME_NPC_COLOR_SYNC) == 6, "DD NPC color");
+static_assert(offsetof(GAME_NPC_COLOR_SYNC, ID) == 1, "DD entity offset");
+static_assert(offsetof(GAME_NPC_COLOR_SYNC, Color) == 5, "DD color offset");
 
 typedef struct
 {

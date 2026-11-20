@@ -56,6 +56,8 @@ extern BOOL ReLoadScript(const char * szRelativePathScript);
 extern BOOL g_CheckNpcScriptFunction(DWORD dwScriptId, const char *pszFunction, char *pszMissing, int nSize, int nScope = 0);
 extern BOOL g_CallPlayerScript(int nPlayer, DWORD dwScript, const char* pszFunction,
 	DWORD dwParameter, int* pnResult, BOOL bItemAction = FALSE);
+extern BOOL g_IsNpcDeathScriptFunctionAllowed(const char* pszFunction);
+extern BOOL g_CallNpcDeathScript(int nPlayer, int nNpc, const char* pszScript);
 extern BOOL g_CallPetEventScript(int nPlayer, DWORD dwScript, const char* pszFunction,
 	int nTargetNpc, int nDamage);
 

@@ -328,15 +328,12 @@ int KNpcSet::Add(int nSubWorld, void* pNpcInfo)
 		Npc[nRet].m_Camp = pKSNpcInfo->cCamp;
 		Npc[nRet].m_CurrentCamp = pKSNpcInfo->cCamp;
 		Npc[nRet].m_Series = pKSNpcInfo->cSeries;
-		// 如果是黄金怪物，备份数据
-		if (pKSNpcInfo->bSpecialNpc)
-		{
-			Npc[nRet].m_cGold.SetGoldTypeAndBackData();
-		}
-		else
-		{
-			Npc[nRet].m_cGold.SetGoldType(FALSE);;
-		}
+		// 当前资源使用蓝怪表，忽略旧黄金标记，普通野怪每次刷新独立抽签。
+		Npc[nRet].m_cGold.SetGoldType(FALSE);
+#ifdef _SERVER
+		Npc[nRet].m_bHardNpcSpawn = Npc[nRet].m_Kind == kind_normal;
+		Npc[nRet].RefreshHardNpc();
+#endif
 
 		if (pKSNpcInfo->szScript[0])
 		{

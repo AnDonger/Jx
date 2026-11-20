@@ -11,12 +11,96 @@
 #include	"KNpcTemplate.h"
 #include	"KNpc.h"
 #include	"KNpcGold.h"
+#include "KSkillManager.h"
+#include "KSkills.h"
 
 #define		defNPC_GOLD_SKILL_NO		5
 #define		defNPC_GOLD_RATE			20
 
 #ifdef _SERVER
 extern KLuaScript		*g_pNpcLevelScript;
+#endif
+
+
+#ifdef _SERVER
+// 当前蓝怪使用hardnpc.txt，与旧黄金怪的倍率和放置标记相互独立。
+void KNpc::RefreshHardNpc()
+{
+	if (!m_bHardNpcSpawn || m_Kind != kind_normal || m_NpcSettingIdx < 0 ||
+		m_NpcSettingIdx >= MAX_NPCSTYLE || m_Level <= 0 || m_Level >= MAX_NPC_LEVEL)
+		return;
+	KNpcTemplate* pBase = g_pNpcTemplate[m_NpcSettingIdx][m_Level];
+	if (!pBase || !pBase->m_HardNpc.Enabled)
+		return;
+	// 重新刷新必须从模板重建，不能在上一次的蓝怪属性上继续累加。
+	ClearNpcState();
+	RestoreNpcBaseInfo();
+	m_CurrentAddPhysicsDamage = 0;
+	m_SkillList = pBase->m_SkillList;
+	m_SkillList.m_nNpcIndex = m_Index;
+	int nBaseRadius = 0;
+	for (int i = 1; i <= 4; i++)
+	{
+		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(m_SkillList.m_Skills[i].SkillId, m_SkillList.m_Skills[i].SkillLevel);
+		if (pSkill) nBaseRadius = max(nBaseRadius, pSkill->GetAttackRadius());
+	}
+	m_AiParam[MAX_AI_PARAM - 1] = nBaseRadius * nBaseRadius;
+	m_AiSkillRadiusLoadFlag = 1;
+	m_Experience = m_CurrentExperience = pBase->m_Experience;
+	m_nHardNpcAttrib = -1;
+	if (g_Random(100) >= 5)
+		return;
+	const KNpcTemplate::HardNpcData& Data = pBase->m_HardNpc;
+	int Slots[8], nSlots = 0;
+	for (int i = 0; i < 8; i++)
+		if (Data.Random[i].nAttribType > 0)
+			Slots[nSlots++] = i;
+	if (!nSlots)
+		return;
+	m_nHardNpcAttrib = Slots[g_Random(nSlots)];
+	for (int i = 0; i < 8; i++)
+	{
+		if (Data.Fixed[i].nAttribType > 0)
+		{
+			KMagicAttrib Attrib = Data.Fixed[i];
+			ModifyAttrib(m_Index, &Attrib);
+		}
+	}
+	KMagicAttrib Random = Data.Random[m_nHardNpcAttrib];
+	ModifyAttrib(m_Index, &Random);
+	m_CurrentVisionRadius += Data.VisionRadius;
+	m_CurrentTreasure = max(0, Data.Treasure[0]);
+	m_Experience = m_CurrentExperience = (int)min((__int64)2147483647,
+		(__int64)pBase->m_Experience * (100 + max(0, Data.ExperiencePercent)) / 100);
+	int nRadius = 0;
+	for (int i = 0; i < 4; i++)
+	{
+		if (Data.Skills[i] > 0 && Data.SkillLevels[i] > 0)
+			m_SkillList.SetNpcSkill(i + 1, Data.Skills[i], Data.SkillLevels[i]);
+		KSkill* pSkill = (KSkill*)g_SkillManager.GetSkill(m_SkillList.m_Skills[i + 1].SkillId,
+			m_SkillList.m_Skills[i + 1].SkillLevel);
+		if (pSkill)
+			nRadius = max(nRadius, pSkill->GetAttackRadius());
+	}
+	m_AiParam[MAX_AI_PARAM - 1] = nRadius * nRadius;
+	m_AiSkillRadiusLoadFlag = 1;
+	m_CurrentLife = m_CurrentLifeMax;
+	g_DebugLog("[BlueNpc] Spawn id=%lu template=%d level=%d attribute=%d life=%d exp=%d drops=%d/%d",
+		m_dwID, m_NpcSettingIdx, m_Level, m_nHardNpcAttrib, m_CurrentLifeMax,
+		m_Experience, Data.Treasure[0], Data.Treasure[1]);
+}
+
+BOOL KNpc::SendHardNpcSync(int nClient)
+{
+	if (!g_pServer || nClient < 0 || !m_dwID || m_Kind != kind_normal ||
+		m_nHardNpcAttrib < 0 || m_nHardNpcAttrib >= 8)
+		return FALSE;
+	GAME_HARD_NPC_SYNC Sync = {};
+	Sync.ProtocolType = 0xD2;
+	Sync.ID = m_dwID;
+	Sync.Attribute = (BYTE)m_nHardNpcAttrib;
+	return SUCCEEDED(g_pServer->PackDataToClient(nClient, &Sync, sizeof(Sync)));
+}
 #endif
 
 void	KNpcGold::Init(int nIdx)
