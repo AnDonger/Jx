@@ -354,7 +354,7 @@ public:
 	void SyncStoreBoxPage(int nIndex);
 	BOOL CanChangeInventory();
 	BOOL IsInventoryPosition(int nPlace, int nX, int nY, int nWidth, int nHeight) const;
-	BOOL			OpenItemCompound(BOOL bNewWindow, const char* pszFunction = "OnCompound", int nMode = 0);
+	BOOL			OpenItemCompound(BOOL bNewWindow, const char* pszFunction = "OnCompound", int nMode = 0, int nDisplayRate = 0);
 	BOOL			CanCompoundItems();
 	void			CompoundMessage(const char* pszMessage);
 	BOOL			UseSkillBook(int nItem);

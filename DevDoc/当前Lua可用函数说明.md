@@ -1,5 +1,27 @@
 # 当前 Lua 可用函数说明（Lua函数表）
 
+## 2026-11-21 选中装备模板转换与铸造窗口
+
+### `TransformSelectedEquipment`
+
+`TransformSelectedEquipment(slot, particular, level [, bound, bindingMode])`：slot为当次`GetSelectedItems()`的1起始数组下标；particular、level为同装备部位的目标原模板编号和模板等级，均为非负整数（level至少1）。只允许当前有效NPC合成窗口事务（Mode=0）中真实提交的一件随身背包装备，目标必须存在、为固定属性模板（TemplateSeries非0）且尺寸与原件一致，不接受原模板原等级的空转换。
+
+成功返回1。原装备实例ID、位置、绑定、有效期、改造元数据和四个孔位（含玉石／卦符编号、类型及随机种子）保持，基础／需求／固定属性按目标原模板重新生成，原随机魔法属性清除。可选bound为0/1、bindingMode为0～255，必须同时传；只提升绑定，既有永久绑定不降级。费用、材料、职业、原模板及业务限制必须先由NPC Lua校验，接口不替代配方校验。
+
+参数或上下文错误返回0并中止事务；整个回调未`CompleteItemOperation(1)`或后续Lua报错时，完整恢复原装备、材料及金钱。成功提交后完整刷新物品并安排存档。Lua不直接操作数据库。
+
+```lua
+local selected = GetSelectedItems()
+-- 必须先依据服务端窗口、职业和配方核实selected，并在同一事务扣除费用、材料。
+if TransformSelectedEquipment(1, 54, selected[1].Level) ~= 1 then error("装备转换失败") end
+CompleteItemOperation(1)
+```
+
+`GetSelectedItems()`每项新增`MagicCount`（随机魔法属性条数）和`TemplateSeries`（原装备模板series；非装备为-1），可供Lua核对原料品质。
+
+`EnchaseItem("callback", displayRate)`：新增可选第二参数0～100整数，只用于旧合成窗口展示成功率（0x79 UIAction=8、Selector字段），不授予业务成功权限；实际概率仍由Lua决定。省略时仍为0。原数字模式重载`EnchaseItem(1/2,"callback")`保持不变。
+
+
 ## 2026-11-21 背包材料通用筛选
 
 `HaveNormalItem(g,d,p,l[, filter])`及其同注册实现别名`HaveItem2`、`IsExistItem`支持第五参数条件表；`DelNormalItem(g,d,p,l[, count=1[, filter]])`及别名`DelItem2`支持第六参数同条件表。省略／空表保持原匹配行为；查询返回符合条件的叠加总数，扣除成功1、失败0（NPC事务内失败报错并完整回滚）。只遍历两页随身背包，不包括仓库、穿戴、鼠标和快捷栏。
@@ -304,6 +326,7 @@ Talk(count, callback, line1, ...)
 - 限制／说明：当前实现不支持把对白数组作为第三参数，尽管旧注释提到这种形式。只使用逐项参数。
 - 容量：整次正文缓冲区300字节，每段都包含一个尾部`|`，另留一个NUL；单段字面量最多298个GBK字节。安全保留能够完整放入的连续段落，其后超出容量的段落不发送并记录服务端警告；一段都放不下则不发送。数字文本ID也逐段计入分隔符。较长说明必须由Lua拆成`Talk(1, "next_page", text)`的回调续页，不能依赖截断或修改协议容量。
 - 空／无效的正文类型、非整数或越界的文本ID不发送；count非法时不发送。
+- 新版客户端的单页回调续页：当前页点击结束后，窗口仍可能保持可见；回调直接再次调用`Talk`会让下一页入队却不立即显示，表现为需要额外点击一次。回调续页须先调用`CloseDialog()`再调用`Talk(1, nextCallback, text)`，让新页立即显示。该行为已用当前客户端后台GUI IDA确认，铜匠四页说明的实际TLS验证了每页关闭、显示的发送顺序；实际点击效果仍须客户端实测。
 - 实现：[`LuaTalkUI`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2222)。
 
 用法示例：

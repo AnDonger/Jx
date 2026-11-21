@@ -447,7 +447,10 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 			int nItem = Role.m_ItemList.SearchID(Saved.GetID());
 			if (!nItem || Item[nItem].GetGenre() != item_equip)
 				continue;
-			BOOL bChanged = Item[nItem].IsBound() != Saved.IsBound() ||
+			BOOL bChanged = Item[nItem].GetParticular() != Saved.GetParticular() ||
+				Item[nItem].GetLevel() != Saved.GetLevel() ||
+				memcmp(Item[nItem].GetGeneratorParam(), Saved.GetGeneratorParam(), sizeof(KItemGeneratorParam)) ||
+				Item[nItem].IsBound() != Saved.IsBound() ||
 				Item[nItem].GetBindingMode() != Saved.GetBindingMode();
 			for (int j = 0; j < 4; j++)
 				if (memcmp(Item[nItem].GetSocket(j), Saved.GetSocket(j), sizeof(KItemSocket)))
@@ -845,6 +848,11 @@ int LuaGetSelectedItems(Lua_State* L)
 		Lua_SetTable(L, nTable);
 		SetScriptItemInteger(L, nTable, "GenerationFlags", Data.GetGenerationFlags());
 		SetScriptItemInteger(L, nTable, "RequireLevel", Data.GetRequireLevel());
+		SetScriptItemInteger(L, nTable, "MagicCount", Data.GetMagicAttribCount());
+		const KBASICPROP_EQUIPMENT* pTemplate = Data.GetGenre() == item_equip ?
+			ItemGen.GetEquipmentTemplate(Data.GetDetailType(), Data.GetParticular(), Data.GetLevel(),
+				Data.GetGeneratorParam()->nVersion) : NULL;
+		SetScriptItemInteger(L, nTable, "TemplateSeries", pTemplate ? pTemplate->m_nSeries : -1);
 		Lua_PushString(L, "Sockets");
 		lua_newtable(L);
 		int nSockets = Lua_GetTopIndex(L);
@@ -913,6 +921,58 @@ static KItem* GetSelectedSocketEquipment(Lua_State* L, int nPlayer, DWORD dwSlot
 		!IsBagItemPlace(Player[nPlayer].m_ItemList.GetItemPlace(Selected.Index)))
 		return NULL;
 	return &Data;
+}
+
+// 固定模板装备转换：配方和费用由当前NPC Lua负责，接口不接受玩家ID或数据库操作。
+int LuaTransformSelectedEquipment(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	DWORD Args[5] = {0};
+	const DWORD Maximum[5] = {MAX_SCRIPT_SELECTED_ITEMS, 2147483647, 2147483647, 1, 255};
+	BOOL bValid = nTop == 3 || nTop == 5;
+	for (int i = 0; bValid && i < nTop; i++)
+		bValid = ReadSocketArgument(L, i + 1, Maximum[i], &Args[i]);
+	KNpcSelectedItems* pState = nPlayer > 0 && nPlayer < MAX_PLAYER ? g_NpcSelectedItems[nPlayer] : NULL;
+	if (!bValid || !pState || pState->Result >= 0 || !g_NpcScriptExchange[nPlayer] ||
+		g_NpcScriptExchange[nPlayer]->Failed || !Player[nPlayer].CanCompoundItems() ||
+		Player[nPlayer].m_nCompoundMode != 0 || Args[0] < 1 || Args[0] > pState->Items.size() ||
+		!Args[2] || !Args[3] && Args[4])
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	KNpcSelectedItem& Selected = pState->Items[Args[0] - 1];
+	KItem& Source = Item[Selected.Index];
+	const KBASICPROP_EQUIPMENT* pTarget = ItemGen.GetEquipmentTemplate(Source.GetDetailType(),
+		Args[1], Args[2], Source.GetGeneratorParam()->nVersion);
+	if (Selected.Remaining != 1 || Source.GetID() != Selected.ID ||
+		Source.GetGenre() != item_equip || Source.GetStackCount() != 1 || Source.IsExpired() ||
+		!IsBagItemPlace(Player[nPlayer].m_ItemList.GetItemPlace(Selected.Index)) ||
+		!pTarget || pTarget->m_nSeries == 0 || pTarget->m_nWidth != Source.GetWidth() ||
+		pTarget->m_nHeight != Source.GetHeight() ||
+		Source.GetParticular() == (int)Args[1] && Source.GetLevel() == (int)Args[2])
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	KItem Result = Source;
+	if (!ItemGen.Gen_Equipment(Source.GetDetailType(), Args[1], Source.GetSeries(), Args[2], NULL,
+		0, Source.GetGeneratorParam()->nVersion, &Result))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	// 生成属性只替换模板数据；实例身份、绑定、有效期、改造及四孔信息保持。
+	if (Args[3] && (!Result.IsBound() || Result.GetBindingMode() != 2))
+		Result.SetBinding(TRUE, (BYTE)Args[4]);
+	Source = Result;
+	Lua_PushNumber(L, 1);
+	return 1;
 }
 
 int LuaSetSelectedItemSocket(Lua_State* L)
@@ -7998,8 +8058,11 @@ int LuaEnchaseItem(Lua_State* L)
 				return 0;
 			Player[nPlayer].OpenItemCompound(FALSE, nTop == 2 ? Lua_ValueToString(L, 2) : "OnSocketOperation", (int)Mode);
 		}
-		else if (nTop <= 1)
-			Player[nPlayer].OpenItemCompound(FALSE, nTop > 0 && lua_type(L, 1) == LUA_TSTRING ? Lua_ValueToString(L, 1) : "OnCompound");
+		else if (nTop <= 1 || nTop == 2 && lua_type(L, 1) == LUA_TSTRING &&
+			Lua_IsNumber(L, 2) && Lua_ValueToNumber(L, 2) >= 0 && Lua_ValueToNumber(L, 2) <= 100 &&
+			Lua_ValueToNumber(L, 2) == (int)Lua_ValueToNumber(L, 2))
+			Player[nPlayer].OpenItemCompound(FALSE, nTop > 0 && lua_type(L, 1) == LUA_TSTRING ? Lua_ValueToString(L, 1) : "OnCompound",
+				0, nTop == 2 ? (int)Lua_ValueToNumber(L, 2) : 0);
 	}
 	return 0;
 }
@@ -8124,6 +8187,7 @@ TLua_Funcs GameScriptFuns[] =
 	{"GetSelectedItems", LuaGetSelectedItems},
 	{"GetItemOperationInfo", LuaGetItemOperationInfo},
 	{"SetSelectedItemSocket", LuaSetSelectedItemSocket},
+	{"TransformSelectedEquipment", LuaTransformSelectedEquipment},
 	{"ReturnSelectedSocketGem", LuaReturnSelectedSocketGem},
 	{"DelSelectedItem", LuaDelSelectedItem},
 	{"CompleteItemOperation", LuaCompleteItemOperation},

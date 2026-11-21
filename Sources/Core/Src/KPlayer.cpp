@@ -6826,9 +6826,9 @@ BOOL KPlayer::CanCompoundItems()
 	return TRUE;
 }
 
-BOOL KPlayer::OpenItemCompound(BOOL bNewWindow, const char* pszFunction, int nMode)
+BOOL KPlayer::OpenItemCompound(BOOL bNewWindow, const char* pszFunction, int nMode, int nDisplayRate)
 {
-	if (nMode < 0 || nMode > 2 || bNewWindow && nMode != 0)
+	if (nMode < 0 || nMode > 2 || nDisplayRate < 0 || nDisplayRate > 100 || bNewWindow && nMode != 0)
 		return FALSE;
 	m_nCompoundMode = nMode;
 	m_dwCompoundNpcID = 0;
@@ -6867,6 +6867,7 @@ BOOL KPlayer::OpenItemCompound(BOOL bNewWindow, const char* pszFunction, int nMo
 		Info.m_bUIId = UI_COMPOUND;
 		// UIAction 8读取packet+9窗口模式，通用结构对应OptionNum。
 		Info.m_bOptionNum = (BYTE)nMode;
+		Info.m_bParam1 = (BYTE)nDisplayRate;
 		Info.m_bParam2 = 1;
 		DoScriptAction(&Info);
 	}
