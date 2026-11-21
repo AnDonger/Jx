@@ -809,6 +809,42 @@ const KBASICPROP_NORMALITEM* KLibOfBPT::FindNormalItem(int nGenre, int nDetail, 
 	return NULL;
 }
 
+// 掉落表只指定物品身份；固定模板不应沿用怪物换算的装备等级。
+// 多级旧表优先使用原等级；无对应等级时仅接受身份唯一的模板。
+int KLibOfBPT::ResolveDropItemLevel(int nGenre, int nDetail, int nParticular, int nLevel) const
+{
+	int nResolved = -1;
+	int nMatches = 0;
+	if (nGenre == item_medicine)
+	{
+		for (int i = 0; i < m_BPTMedicine.NumOfEntries(); i++)
+		{
+			const KBASICPROP_MEDICINE* pData = m_BPTMedicine.GetRecord(i);
+			if (!pData || pData->m_nItemGenre != nGenre || pData->m_nDetailType != nDetail ||
+				pData->m_nParticularType != nParticular)
+				continue;
+			if (pData->m_nLevel == nLevel)
+				return nLevel;
+			nResolved = pData->m_nLevel;
+			nMatches++;
+		}
+	}
+	else if (nGenre == item_skillbook)
+	{
+		for (int i = 0; i < m_BPTSkillBook.NumOfEntries(); i++)
+		{
+			const KBASICPROP_NORMALITEM* pData = m_BPTSkillBook.GetRecord(i);
+			if (!pData || pData->m_nDetailType != nDetail || pData->m_nParticularType != nParticular)
+				continue;
+			if (pData->m_nLevel == nLevel)
+				return nLevel;
+			nResolved = pData->m_nLevel;
+			nMatches++;
+		}
+	}
+	return nMatches == 1 ? nResolved : -1;
+}
+
 const KBASICPROP_MINE* KLibOfBPT::GetMine(IN int i) const
 {
 	return 0;// TODO:m_BPTMine.GetRecord(i);

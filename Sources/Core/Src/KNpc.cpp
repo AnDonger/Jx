@@ -5870,6 +5870,18 @@ void KNpc::LoseSingleItem(KItemDropRate *pDropRate, int nBelongPlayer)
 	// 当前材料表没有等级列，材料等级由原资源加载为0，不套用装备等级比例。
 	if (nGenre == item_materials)
 		nLevel = 0;
+	else if (nGenre == item_medicine || nGenre == item_skillbook)
+	{
+		int nTemplateLevel = ItemGen.ResolveDropItemLevel(nGenre, nDetail, nParticular,
+			nLevel, g_SubWorldSet.GetGameVersion());
+		if (nTemplateLevel < 0)
+		{
+			g_DebugLog("[Drop] Missing or ambiguous template: npc=%s, level=%d, entry=%d, genre=%d, detail=%d, particular=%d, itemLevel=%d",
+				Name, m_Level, i + 1, nGenre, nDetail, nParticular, nLevel);
+			return;
+		}
+		nLevel = nTemplateLevel;
+	}
 
 	int nIdx = ItemSet.Add(nGenre, nSeries, nLevel, nLuck, nDetail, nParticular, pnMagicLevel, g_SubWorldSet.GetGameVersion());
 

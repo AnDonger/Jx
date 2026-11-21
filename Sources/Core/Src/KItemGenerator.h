@@ -82,6 +82,7 @@ public:
 	int GetGreenMagicAttribCount(int nGreenId, int nVersion);
 	int GetUpgradeAttribValue(const KItem& Data, int nAttrib);
 	BOOL UsesClassMagicWeights(int nVersion = -1);
+	int ResolveDropItemLevel(int nGenre, int nDetail, int nParticular, int nLevel, int nVersion);
 	const KGREEN_ADDON* GetGreenAddon(int nGreenId, int nVersion);
 	BOOL PrepareReforge(const KItem& Source, int nParticular, int nLevel, BOOL bImprove, BOOL bFull, KItem* pResult);
 	void SetRandomSeed(UINT uSeed);

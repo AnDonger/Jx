@@ -1,5 +1,20 @@
 # 当前 Lua 可用函数说明（Lua函数表）
 
+## 2026-11-21 背包材料通用筛选
+
+`HaveNormalItem(g,d,p,l[, filter])`及其同注册实现别名`HaveItem2`、`IsExistItem`支持第五参数条件表；`DelNormalItem(g,d,p,l[, count=1[, filter]])`及别名`DelItem2`支持第六参数同条件表。省略／空表保持原匹配行为；查询返回符合条件的叠加总数，扣除成功1、失败0（NPC事务内失败报错并完整回滚）。只遍历两页随身背包，不包括仓库、穿戴、鼠标和快捷栏。
+
+filter当前支持`MagicCount`（0～6整数，物品当前随机魔法属性条数）和`TemplateSeries`（0～2147483647整数，装备原模板的五行／颜色标记，例如白色0、黄金1000；不是物品实例的五行值）。各字段省略不筛，多个条件同时满足；非法字段值／非表参数会失败。`TemplateSeries`只匹配真实存在的装备模板。查询和消耗必须传相同条件，避免检查白装却扣走蓝装。模板固定加成与随机魔法条数不同，判断白装应同时用两个字段。
+
+```lua
+local white = {MagicCount = 0, TemplateSeries = 0}
+if HaveNormalItem(0, 10, 30, 10, white) > 0 then
+    DelNormalItem(0, 10, 30, 10, 1, white)
+end
+```
+
+没有新增注册名；业务筛选条件仍由NPC Lua提供。该接口不允许Lua连接数据库。NPC事务已复制完整KPlayerTask，包含永久及临时任务，失败一并恢复。
+
 ## 2026-11-20 蓝怪与怪物死亡回调接口
 
 这批接口注册于GameScriptFuns；原野怪业务继续使用模板DeathScript指向的 `script/npcdeath/*.lua`。Lua不直接访问数据库。
@@ -666,7 +681,7 @@ ExeScript(...)
 状态：实现已核对。作用域：游戏／NPC脚本。
 
 ```lua
-HaveNormalItem(genre, detail, particular, level)
+HaveNormalItem(genre, detail, particular, level[, filter])
 ```
 
 - 参数：四项依次为物品大类、子类、具体类别、模板等级；必须正好4个参数。
@@ -677,7 +692,7 @@ HaveNormalItem(genre, detail, particular, level)
 用法示例：
 
 ```lua
-local count = HaveNormalItem(genre, detail, particular, level)
+local count = HaveNormalItem(genre, detail, particular, level[, filter])
 ```
 
 ### `HaveItem2`
@@ -723,7 +738,7 @@ local count = IsExistItem(genre, detail, particular, level)
 状态：实现已核对。作用域：游戏／NPC脚本。
 
 ```lua
-DelNormalItem(genre, detail, particular, level[, count=1])
+DelNormalItem(genre, detail, particular, level[, count=1[, filter]])
 ```
 
 - 参数：前四项与 HaveNormalItem 相同；count：正整数，可跨背包内多叠扣取。

@@ -1437,27 +1437,72 @@ int LuaMsgBox(Lua_State *L)
 	return 0;
 }
 
-// 四参数旧脚本只匹配普通背包；数量按堆叠计，不包括仓库、身穿和鼠标物品。
-static BOOL MatchNormalItem(PlayerItem *pItem, int nGenre, int nDetail, int nParticular, int nLevel)
+// 可选筛选对查询和扣除使用同一条件，避免误耗同模板的带属性装备。
+struct KNormalItemFilter
 {
-	if (!pItem || !IsBagItemPlace(pItem->nPlace) || pItem->nIdx <= 0 || pItem->nIdx >= MAX_ITEM)
-		return FALSE;
-	KItem& Data = Item[pItem->nIdx];
-	return Data.GetGenre() == nGenre && Data.GetDetailType() == nDetail &&
-		Data.GetParticular() == nParticular && Data.GetLevel() == nLevel;
+    int MagicCount;
+    int TemplateSeries;
+    KNormalItemFilter() : MagicCount(-1), TemplateSeries(-1) {}
+};
+
+static BOOL ReadNormalItemFilter(Lua_State* L, int nTable, KNormalItemFilter& Filter)
+{
+    if (!Lua_IsTable(L, nTable))
+        return FALSE;
+    const char* Keys[] = {"MagicCount", "TemplateSeries"};
+    int* Values[] = {&Filter.MagicCount, &Filter.TemplateSeries};
+    for (int i = 0; i < 2; i++)
+    {
+        Lua_PushString(L, Keys[i]);
+        Lua_GetTable(L, nTable);
+        if (!lua_isnil(L, -1))
+        {
+            double value = Lua_ValueToNumber(L, -1);
+            if (!Lua_IsNumber(L, -1) || value < 0 || value > (i == 0 ? 6 : 2147483647) || value != (int)value)
+            {
+                Lua_Pop(L, 1);
+                return FALSE;
+            }
+            *Values[i] = (int)value;
+        }
+        Lua_Pop(L, 1);
+    }
+    return TRUE;
 }
 
-static int CountNormalItems(KItemList& List, int nGenre, int nDetail, int nParticular, int nLevel)
+static BOOL MatchNormalItem(PlayerItem *pItem, int nGenre, int nDetail, int nParticular, int nLevel,
+    const KNormalItemFilter* pFilter = NULL)
 {
-	int nCount = 0;
-	for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
-	{
-		if (MatchNormalItem(pItem, nGenre, nDetail, nParticular, nLevel))
-			nCount += Item[pItem->nIdx].GetStackCount();
-	}
-	return nCount;
+    if (!pItem || !IsBagItemPlace(pItem->nPlace) || pItem->nIdx <= 0 || pItem->nIdx >= MAX_ITEM)
+        return FALSE;
+    KItem& Data = Item[pItem->nIdx];
+    if (Data.GetGenre() != nGenre || Data.GetDetailType() != nDetail ||
+        Data.GetParticular() != nParticular || Data.GetLevel() != nLevel)
+        return FALSE;
+    if (pFilter && pFilter->MagicCount >= 0 && Data.GetMagicAttribCount() != pFilter->MagicCount)
+        return FALSE;
+    if (pFilter && pFilter->TemplateSeries >= 0)
+    {
+        const KBASICPROP_EQUIPMENT* pTemplate = Data.GetGenre() == item_equip ?
+            ItemGen.GetEquipmentTemplate(Data.GetDetailType(), Data.GetParticular(),
+                Data.GetLevel(), Data.m_GeneratorParam.nVersion) : NULL;
+        if (!pTemplate || pTemplate->m_nSeries != pFilter->TemplateSeries)
+            return FALSE;
+    }
+    return TRUE;
 }
 
+static int CountNormalItems(KItemList& List, int nGenre, int nDetail, int nParticular, int nLevel,
+    const KNormalItemFilter* pFilter = NULL)
+{
+    int nCount = 0;
+    for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
+    {
+        if (MatchNormalItem(pItem, nGenre, nDetail, nParticular, nLevel, pFilter))
+            nCount += Item[pItem->nIdx].GetStackCount();
+    }
+    return nCount;
+}
 
 #ifdef _SERVER
 // 这些接口供原技能丹、临仙露脚本使用；未适配的BUFF编号不能产生占位效果。
@@ -1910,12 +1955,19 @@ int LuaHaveNormalItem(Lua_State *L)
 	int nParamNum = Lua_GetTopIndex(L);
 	int nPlayerIndex = GetPlayerIndex(L);
 	int nCount = 0;
-	if (nPlayerIndex > 0 && nParamNum == 4)
-	{
-		nCount = CountNormalItems(Player[nPlayerIndex].m_ItemList,
-			(int)Lua_ValueToNumber(L, 1), (int)Lua_ValueToNumber(L, 2),
-			(int)Lua_ValueToNumber(L, 3), (int)Lua_ValueToNumber(L, 4));
-	}
+    KNormalItemFilter Filter;
+    if ((nParamNum != 4 && nParamNum != 5) ||
+        (nParamNum == 5 && !ReadNormalItemFilter(L, 5, Filter)))
+    {
+        lua_error(L, "HaveNormalItem requires four identity arguments and an optional valid filter");
+        return 0;
+    }
+    if (nPlayerIndex > 0 && nPlayerIndex < MAX_PLAYER)
+    {
+        nCount = CountNormalItems(Player[nPlayerIndex].m_ItemList,
+            (int)Lua_ValueToNumber(L, 1), (int)Lua_ValueToNumber(L, 2),
+            (int)Lua_ValueToNumber(L, 3), (int)Lua_ValueToNumber(L, 4), &Filter);
+    }
 	Lua_PushNumber(L, nCount);
 	return 1;
 }
@@ -2105,7 +2157,9 @@ int LuaDelNormalItem(Lua_State *L)
 {
 	int nParamNum = Lua_GetTopIndex(L);
 	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex <= 0 || nParamNum < 4 || nParamNum > 5)
+	KNormalItemFilter Filter;
+	if (nPlayerIndex <= 0 || nPlayerIndex >= MAX_PLAYER || nParamNum < 4 || nParamNum > 6 ||
+		(nParamNum == 6 && !ReadNormalItemFilter(L, 6, Filter)))
 	{
 #ifdef _SERVER
 		RejectNpcScriptItem(L, nPlayerIndex);
@@ -2117,9 +2171,9 @@ int LuaDelNormalItem(Lua_State *L)
 	int nDetail = (int)Lua_ValueToNumber(L, 2);
 	int nParticular = (int)Lua_ValueToNumber(L, 3);
 	int nLevel = (int)Lua_ValueToNumber(L, 4);
-	int nCount = nParamNum == 5 ? (int)Lua_ValueToNumber(L, 5) : 1;
+	int nCount = nParamNum >= 5 ? (int)Lua_ValueToNumber(L, 5) : 1;
 	KItemList& List = Player[nPlayerIndex].m_ItemList;
-	if (nCount <= 0 || CountNormalItems(List, nGenre, nDetail, nParticular, nLevel) < nCount
+	if (nCount <= 0 || CountNormalItems(List, nGenre, nDetail, nParticular, nLevel, &Filter) < nCount
 #ifdef _SERVER
 #endif
 		)
@@ -2135,7 +2189,7 @@ int LuaDelNormalItem(Lua_State *L)
 	int nItems = 0;
 	for (PlayerItem *pItem = List.GetFirstItem(); pItem; pItem = List.GetNextItem())
 	{
-		if (MatchNormalItem(pItem, nGenre, nDetail, nParticular, nLevel))
+		if (MatchNormalItem(pItem, nGenre, nDetail, nParticular, nLevel, &Filter))
 			Indices[nItems++] = pItem->nIdx;
 	}
 	for (int i = 0; i < nItems && nCount > 0; i++)

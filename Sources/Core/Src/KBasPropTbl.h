@@ -642,6 +642,7 @@ public:
 	const int					GetTownPortalRecordNumber() const;
 	const KBASICPROP_MINE*		GetMine(IN int) const;
 	const KBASICPROP_NORMALITEM* FindNormalItem(int nGenre, int nDetail, int nParticular, int nLevel) const;
+	int ResolveDropItemLevel(int nGenre, int nDetail, int nParticular, int nLevel) const;
 // 以下是辅助函数
 protected:
 	BOOL InitMALib();

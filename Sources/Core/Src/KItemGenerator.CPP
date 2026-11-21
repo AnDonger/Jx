@@ -80,6 +80,13 @@ KLibOfBPT* KItemGenerator::GetVersionLibrary(int nVersion)
 	return pLibrary;
 }
 
+int KItemGenerator::ResolveDropItemLevel(int nGenre, int nDetail, int nParticular, int nLevel, int nVersion)
+{
+	// 与实际生成入口使用同一模板库；药品生成目前使用当前版本库。
+	KLibOfBPT* pLibrary = nGenre == item_medicine ? &m_BPTLib : GetVersionLibrary(nVersion);
+	return pLibrary ? pLibrary->ResolveDropItemLevel(nGenre, nDetail, nParticular, nLevel) : -1;
+}
+
 static int EquipmentUpgradeClass(int nDetail, int nParticular)
 {
 	if (nDetail == 4 || nDetail == 13 || nDetail == 14 || nDetail == 15)
@@ -392,10 +399,14 @@ BOOL KItemGenerator::Gen_Equipment(IN int nDetailType,
 	pItem->SetAttrib_CBR(pEqu);
 	pItem->SetSeries(nSeriesReq);
 
+	KItemNormalAttrib sMA[6];
 	if (NULL == pnaryMALevel || pEqu->m_nSeries != 0)
+	{
+		// Always replace random attributes when reusing an item for a fixed or non-magical template.
+		ZeroMemory(sMA, sizeof(sMA));
+		pItem->SetAttrib_MA(sMA);
 		return TRUE;
-	// 确定装备的魔法属性
-	KItemNormalAttrib	sMA[6];	// 道具的魔法属性
+	}
 	int nClass = -1;
 	for (int n = 0; n < 6; n++)
 		if (pEqu->m_aryPropReq[n].nType == magic_requireseries)
