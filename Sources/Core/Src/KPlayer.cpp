@@ -211,6 +211,7 @@ void	KPlayer::Release()
 	//	m_uLastPingTime			= -1;
 	m_bMallOpen = FALSE;
 	m_bFinishLoading = FALSE;
+	m_bClientSyncReady = FALSE;
 	m_uMustSave = SAVE_IDLE;
 	m_bIsQuiting = FALSE;
 	m_TimerTask.SetOwner(this);
@@ -865,6 +866,45 @@ BOOL KPlayer::CanSave()
 	return TRUE;
 }
 
+BOOL KPlayer::SyncReputation()
+{
+	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC || !g_pServer)
+		return FALSE;
+	GAME_REPUTATION_SYNC Sync;
+	Sync.ProtocolType = 0xBA;
+	Sync.Reputation = m_cTask.GetSaveVal(TASKVALUE_REPUTE);
+	return SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&Sync, sizeof(Sync)));
+}
+
+BOOL KPlayer::SendCurPlayerSyncData()
+{
+	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC || !g_pServer)
+		return FALSE;
+	GAME_CURPLAYER_SYNC sSync;
+	memset(&sSync, 0, sizeof(sSync));
+	sSync.ProtocolType = s2c_synccurplayer;
+	sSync.ID = Npc[m_nIndex].m_dwID;
+	sSync.Level = (BYTE)Npc[m_nIndex].m_Level;
+	sSync.Sex = (BYTE)Npc[m_nIndex].m_nSex;
+	sSync.Series = (BYTE)Npc[m_nIndex].m_Series;
+	sSync.Portrait = m_btPortrait;
+	sSync.LifeMax = (WORD)Npc[m_nIndex].m_LifeMax;
+	sSync.StaminaMax = (WORD)Npc[m_nIndex].m_StaminaMax;
+	sSync.ManaMax = (WORD)Npc[m_nIndex].m_ManaMax;
+	sSync.Strength = (WORD)m_nStrength;
+	sSync.Dexterity = (WORD)m_nDexterity;
+	sSync.Vitality = (WORD)m_nVitality;
+	sSync.Energy = (WORD)m_nEngergy;
+	sSync.Defense = (WORD)Npc[m_nIndex].m_ExDefend;
+	sSync.Exp = m_nExp;
+	sSync.WorldRank = (WORD)m_nWorldStat;
+	sSync.Money = m_ItemList.GetMoney(room_equipment);
+	sSync.Reputation = m_cTask.GetSaveVal(TASKVALUE_REPUTE);
+	sSync.WeightMax = max(0, m_nWeightMax + Npc[m_nIndex].m_CurrentAdditionalAttrib[186]);
+	sSync.ServerTime = (DWORD)time(NULL);
+	return SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSync, sizeof(sSync)));
+}
+
 BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 {	
 	BOOL bRet = FALSE;
@@ -885,38 +925,9 @@ BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 				break;
 			}
 			// 这个消息必须在同步世界NPC数据后做，使客户端能找到当前玩家在客户端的Npc索引
-			GAME_CURPLAYER_SYNC sSync;
-			memset(&sSync, 0, sizeof(sSync));
-			sSync.ProtocolType = s2c_synccurplayer;
-			sSync.ID = Npc[m_nIndex].m_dwID;
-			sSync.Level = (BYTE)Npc[m_nIndex].m_Level;
-			sSync.Sex = (BYTE)Npc[m_nIndex].m_nSex;
-			sSync.Series = (BYTE)Npc[m_nIndex].m_Series;
-			sSync.Portrait = m_btPortrait;
-			sSync.LifeMax = (WORD)Npc[m_nIndex].m_LifeMax;
-			sSync.StaminaMax = (WORD)Npc[m_nIndex].m_StaminaMax;
-			sSync.ManaMax = (WORD)Npc[m_nIndex].m_ManaMax;
-			sSync.Strength = (WORD)m_nStrength;
-			sSync.Dexterity = (WORD)m_nDexterity;
-			sSync.Vitality = (WORD)m_nVitality;
-			sSync.Energy = (WORD)m_nEngergy;
-			sSync.Defense = (WORD)Npc[m_nIndex].m_ExDefend;
-			sSync.Exp = m_nExp;
-			sSync.WorldRank = (WORD)m_nWorldStat;
-			sSync.Money = m_ItemList.GetMoney(room_equipment);
-			sSync.Reputation = m_cTask.GetSaveVal(TASKVALUE_REPUTE);
-			sSync.WeightMax = max(0, m_nWeightMax + Npc[m_nIndex].m_CurrentAdditionalAttrib[186]);
-			sSync.ServerTime = (DWORD)time(NULL);
-			if (SUCCEEDED(g_pServer->PackDataToClient(m_nNetConnectIdx, (BYTE*)&sSync, sizeof(GAME_CURPLAYER_SYNC))))
-			{
-				bRet = TRUE;
-			}
-			else
-			{
-				printf("player Packing sync data failed...\n");
-				bRet = FALSE;
+			bRet = SendCurPlayerSyncData();
+			if (!bRet)
 				break;
-			}
 		}
 		break;
 	case STEP_FIGHT_SKILL_LIST:	
@@ -3766,7 +3777,7 @@ void	KPlayer::EatItem(BYTE* pProtocol)
 	int nItem = m_ItemList.m_Room[nRoom].FindItem(pEat->X, pEat->Y);
 	if (nItem <= 0 || nItem >= MAX_ITEM)
 		return;
-	// 当前客户端模式1为手动使用，模式2为自动回复；自动请求仅允许药品。
+	// Manual and automatic use share scripts; automatic script items require original shortcut permission.
 	TraceItemUse(*this, "resolved", nItem, pEat);
 	if (Item[nItem].IsExpired())
 	{
@@ -3781,7 +3792,16 @@ void	KPlayer::EatItem(BYTE* pProtocol)
 		return;
 	}
 	if (pEat->UseMode == 2 && Item[nItem].GetGenre() != item_medicine)
-		return;
+	{
+		const KBASICPROP_NORMALITEM* pTemplate = ItemGen.GetNormalItemTemplate(Item[nItem].GetGenre(),
+			Item[nItem].GetDetailType(), Item[nItem].GetParticular(),
+			Item[nItem].GetLevel(), Item[nItem].GetItemParam()->nVersion);
+		if (Item[nItem].GetGenre() != item_magicorscript || !pTemplate || !pTemplate->m_bCanPlaceInImmediacy)
+		{
+			TraceItemUse(*this, "automatic_use_not_allowed", nItem, pEat);
+			return;
+		}
+	}
 	if (Item[nItem].GetGenre() == item_skillbook)
 	{
 		UseSkillBook(nItem);
@@ -4642,6 +4662,9 @@ void	KPlayer::LaunchPlayer()
 		Npc[m_nIndex].ChangeWorld(m_sLoginRevivalPos.m_nSubWorldID, m_sLoginRevivalPos.m_nMpsX, m_sLoginRevivalPos.m_nMpsY);
 	}
 	this->ExecuteScript("\\script\\gmscript.lua","main");
+	// Send the first UI state snapshot only after c2s_syncend.
+	m_bClientSyncReady = TRUE;
+	Npc[m_nIndex].SyncStateSkillEffects();
 }
 #endif
 
@@ -4741,7 +4764,7 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId,  char * szFunName, int nParam)
 			pScript->SafeCallEnd(nTopIndex);
 		}
 		
-		if (bExecuteScriptMistake)
+		if (bExecuteScriptMistake || (Exchange.IsActive() && Exchange.HasFailed()))
 		{
 			m_bWaitingPlayerFeedBack = false;
 			m_btTryExecuteScriptTimes = 0;
@@ -4845,7 +4868,7 @@ BOOL	KPlayer::ExecuteScript(DWORD dwScriptId, char * szFunName, char *  szParams
 			pScript->SafeCallEnd(nTopIndex);
 		}
 		
-		if (bExecuteScriptMistake)
+		if (bExecuteScriptMistake || (Exchange.IsActive() && Exchange.HasFailed()))
 		{
 			m_bWaitingPlayerFeedBack = false;
 			m_btTryExecuteScriptTimes = 0;

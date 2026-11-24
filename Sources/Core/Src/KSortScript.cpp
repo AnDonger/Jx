@@ -244,7 +244,7 @@ BOOL g_IsNpcDeathScriptFunctionAllowed(const char* pszFunction)
 	static const char* Names[] =
 	{
 		"GetHardNpcAttrib", "GetNpcLevel", "ThrowItem", "GetTeam", "GetTeamSize", "GetTeamMember",
-		"GetItemCount", "GetTask", "SetTask", "GetTaskTemp", "SetTaskTemp", "GetTaskByte", "SetTaskByte",
+		"GetItemCount", "HaveEventItem", "GetTask", "SetTask", "GetTaskTemp", "SetTaskTemp", "GetTaskByte", "SetTaskByte",
 		"GetName", "GetLevel", "GetSeries", "GetPlayerType", "GetWorldPos", "GetPos", "GetPK", "GetMorphType",
 		"HaveNormalItem", "IsExistItem", "AddNormalItem", "AddNormalItemPile", "AddEventItem", "DelNormalItem", "AddOwnExp",
 		"Msg2Player", "WriteLog", "TaskNote", "TopMessage", "ScrollMessage", "SystemTime"

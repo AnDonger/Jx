@@ -299,6 +299,13 @@ struct GAME_CURPLAYER_SYNC
 	DWORD ServerTime;
 };
 
+// Current client: 0xBA updates reputation without reinitializing player/items.
+struct GAME_REPUTATION_SYNC
+{
+	BYTE ProtocolType;
+	DWORD Reputation;
+};
+
 struct GAME_CURPLAYER_NORMAL_SYNC
 {
 	BYTE ProtocolType;
@@ -1035,6 +1042,8 @@ static_assert(sizeof(GAME_NPC_SYNC) - 35 == 63, "4C entity prefix");
 static_assert(sizeof(GAME_PLAYER_SYNC) == 26, "4A appearance");
 static_assert(sizeof(GAME_PLAYER_NORMAL_SYNC) == 25, "4B appearance");
 static_assert(sizeof(GAME_CURPLAYER_SYNC) == 98, "44 current player");
+static_assert(sizeof(GAME_REPUTATION_SYNC) == 5, "BA reputation");
+static_assert(offsetof(GAME_REPUTATION_SYNC, Reputation) == 1, "BA reputation offset");
 static_assert(sizeof(GAME_CURPLAYER_NORMAL_SYNC) == 12, "46 resources");
 static_assert(sizeof(GAME_NPC_NORMAL_SYNC) == 29, "4D entity update");
 static_assert(sizeof(GAME_NPC_PLAYER_NORMAL_SYNC) == 24, "4E player position");

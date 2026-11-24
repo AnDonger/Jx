@@ -763,7 +763,7 @@ BOOL KItem::GetMagicDescription(char* pszText, int nSize) const
 
 BOOL KItem::CanStackWith(const KItem& Other) const
 {
-	if (GetMaxStackCount() <= 1 || Other.GetMaxStackCount() != GetMaxStackCount() ||
+	if (this == &Other || GetMaxStackCount() <= 1 || Other.GetMaxStackCount() != GetMaxStackCount() ||
 		GetGenre() == item_equip || GetGenre() != Other.GetGenre() ||
 		GetDetailType() != Other.GetDetailType() || GetSeries() != Other.GetSeries() ||
 		m_CommonAttrib.nParticularType != Other.m_CommonAttrib.nParticularType ||
@@ -773,6 +773,7 @@ BOOL KItem::CanStackWith(const KItem& Other) const
 		m_GeneratorParam.nVersion != Other.m_GeneratorParam.nVersion ||
 		m_GeneratorParam.nLuck != Other.m_GeneratorParam.nLuck ||
 		m_nCurrentDur != Other.m_nCurrentDur ||
+		m_btStateFlags != Other.m_btStateFlags || m_btBindingMode != Other.m_btBindingMode ||
 		GetValidityEndTime() != Other.GetValidityEndTime())
 		return FALSE;
 	// 相同表项仍须核对效果，避免把不同属性的消耗品合并。

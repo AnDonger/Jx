@@ -130,7 +130,7 @@ enum ITEM_POSITION
 #define		TRADE_ROOM_HEIGHT			4
 #define		MAX_TRADE_ITEM				(TRADE_ROOM_WIDTH * TRADE_ROOM_HEIGHT)
 #define		MAX_TRADE1_ITEM				MAX_TRADE_ITEM
-#define		IMMEDIACY_ROOM_WIDTH		3
+#define		IMMEDIACY_ROOM_WIDTH		4
 #define		IMMEDIACY_ROOM_HEIGHT		1
 #define		MAX_IMMEDIACY_ITEM			(IMMEDIACY_ROOM_WIDTH * IMMEDIACY_ROOM_HEIGHT)
 #define		MAX_EXPANSION_ITEM (5 * 7 + 6 * 6 * 8)
@@ -154,8 +154,8 @@ enum ITEM_POSITION
 #define		MAX_HORSE					6
 
 #define		MAX_NPC_TYPE	300
-// 0为基础模板，1～100为有效NPC等级，数组上界不包含在内。
-#define		MAX_NPC_LEVEL	101
+// 0为基础模板，1～140为有效NPC等级，数组上界不包含在内。
+#define		MAX_NPC_LEVEL	141
 
 
 #define		MAX_NPC_DIR		64

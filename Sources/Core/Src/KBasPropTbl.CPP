@@ -1421,6 +1421,7 @@ BOOL KBPT_NormalItem::LoadRecord(int i, KTabFile* pTF)
 	pTF->GetInteger(nRow, "等级", 1, &pBuf->m_nLevel);
 	pTF->GetString(nRow, "脚本名(参数1)", "", pBuf->m_szScript, sizeof(pBuf->m_szScript));
 	pTF->GetInteger(nRow, "使用后是否消失", 0, &pBuf->m_bConsumeOnUse);
+	pTF->GetInteger(nRow, "参数5(是否可放快捷栏)", FALSE, &pBuf->m_bCanPlaceInImmediacy);
 	pTF->GetInteger(nRow, "铜钱价格", 0, &pBuf->m_nCopperPrice);
 	pTF->GetInteger(nRow, "存在时间", 0, &pBuf->m_nExistDays);
 	pTF->GetInteger(nRow, "是否可以交换", TRUE, &pBuf->m_bCanTrade);

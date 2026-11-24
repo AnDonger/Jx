@@ -404,30 +404,10 @@ BOOL KSkillList::RestorePlayerSkillCooldown(int nSkillID, ULONGLONG ullEndTime)
 
 void KSkillList::SyncPlayerSkillCooldown(int nSkillID)
 {
-	if (m_nNpcIndex <= 0 || m_nNpcIndex >= MAX_NPC || !Npc[m_nNpcIndex].IsPlayer() || !g_pServer)
+	if (!GetPlayerSkillCooldownFrames(nSkillID))
 		return;
-	DWORD dwFrames = GetPlayerSkillCooldownFrames(nSkillID);
-	if (!dwFrames)
-		return;
-	if (dwFrames > 0xffff)
-	{
-		SyncPlayerSkillCooldowns(nSkillID);
-		return;
-	}
-	int nPlayer = Npc[m_nNpcIndex].GetPlayerIdx();
-	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER || Player[nPlayer].m_nNetConnectIdx < 0)
-		return;
-	GAME_SKILL_COOLDOWN_SYNC Sync;
-	memset(&Sync, 0, sizeof(Sync));
-	Sync.ProtocolType = 0xf8;
-	Sync.Length = sizeof(Sync) - 1;
-	Sync.SubType = 0x2d;
-	Sync.SkillId = nSkillID;
-	Sync.unknown_1 = 1;
-	Sync.RemainingFrames = (WORD)dwFrames;
-	g_pServer->PackDataToClient(Player[nPlayer].m_nNetConnectIdx, &Sync, sizeof(Sync));
-	// 新客户端F8/2D采用本地预计算值，效果帧先后不同会读到旧值。
-	// F8/4B直接写入服务器到期帧，紧接着校正本次技能，避免依赖客户端动作时序。
+	// F8/2D restores the client's predicted endpoint and ignores our remaining frames.
+	// Use F8/4B exclusively so a cast cannot briefly restore an unrelated local timer.
 	SyncPlayerSkillCooldowns(nSkillID);
 }
 

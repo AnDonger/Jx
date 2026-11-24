@@ -39,6 +39,7 @@
 //#include "KNetServer.h"
 //#include "../MultiServer/Heaven/interface/iServer.h"
 #include "KNewProtocolProcess.h"
+#include "KRelayProtocol.h"
 #include <vector>
 #include <string>
 #include "KTabFile.h"
@@ -91,6 +92,27 @@ int	GetPlayerIndex(Lua_State * L);
 extern int g_GetPriceToStation(int,int);
 extern int g_GetPriceToWayPoint(int,int);
 extern int g_GetPriceToDock(int ,int );
+
+static BOOL ReadScriptInteger(Lua_State* L, int nArgument, int nMinimum, int nMaximum, int* pnValue)
+{
+	double nValue = Lua_ValueToNumber(L, nArgument);
+	if (!Lua_IsNumber(L, nArgument) || !(nValue >= nMinimum && nValue <= nMaximum) ||
+		nValue != (int)nValue)
+		return FALSE;
+	*pnValue = (int)nValue;
+	return TRUE;
+}
+
+static int GetScriptPlayer(Lua_State* L)
+{
+	int nTop = Lua_GetTopIndex(L);
+	int nPlayer = GetPlayerIndex(L);
+	Lua_SetTopIndex(L, nTop);
+	return nPlayer;
+}
+
+static int RejectScriptTask(Lua_State* L, int nPlayer);
+static void ScriptTaskChanged(int nPlayer, BOOL bReputation = FALSE);
 
 //BitValue = GetBit(Value, BitNo)
 int LuaGetBit(Lua_State * L)
@@ -175,10 +197,12 @@ struct KNpcScriptNotice
 	std::string Chat;
 	std::vector<BYTE> Raw;
 	BOOL IsChat;
+	int NewsScope;
 	KNpcScriptNotice()
 	{
 		ZeroMemory(&Action, sizeof(Action));
 		IsChat = FALSE;
+		NewsScope = 0;
 	}
 };
 
@@ -246,6 +270,37 @@ BOOL g_QueueNpcScriptAction(int nPlayer, const PLAYER_SCRIPTACTION_SYNC& Action)
 	Notice.Action = Action;
 	g_NpcScriptExchange[nPlayer]->Notices.push_back(Notice);
 	return TRUE;
+}
+
+
+// Keep the modern announcement and relay envelope within the relay's 1024-byte buffer.
+static void PublishScriptNews(int nPlayer, const PLAYER_SCRIPTACTION_SYNC& Action, int nScope)
+{
+	if (nPlayer > 0 && nPlayer < MAX_PLAYER && g_NpcScriptExchange[nPlayer])
+	{
+		KNpcScriptNotice Notice;
+		Notice.Action = Action;
+		Notice.NewsScope = nScope;
+		g_NpcScriptExchange[nPlayer]->Notices.push_back(Notice);
+		return;
+	}
+
+	GAME_SCRIPT_ACTION_SYNC Info;
+	ZeroMemory(&Info, sizeof(Info));
+	Info.ProtocolType = s2c_scriptaction;
+	Info.Length = sizeof(Info) - sizeof(Info.Content) + Action.m_nBufferLen - 1;
+	Info.Operation = Action.m_nOperateType;
+	Info.UIAction = 5;
+	Info.OptionNum = Action.m_bOptionNum;
+	Info.Selector = Action.m_bParam1;
+	Info.Feedback = 1;
+	Info.Value = Action.m_nParam;
+	Info.DataLength = Action.m_nBufferLen;
+	memcpy(Info.Content, Action.m_pContent, Info.DataLength);
+	if (nScope == 2)
+		g_NewProtocolProcess.BroadcastGlobal(&Info, Info.Length + 1);
+	else
+		g_NewProtocolProcess.BroadcastLocalServer(&Info, Info.Length + 1);
 }
 
 
@@ -513,10 +568,16 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 		}
 		if (pState->Experience > 0)
 			Role.DirectAddExp(pState->Experience);
+		if (memcmp(&pState->Task, &Role.m_cTask, sizeof(pState->Task)) || pState->Experience > 0)
+			Role.m_ulLastSaveTime = 0;
+		if (pState->Task.GetSaveVal(TASKVALUE_REPUTE) != Role.m_cTask.GetSaveVal(TASKVALUE_REPUTE))
+			Role.SyncReputation();
 		for (size_t i = 0; i < pState->Notices.size(); i++)
 		{
 			KNpcScriptNotice& Notice = pState->Notices[i];
-			if (!Notice.Raw.empty())
+			if (Notice.NewsScope)
+				PublishScriptNews(0, Notice.Action, Notice.NewsScope);
+			else if (!Notice.Raw.empty())
 				g_pServer->PackDataToClient(Role.m_nNetConnectIdx, &Notice.Raw[0], Notice.Raw.size());
 			else if (Notice.IsChat)
 				KPlayerChat::SendSystemInfo(1, m_nPlayer, MESSAGE_SYSTEM_ANNOUCE_HEAD,
@@ -1094,35 +1155,18 @@ int LuaCompleteItemOperation(Lua_State* L)
 
 int LuaModifyRepute(Lua_State *L)
 {
-	if (Lua_GetTopIndex(L) <1) 
-		return 0;
-	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex < 0)
-		return 0;
-	int nValue = (int)Lua_ValueToNumber(L,1);
-	
-	int nOld = Player[nPlayerIndex].m_cTask.GetSaveVal(TASKVALUE_REPUTE);
-	if ((__int64)nOld + nValue < 0 || (__int64)nOld + nValue > 0x7fffffff)
-	{
-		RejectNpcScriptItem(L, nPlayerIndex);
-		return 0;
-	}
-	Player[nPlayerIndex].m_cTask.SetSaveVal(TASKVALUE_REPUTE, nOld + nValue);
-	if (nValue < 0)
-	{
-		char szMsg[100];
-		sprintf(szMsg, "您的声望减少了%d点!", -nValue);		
-//		KPlayerChat::SendSystemInfo(1, nPlayerIndex, MESSAGE_SYSTEM_ANNOUCE_HEAD, (char *) szMsg, strlen(szMsg) );
-	}
-	else
-	{
-		char szMsg[100];
-		sprintf(szMsg, "您的声望增加了%d点!", nValue);		
-//		KPlayerChat::SendSystemInfo(1, nPlayerIndex, MESSAGE_SYSTEM_ANNOUCE_HEAD, (char *) szMsg, strlen(szMsg) );
-	}
-	
-	
-	return 0;	
+	int nPlayer = GetScriptPlayer(L), nValue = 0;
+	if (nPlayer <= 0 || Lua_GetTopIndex(L) != 1 ||
+		!ReadScriptInteger(L, 1, (-2147483647 - 1), 2147483647, &nValue))
+		return RejectScriptTask(L, nPlayer);
+	int nOld = Player[nPlayer].m_cTask.GetSaveVal(TASKVALUE_REPUTE);
+	__int64 nNew = (__int64)nOld + nValue;
+	if (nNew < 0 || nNew > 2147483647)
+		return RejectScriptTask(L, nPlayer);
+	Player[nPlayer].m_cTask.SetSaveVal(TASKVALUE_REPUTE, (int)nNew);
+	ScriptTaskChanged(nPlayer, TRUE);
+	Lua_PushNumber(L, 1);
+	return 1;
 }
 
 int LuaGetRepute(Lua_State *L)
@@ -1137,6 +1181,29 @@ lab_getrepute:
 	return 1;	
 }
 #endif
+
+static int RejectScriptTask(Lua_State* L, int nPlayer)
+{
+#ifdef _SERVER
+	if (nPlayer > 0 && nPlayer < MAX_PLAYER && g_NpcScriptExchange[nPlayer])
+		g_NpcScriptExchange[nPlayer]->Failed = TRUE;
+#endif
+	lua_error(L, "Invalid task operation or incomplete task exchange");
+	return 0;
+}
+
+static void ScriptTaskChanged(int nPlayer, BOOL bReputation)
+{
+#ifdef _SERVER
+	if (!g_NpcScriptExchange[nPlayer])
+	{
+		Player[nPlayer].m_ulLastSaveTime = 0;
+		if (bReputation)
+			Player[nPlayer].SyncReputation();
+	}
+#endif
+}
+
 
 int GetSubWorldIndex(Lua_State * L)
 {
@@ -1991,21 +2058,20 @@ int LuaGetItemLevel2(Lua_State *L)
 // Credit 与本服现有 AddRepute/GetRepute 共用持久声望，不能另建隐形余额。
 int LuaDecCredit(Lua_State *L)
 {
-	int nTop = Lua_GetTopIndex(L);
-	int nPlayer = GetPlayerIndex(L);
-	Lua_SetTopIndex(L, nTop);
-	int nResult = 0;
-	if (nPlayer > 0 && nTop == 1 && Lua_IsNumber(L, 1))
+	int nPlayer = GetScriptPlayer(L), nAmount = 0;
+	if (nPlayer <= 0 || Lua_GetTopIndex(L) != 1 ||
+		!ReadScriptInteger(L, 1, 0, 2147483647, &nAmount))
+		return RejectScriptTask(L, nPlayer);
+	int nCredit = Player[nPlayer].m_cTask.GetSaveVal(TASKVALUE_REPUTE);
+	if (nAmount > nCredit)
 	{
-		double nAmount = Lua_ValueToNumber(L, 1);
-		int nCredit = Player[nPlayer].m_cTask.GetSaveVal(TASKVALUE_REPUTE);
-		if (nAmount > 0 && nAmount <= nCredit && nAmount == (int)nAmount)
-		{
-			Player[nPlayer].m_cTask.SetSaveVal(TASKVALUE_REPUTE, nCredit - (int)nAmount);
-			nResult = 1;
-		}
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
 	}
-	Lua_PushNumber(L, nResult);
+	Player[nPlayer].m_cTask.SetSaveVal(TASKVALUE_REPUTE, nCredit - nAmount);
+	ScriptTaskChanged(nPlayer, TRUE);
+	Lua_PushNumber(L, 1);
 	return 1;
 }
 #endif
@@ -2280,21 +2346,25 @@ int LuaDelNormalItem(Lua_State *L)
 
 int LuaTaskNote(Lua_State *L)
 {
-	int nParamNum = Lua_GetTopIndex(L);
-	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex <= 0 || nParamNum < 2 || nParamNum > 3)
-		return 0;
-	int nTaskId = (int)Lua_ValueToNumber(L, 1);
-	int nStep = (int)Lua_ValueToNumber(L, 2);
-	const char *pszText = nParamNum == 3 ? Lua_ValueToString(L, 3) : "";
-	KPlayerTask& Tasks = Player[nPlayerIndex].m_cTask;
-	if (!pszText || !Tasks.SetNote(nTaskId, nStep, pszText))
+	int nCount = Lua_GetTopIndex(L), nPlayer = GetScriptPlayer(L);
+	int nTask = 0, nStep = 0;
+	if (nPlayer <= 0 || nCount < 2 || nCount > 3 ||
+		!ReadScriptInteger(L, 1, 1, 65535, &nTask) ||
+		!ReadScriptInteger(L, 2, -1, 254, &nStep) ||
+		(nCount == 3 && Lua_GetValueType(L, 3) != LUA_TSTRING))
+		return RejectScriptTask(L, nPlayer);
+	const char* pszText = nCount == 3 ? Lua_ValueToString(L, 3) : "";
+	if (!pszText || (nCount == 3 && Lua_GetStrLen(L, 3) != strlen(pszText)))
+		return RejectScriptTask(L, nPlayer);
+	KPlayerTask& Tasks = Player[nPlayer].m_cTask;
+	if (!Tasks.SetNote(nTask, nStep, pszText) || !Tasks.SendNote(nPlayer, nTask, nStep, pszText))
 	{
-		g_DebugLog("[Task] Rejected TaskNote: player=%d task=%d step=%d", nPlayerIndex, nTaskId, nStep);
-		return 0;
+		g_DebugLog("[Task] Rejected TaskNote: player=%d task=%d step=%d", nPlayer, nTask, nStep);
+		return RejectScriptTask(L, nPlayer);
 	}
-	Tasks.SendNote(nPlayerIndex, nTaskId, nStep, pszText);
-	return 0;
+	ScriptTaskChanged(nPlayer);
+	Lua_PushNumber(L, 1);
+	return 1;
 }
 
 //PutMsg(szMsg/MsgId)
@@ -2348,320 +2418,135 @@ int LuaSendMessageInfo(Lua_State * L)
 	return 0;
 }
 
-//AddGlobalNews(Newsstr)
-int LuaAddGlobalNews(Lua_State * L)
+// Shared by the normal, counting and deadline announcement Lua interfaces.
+static int RejectScriptNews(Lua_State* L, int nPlayer)
 {
-	if (Lua_GetTopIndex(L) < 1) 
-		return 0;
-	
-	PLAYER_SCRIPTACTION_SYNC UiInfo;
-	ZeroMemory(&UiInfo, sizeof(UiInfo));
-	UiInfo.m_bUIId = UI_NEWSINFO;
-	UiInfo.m_bOptionNum = NEWSMESSAGE_NORMAL;
-	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
-	
-	int nMsgId = 0;
-	
-	if (Lua_IsNumber(L,1))
-	{
-		nMsgId = (int)Lua_ValueToNumber(L,1);
-		*((int *)(UiInfo.m_pContent)) = nMsgId;
-		UiInfo.m_bParam1 = 1;
-		UiInfo.m_nBufferLen = sizeof(int);
-	}
-	else 
-	{
-		g_StrCpyLen(UiInfo.m_pContent, Lua_ValueToString(L,1), 64);
-		UiInfo.m_nBufferLen = strlen(((char *)UiInfo.m_pContent));
-		UiInfo.m_bParam1 = 0;
-	}
-	
-#ifndef _SERVER
-	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex < 0) return 0;
-
-	UiInfo.m_bParam2 = 0;
-	Player[nPlayerIndex].DoScriptAction(&UiInfo);
-#else
-	UiInfo.m_bParam2 = 1;
-	UiInfo.ProtocolType = (BYTE)s2c_scriptaction;
-	UiInfo.m_wProtocolLong = sizeof(PLAYER_SCRIPTACTION_SYNC) - MAX_SCIRPTACTION_BUFFERNUM + UiInfo.m_nBufferLen - 1;
-	g_NewProtocolProcess.BroadcastGlobal(&UiInfo, UiInfo.m_wProtocolLong + 1);
+#ifdef _SERVER
+	if (nPlayer > 0 && nPlayer < MAX_PLAYER && g_NpcScriptExchange[nPlayer])
+		g_NpcScriptExchange[nPlayer]->Failed = TRUE;
 #endif
+	lua_error(L, "Invalid announcement text, length or time");
 	return 0;
 }
 
-//AddLocalNews(Newsstr)
-int LuaAddLocalNews(Lua_State * L)
+static int AddScriptNews(Lua_State* L, int nKind, int nScope)
 {
-	if (Lua_GetTopIndex(L) < 1) 
-		return 0;
-	
-	PLAYER_SCRIPTACTION_SYNC UiInfo;
-	ZeroMemory(&UiInfo, sizeof(UiInfo));
-	UiInfo.m_bUIId = UI_NEWSINFO;
-	UiInfo.m_bOptionNum = NEWSMESSAGE_NORMAL;
-	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
-	
-	int nMsgId = 0;
-	
-	if (Lua_IsNumber(L,1))
-	{
-		nMsgId = (int)Lua_ValueToNumber(L,1);
-		*((int *)(UiInfo.m_pContent)) = nMsgId;
-		UiInfo.m_bParam1 = 1;
-		UiInfo.m_nBufferLen = sizeof(int);
-	}
-	else 
-	{
-		g_StrCpyLen(UiInfo.m_pContent, Lua_ValueToString(L,1), 64);
-		UiInfo.m_nBufferLen = strlen(((char *)UiInfo.m_pContent));
-		UiInfo.m_bParam1 = 0;
-	}
-	
-#ifndef _SERVER
-	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex < 0) return 0;
+	int nPlayer = GetScriptPlayer(L);
+	int nRequired = nKind == NEWSMESSAGE_TIMEEND ? 6 : nKind == NEWSMESSAGE_COUNTING ? 2 : 1;
+	if (Lua_GetTopIndex(L) < nRequired)
+		return RejectScriptNews(L, nPlayer);
 
-	UiInfo.m_bParam2 = 0;
-	Player[nPlayerIndex].DoScriptAction(&UiInfo);
-#else
-	UiInfo.m_bParam2 = 1;
-	UiInfo.ProtocolType = (BYTE)s2c_scriptaction;
-	UiInfo.m_wProtocolLong = sizeof(PLAYER_SCRIPTACTION_SYNC) - MAX_SCIRPTACTION_BUFFERNUM + UiInfo.m_nBufferLen - 1;
-	g_NewProtocolProcess.BroadcastLocalServer(&UiInfo, UiInfo.m_wProtocolLong + 1);
+	PLAYER_SCRIPTACTION_SYNC Action;
+	ZeroMemory(&Action, sizeof(Action));
+	Action.m_bUIId = UI_NEWSINFO;
+	Action.m_bOptionNum = nKind;
+	Action.m_nOperateType = SCRIPTACTION_UISHOW;
+	int nTail = nKind == NEWSMESSAGE_TIMEEND ? sizeof(SYSTEMTIME) : nKind == NEWSMESSAGE_COUNTING ? sizeof(int) : 0;
+	int nCapacity = MAX_SCIRPTACTION_BUFFERNUM;
+#ifdef _SERVER
+	nCapacity = min(nCapacity, 1024 - (int)sizeof(RELAY_DATA) - 1 -
+		(int)(sizeof(GAME_SCRIPT_ACTION_SYNC) - sizeof(((GAME_SCRIPT_ACTION_SYNC*)0)->Content)));
 #endif
-	return 0;
-}
+	if (Lua_IsNumber(L, 1))
+	{
+		int nMessage = 0;
+		if (!ReadScriptInteger(L, 1, 1, 0x7fffffff, &nMessage))
+			return RejectScriptNews(L, nPlayer);
+		memcpy(Action.m_pContent, &nMessage, sizeof(nMessage));
+		Action.m_bParam1 = 1;
+		Action.m_nBufferLen = sizeof(nMessage);
+	}
+	else
+	{
+		// The current client copies announcement text into a 512-byte display buffer.
+		const char* pText = Lua_ValueToString(L, 1);
+		size_t nLength = pText ? Lua_GetStrLen(L, 1) : 0;
+		if (!nLength || nLength > (size_t)min(511, nCapacity - nTail) || strlen(pText) != nLength)
+			return RejectScriptNews(L, nPlayer);
+		memcpy(Action.m_pContent, pText, nLength);
+		Action.m_nBufferLen = (int)nLength;
+	}
 
-//AddGlobalCountNews(strNew/newid, time)
-int LuaAddGlobalCountNews(Lua_State * L)
-{
-	if (Lua_GetTopIndex(L) < 2) 
-		return 0;
-	
-	PLAYER_SCRIPTACTION_SYNC UiInfo;
-	ZeroMemory(&UiInfo, sizeof(UiInfo));
-	UiInfo.m_bUIId = UI_NEWSINFO;
-	UiInfo.m_bOptionNum = NEWSMESSAGE_COUNTING;
-	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
-	
-	int nMsgId = 0;
-	
-	int nTime = (int)Lua_ValueToNumber(L,2);
-	
-	if (nTime <= 0)
-		nTime = 1;
-	
-	if (Lua_IsNumber(L,1))
+	if (nKind == NEWSMESSAGE_COUNTING)
 	{
-		nMsgId = (int)Lua_ValueToNumber(L,1);
-		*((int *)(UiInfo.m_pContent)) = nMsgId;
-		UiInfo.m_bParam1 = 1;
-		*(int *)((char *)UiInfo.m_pContent + sizeof(int)) = nTime;
-		UiInfo.m_nBufferLen = sizeof(int) * 2;
+		int nTime = 0;
+		if (!ReadScriptInteger(L, 2, (-2147483647 - 1), 65535, &nTime))
+			return RejectScriptNews(L, nPlayer);
+		if (nTime <= 0)
+			nTime = 1;
+		memcpy(Action.m_pContent + Action.m_nBufferLen, &nTime, sizeof(nTime));
 	}
-	else 
+	else if (nKind == NEWSMESSAGE_TIMEEND)
 	{
-		g_StrCpyLen(UiInfo.m_pContent, Lua_ValueToString(L,1), 64);
-		UiInfo.m_nBufferLen = strlen(((char *)UiInfo.m_pContent));
-		*(int *)((char *)UiInfo.m_pContent + UiInfo.m_nBufferLen) = nTime;
-		UiInfo.m_nBufferLen += sizeof(int);
-		UiInfo.m_bParam1 = 0;
-	}
-	
-#ifndef _SERVER
-	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex < 0) return 0;
-
-	UiInfo.m_bParam2 = 0;
-	Player[nPlayerIndex].DoScriptAction(&UiInfo);
-#else
-	UiInfo.m_bParam2 = 1;
-	UiInfo.ProtocolType = (BYTE)s2c_scriptaction;
-	UiInfo.m_wProtocolLong = sizeof(PLAYER_SCRIPTACTION_SYNC) - MAX_SCIRPTACTION_BUFFERNUM + UiInfo.m_nBufferLen - 1;
-	g_NewProtocolProcess.BroadcastGlobal(&UiInfo, UiInfo.m_wProtocolLong + 1);
-#endif
-	return 0;
-}
-
-//AddLocalCountNews(strNew/newid, time)
-int LuaAddLocalCountNews(Lua_State * L)
-{
-	if (Lua_GetTopIndex(L) < 2) 
-		return 0;
-	
-	PLAYER_SCRIPTACTION_SYNC UiInfo;
-	ZeroMemory(&UiInfo, sizeof(UiInfo));
-	UiInfo.m_bUIId = UI_NEWSINFO;
-	UiInfo.m_bOptionNum = NEWSMESSAGE_COUNTING;
-	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
-	
-	int nMsgId = 0;
-	
-	int nTime = (int)Lua_ValueToNumber(L,2);
-	
-	if (nTime <= 0)
-		nTime = 1;
-	
-	if (Lua_IsNumber(L,1))
-	{
-		nMsgId = (int)Lua_ValueToNumber(L,1);
-		*((int *)(UiInfo.m_pContent)) = nMsgId;
-		UiInfo.m_bParam1 = 1;
-		*(int *)((char *)UiInfo.m_pContent + sizeof(int)) = nTime;
-		UiInfo.m_nBufferLen = sizeof(int) * 2;
-	}
-	else 
-	{
-		g_StrCpyLen(UiInfo.m_pContent, Lua_ValueToString(L,1), 64);
-		UiInfo.m_nBufferLen = strlen(((char *)UiInfo.m_pContent));
-		*(int *)((char *)UiInfo.m_pContent + UiInfo.m_nBufferLen) = nTime;
-		UiInfo.m_nBufferLen += sizeof(int);
-		UiInfo.m_bParam1 = 0;
-	}
-	
-#ifndef _SERVER
-	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex < 0) return 0;
-
-	UiInfo.m_bParam2 = 0;
-	Player[nPlayerIndex].DoScriptAction(&UiInfo);
-#else
-	UiInfo.m_bParam2 = 1;
-	UiInfo.ProtocolType = (BYTE)s2c_scriptaction;
-	UiInfo.m_wProtocolLong = sizeof(PLAYER_SCRIPTACTION_SYNC) - MAX_SCIRPTACTION_BUFFERNUM + UiInfo.m_nBufferLen - 1;
-	g_NewProtocolProcess.BroadcastLocalServer(&UiInfo, UiInfo.m_wProtocolLong + 1);
-#endif
-	return 0;
-}
-
-//AddGlobalTimeNews(strNew/newid, year,month,day,hour,mins)
-int LuaAddGlobalTimeNews(Lua_State * L)
-{
-	if (Lua_GetTopIndex(L) < 6) 
-		return 0;
-	
-	PLAYER_SCRIPTACTION_SYNC UiInfo;
-	ZeroMemory(&UiInfo, sizeof(UiInfo));
-	UiInfo.m_bUIId = UI_NEWSINFO;
-	UiInfo.m_bOptionNum = NEWSMESSAGE_TIMEEND;
-	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
-	
-	int nMsgId = 0;
-	
-	if (Lua_IsNumber(L,1))
-	{
-		nMsgId = (int)Lua_ValueToNumber(L,1);
-		*((int *)(UiInfo.m_pContent)) = nMsgId;
-		UiInfo.m_bParam1 = 1;
-		UiInfo.m_nBufferLen = sizeof(int) + sizeof(SYSTEMTIME);
-	}
-	else 
-	{
-		g_StrCpyLen(UiInfo.m_pContent, Lua_ValueToString(L,1), 64);
-		UiInfo.m_nBufferLen = strlen(((char *)UiInfo.m_pContent)) + sizeof(SYSTEMTIME);
-		UiInfo.m_bParam1 = 0;
-	}
-	
-	SYSTEMTIME *pSystemTime = 	(SYSTEMTIME *)((char *)UiInfo.m_pContent + UiInfo.m_nBufferLen - sizeof(SYSTEMTIME));
-	memset(pSystemTime, 0, sizeof(SYSTEMTIME));
-	
-	SYSTEMTIME LocalTime ;
-	memset(&LocalTime, 0, sizeof(SYSTEMTIME));
-	
-	LocalTime.wYear = (WORD)Lua_ValueToNumber(L,2);
-	LocalTime.wMonth =(WORD)Lua_ValueToNumber(L,3);
-	LocalTime.wDay = (WORD)Lua_ValueToNumber(L, 4);
-	LocalTime.wHour = (WORD)Lua_ValueToNumber(L,5);
-	LocalTime.wMinute = (WORD)Lua_ValueToNumber(L,6);
-	FILETIME ft;
-	FILETIME sysft;
+		int nDate[5];
+		const int nMinimum[] = {1601, 1, 1, 0, 0};
+		const int nMaximum[] = {30827, 12, 31, 23, 59};
+		for (int i = 0; i < 5; i++)
+		{
+			if (!ReadScriptInteger(L, i + 2, nMinimum[i], nMaximum[i], &nDate[i]))
+				return RejectScriptNews(L, nPlayer);
+		}
+		SYSTEMTIME LocalTime;
+		ZeroMemory(&LocalTime, sizeof(LocalTime));
+		LocalTime.wYear = (WORD)nDate[0];
+		LocalTime.wMonth = (WORD)nDate[1];
+		LocalTime.wDay = (WORD)nDate[2];
+		LocalTime.wHour = (WORD)nDate[3];
+		LocalTime.wMinute = (WORD)nDate[4];
+		SYSTEMTIME EndTime = LocalTime;
 #ifdef WIN32
-	SystemTimeToFileTime(&LocalTime, &ft);
-	LocalFileTimeToFileTime(&ft, &sysft);
-	FileTimeToSystemTime(&sysft, pSystemTime);
-#else
-	memcpy(pSystemTime, &LocalTime, sizeof(LocalTime));
+		FILETIME ft, sysft;
+		if (!SystemTimeToFileTime(&LocalTime, &ft) || !LocalFileTimeToFileTime(&ft, &sysft) ||
+			!FileTimeToSystemTime(&sysft, &EndTime))
+			return RejectScriptNews(L, nPlayer);
 #endif
-	
-#ifndef _SERVER
-	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex < 0) return 0;
-
-	UiInfo.m_bParam2 = 0;
-	Player[nPlayerIndex].DoScriptAction(&UiInfo);
+		memcpy(Action.m_pContent + Action.m_nBufferLen, &EndTime, sizeof(EndTime));
+	}
+	Action.m_nBufferLen += nTail;
+#ifdef _SERVER
+	Action.m_bParam2 = 1;
+	PublishScriptNews(nPlayer, Action, nScope);
 #else
-	UiInfo.m_bParam2 = 1;
-	UiInfo.ProtocolType = (BYTE)s2c_scriptaction;
-	UiInfo.m_wProtocolLong = sizeof(PLAYER_SCRIPTACTION_SYNC) - MAX_SCIRPTACTION_BUFFERNUM + UiInfo.m_nBufferLen - 1;
-	g_NewProtocolProcess.BroadcastGlobal(&UiInfo, UiInfo.m_wProtocolLong + 1);
+	if (nPlayer >= 0)
+		Player[nPlayer].DoScriptAction(&Action);
 #endif
 	return 0;
 }
 
-//AddLocalTimeNews(strNew/newid, year,month,day,hour,mins)
-int LuaAddLocalTimeNews(Lua_State * L)
+// AddGlobalNews(textOrId)
+int LuaAddGlobalNews(Lua_State* L)
 {
-	if (Lua_GetTopIndex(L) < 6) 
-		return 0;
-	
-	PLAYER_SCRIPTACTION_SYNC UiInfo;
-	ZeroMemory(&UiInfo, sizeof(UiInfo));
-	UiInfo.m_bUIId = UI_NEWSINFO;
-	UiInfo.m_bOptionNum = NEWSMESSAGE_TIMEEND;
-	UiInfo.m_nOperateType = SCRIPTACTION_UISHOW;
-	
-	int nMsgId = 0;
-	
-	if (Lua_IsNumber(L,1))
-	{
-		nMsgId = (int)Lua_ValueToNumber(L,1);
-		*((int *)(UiInfo.m_pContent)) = nMsgId;
-		UiInfo.m_bParam1 = 1;
-		UiInfo.m_nBufferLen = sizeof(int) + sizeof(SYSTEMTIME);
-	}
-	else 
-	{
-		g_StrCpyLen(UiInfo.m_pContent, Lua_ValueToString(L,1), 64);
-		UiInfo.m_nBufferLen = strlen(((char *)UiInfo.m_pContent)) + sizeof(SYSTEMTIME);
-		UiInfo.m_bParam1 = 0;
-	}
-	
-	SYSTEMTIME *pSystemTime = 	(SYSTEMTIME *)((char *)UiInfo.m_pContent + UiInfo.m_nBufferLen - sizeof(SYSTEMTIME));
-	memset(pSystemTime, 0, sizeof(SYSTEMTIME));
-	
-	SYSTEMTIME LocalTime ;
-	memset(&LocalTime, 0, sizeof(SYSTEMTIME));
-	
-	LocalTime.wYear = (WORD)Lua_ValueToNumber(L,2);
-	LocalTime.wMonth =(WORD)Lua_ValueToNumber(L,3);
-	LocalTime.wDay = (WORD)Lua_ValueToNumber(L, 4);
-	LocalTime.wHour = (WORD)Lua_ValueToNumber(L,5);
-	LocalTime.wMinute = (WORD)Lua_ValueToNumber(L,6);
-	FILETIME ft;
-	FILETIME sysft;
-#ifdef WIN32
-	SystemTimeToFileTime(&LocalTime, &ft);
-	LocalFileTimeToFileTime(&ft, &sysft);
-	FileTimeToSystemTime(&sysft, pSystemTime);
-#else
-	memcpy(pSystemTime, &LocalTime, sizeof(LocalTime));
-#endif
-	
-#ifndef _SERVER
-	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex < 0) return 0;
+	return AddScriptNews(L, NEWSMESSAGE_NORMAL, 2);
+}
 
-	UiInfo.m_bParam2 = 0;
-	Player[nPlayerIndex].DoScriptAction(&UiInfo);
-#else
-	UiInfo.m_bParam2 = 1;
-	UiInfo.ProtocolType = (BYTE)s2c_scriptaction;
-	UiInfo.m_wProtocolLong = sizeof(PLAYER_SCRIPTACTION_SYNC) - MAX_SCIRPTACTION_BUFFERNUM + UiInfo.m_nBufferLen - 1;
-	g_NewProtocolProcess.BroadcastLocalServer(&UiInfo, UiInfo.m_wProtocolLong + 1);
-#endif
-	return 0;
+// AddLocalNews(textOrId)
+int LuaAddLocalNews(Lua_State* L)
+{
+	return AddScriptNews(L, NEWSMESSAGE_NORMAL, 1);
+}
+
+// AddGlobalCountNews(textOrId, duration)
+int LuaAddGlobalCountNews(Lua_State* L)
+{
+	return AddScriptNews(L, NEWSMESSAGE_COUNTING, 2);
+}
+
+// AddLocalCountNews(textOrId, duration)
+int LuaAddLocalCountNews(Lua_State* L)
+{
+	return AddScriptNews(L, NEWSMESSAGE_COUNTING, 1);
+}
+
+// AddGlobalTimeNews(textOrId, year, month, day, hour, minute)
+int LuaAddGlobalTimeNews(Lua_State* L)
+{
+	return AddScriptNews(L, NEWSMESSAGE_TIMEEND, 2);
+}
+
+// AddLocalTimeNews(textOrId, year, month, day, hour, minute)
+int LuaAddLocalTimeNews(Lua_State* L)
+{
+	return AddScriptNews(L, NEWSMESSAGE_TIMEEND, 1);
 }
 
 //AddNote(str/strid)
@@ -2937,30 +2822,27 @@ int LuaIncludeFile(Lua_State * L)
 //												任务脚本
 //**************************************************************************************************************************************************************
 
-int LuaGetTaskValue(Lua_State * L)
+int LuaGetTaskValue(Lua_State *L)
 {
-	
-	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex > 0) 
-	{
-		int nValue = (int)Player[nPlayerIndex].m_cTask.GetSaveVal((int)Lua_ValueToNumber(L,1));		
-		Lua_PushNumber(L, nValue);
-	}
+	int nPlayer = GetScriptPlayer(L), nSlot = 0;
+	if (nPlayer > 0 && Lua_GetTopIndex(L) == 1 && ReadScriptInteger(L, 1, 0, MAX_TASK - 1, &nSlot))
+		Lua_PushNumber(L, Player[nPlayer].m_cTask.GetSaveVal(nSlot));
 	else
 		Lua_PushNil(L);
-	
 	return 1;
 }
 
-int LuaSetTaskValue(Lua_State * L)
+int LuaSetTaskValue(Lua_State *L)
 {
-	int nPlayerIndex = GetPlayerIndex(L);
-	int nValueIndex = (int)Lua_ValueToNumber(L, 1);
-	int nValue = (int)Lua_ValueToNumber(L, 2);
-	
-	if (nPlayerIndex <= 0) return 0;
-	Player[nPlayerIndex].m_cTask.SetSaveVal(nValueIndex, nValue);
-	return 0;
+	int nPlayer = GetScriptPlayer(L), nSlot = 0, nValue = 0;
+	if (nPlayer <= 0 || Lua_GetTopIndex(L) != 2 ||
+		!ReadScriptInteger(L, 1, 0, MAX_TASK - 1, &nSlot) ||
+		!ReadScriptInteger(L, 2, (-2147483647 - 1), 2147483647, &nValue))
+		return RejectScriptTask(L, nPlayer);
+	Player[nPlayer].m_cTask.SetSaveVal(nSlot, nValue);
+	ScriptTaskChanged(nPlayer, nSlot == TASKVALUE_REPUTE);
+	Lua_PushNumber(L, 1);
+	return 1;
 }
 
 
@@ -2969,49 +2851,43 @@ int LuaSetTaskValue(Lua_State * L)
 int g_TempValue[MAX_TEMPVALUENUM_INCLIENT];
 #endif
 
-int LuaGetTempTaskValue(Lua_State * L)
+int LuaGetTempTaskValue(Lua_State *L)
 {
-	int nTempIndex = (int)Lua_ValueToNumber(L, Lua_GetTopIndex(L));
-	
+	int nSlot = 0;
 #ifdef _SERVER
-	if(nTempIndex >= MAX_TEMP_TASK)
-	{
-		Lua_PushNil(L) ;
-		return 1;
-	}
-	int nPlayerIndex = GetPlayerIndex(L);
-	
-	if (nPlayerIndex <= 0) 
-	{
-		Lua_PushNil(L);
-		return 1;
-	}
-	
-	int nValue = Player[nPlayerIndex].m_cTask.GetClearVal(nTempIndex);
-	Lua_PushNumber(L, nValue);
+	int nPlayer = GetScriptPlayer(L);
+	if (nPlayer > 0 && Lua_GetTopIndex(L) == 1 && ReadScriptInteger(L, 1, 0, MAX_TEMP_TASK - 1, &nSlot))
+		Lua_PushNumber(L, Player[nPlayer].m_cTask.GetClearVal(nSlot));
 #else
-	
-	if (nTempIndex >= 0 && nTempIndex < MAX_TEMPVALUENUM_INCLIENT)
-		Lua_PushNumber(L, g_TempValue[nTempIndex]);
-	else 
-		Lua_PushNil(L);
+	if (Lua_GetTopIndex(L) == 1 && ReadScriptInteger(L, 1, 0, MAX_TEMPVALUENUM_INCLIENT - 1, &nSlot))
+		Lua_PushNumber(L, g_TempValue[nSlot]);
 #endif
+	else
+		Lua_PushNil(L);
 	return 1;
 }
 
-int LuaSetTempTaskValue(Lua_State * L)
+int LuaSetTempTaskValue(Lua_State *L)
 {
-	int nTempIndex = (int)Lua_ValueToNumber(L, Lua_GetTopIndex(L) - 1);
-	int nValue = (int)Lua_ValueToNumber(L, Lua_GetTopIndex(L));
-#ifdef _SERVER	
-	Lua_GetGlobal(L, SCRIPT_PLAYERINDEX);
-	int nPlayerIndex = (int)Lua_ValueToNumber(L, Lua_GetTopIndex(L));
-	if (nPlayerIndex <= 0) return 0;
-	Player[nPlayerIndex].m_cTask.SetClearVal(nTempIndex, nValue);
+	int nSlot = 0, nValue = 0, nPlayer = 0;
+#ifdef _SERVER
+	nPlayer = GetScriptPlayer(L);
+	int nLimit = MAX_TEMP_TASK;
+	if (nPlayer <= 0)
+		return RejectScriptTask(L, nPlayer);
 #else
-	g_TempValue[nTempIndex] = nValue;
+	int nLimit = MAX_TEMPVALUENUM_INCLIENT;
 #endif
-	return 0;
+	if (Lua_GetTopIndex(L) != 2 || !ReadScriptInteger(L, 1, 0, nLimit - 1, &nSlot) ||
+		!ReadScriptInteger(L, 2, (-2147483647 - 1), 2147483647, &nValue))
+		return RejectScriptTask(L, nPlayer);
+#ifdef _SERVER
+	Player[nPlayer].m_cTask.SetClearVal(nSlot, nValue);
+#else
+	g_TempValue[nSlot] = nValue;
+#endif
+	Lua_PushNumber(L, 1);
+	return 1;
 }
 
 #ifdef _SERVER
@@ -3032,15 +2908,6 @@ int LuaSale(Lua_State * L)
 	return 0;
 }
 
-static BOOL ReadScriptInteger(Lua_State* L, int nArgument, int nMinimum, int nMaximum, int* pnValue)
-{
-	double nValue = Lua_ValueToNumber(L, nArgument);
-	if (!Lua_IsNumber(L, nArgument) || !(nValue >= nMinimum && nValue <= nMaximum) ||
-		nValue != (int)nValue)
-		return FALSE;
-	*pnValue = (int)nValue;
-	return TRUE;
-}
 
 // 自动回调保存并恢复Lua上下文，不改变NPC对话的ActionScriptID或等待状态。
 BOOL g_CallPlayerScript(int nPlayer, DWORD dwScript, const char* pszFunction,
@@ -4254,52 +4121,48 @@ int LuaDropItem(Lua_State *L)
 
 /*AddEventItem(id)*/
 KTabFile g_EventItemTab;
+static BOOL ReadScriptEventItem(Lua_State* L, int* pnEvent)
+{
+	if (Lua_GetTopIndex(L) != 1)
+		return FALSE;
+	if (Lua_IsNumber(L, 1))
+		return ReadScriptInteger(L, 1, 0, 2147483647, pnEvent);
+	const char* pszName = Lua_ValueToString(L, 1);
+	return Lua_GetValueType(L, 1) == LUA_TSTRING && pszName && pszName[0] &&
+		Lua_GetStrLen(L, 1) == strlen(pszName) &&
+		g_EventItemTab.GetInteger((char*)pszName, "具体类别", -1, pnEvent) && *pnEvent >= 0;
+}
+
+static BOOL IsScriptTaskItemPlace(int nPlace)
+{
+	return IsBagItemPlace(nPlace) || nPlace == pos_immediacy || nPlace == pos_hand;
+}
+
 int LuaAddEventItem(Lua_State *L)
 {
-	// modify by spe 03/06/13
-	if (Lua_GetTopIndex(L) < 1)
-		return 0;
-	
-	int nPlayerIndex = GetPlayerIndex(L);
-	
-	if (nPlayerIndex <= 0)
+	int nPlayerIndex = GetScriptPlayer(L), nEventId = 0;
+	if (nPlayerIndex <= 0 || !ReadScriptEventItem(L, &nEventId))
 	{
-		Lua_PushNumber(L,0);
-		return 1;
-	}
-
-	int nEventId = 0;
-	if (Lua_IsNumber(L, 1))
-	{
-		nEventId = (int)Lua_ValueToNumber(L,1);
-	}
-	else
-	{
-		char * szEventItm = (char *)Lua_ValueToString(L,1);
-		
-		if (!g_EventItemTab.GetInteger(szEventItm, "具体类别", 0, &nEventId))
-		{
-			Lua_PushNumber(L,0);
-			return 1;
-		}
-	}
-	
 #ifdef _SERVER
-	if (g_NpcScriptExchange[nPlayerIndex])
-	{
-		int nItem = ItemSet.Add(item_task, 0, 1, 0, nEventId, 1, NULL,
-			g_SubWorldSet.GetGameVersion());
-		BOOL bAdded = nItem > 0 && Player[nPlayerIndex].m_ItemList.AddPickupItem(nItem, -1, -1);
-		if (!bAdded)
-		{
-			if (nItem > 0)
-				ItemSet.Remove(nItem);
-			RejectNpcScriptItem(L, nPlayerIndex);
-		}
-		Lua_PushNumber(L, bAdded ? 1 : 0);
+		RejectNpcScriptItem(L, nPlayerIndex);
+#endif
+		Lua_PushNumber(L, 0);
 		return 1;
 	}
-#endif
+#ifdef _SERVER
+	int nItem = ItemSet.Add(item_task, 0, 1, 0, nEventId, 1, NULL,
+		g_SubWorldSet.GetGameVersion());
+	BOOL bAdded = nItem > 0 && Player[nPlayerIndex].m_ItemList.AddPickupItem(nItem, -1, -1);
+	if (!bAdded)
+	{
+		if (nItem > 0)
+			ItemSet.Remove(nItem);
+		RejectNpcScriptItem(L, nPlayerIndex);
+	}
+	Lua_PushNumber(L, bAdded ? 1 : 0);
+	return 1;
+#else
+
 	int nIndex = ItemSet.Add(item_task, 0, 0, 0, nEventId, 0, 0, 1, 0);
 	
 	if (nIndex <= 0) 
@@ -4352,6 +4215,7 @@ int LuaAddEventItem(Lua_State *L)
 	}		
 	Lua_PushNumber(L, 1);
 	return 1;
+#endif
 }
 
 /*AddItem(nItemClass, nDetailType, nParticualrType, nLevel, nSeries, nLuck, nItemLevel..6)*/
@@ -4454,45 +4318,23 @@ int LuaAddItem(Lua_State * L)
 	
 }
 
-int LuaGetTaskItemCount(Lua_State * L)
+int LuaGetTaskItemCount(Lua_State *L)
 {
-	
-	if (Lua_GetTopIndex(L) > 0)
+	int nPlayer = GetScriptPlayer(L), nEvent = 0, nCount = 0;
+	if (nPlayer > 0 && ReadScriptEventItem(L, &nEvent))
 	{
-		int nPlayerIndex = GetPlayerIndex(L);
-		if (nPlayerIndex > 0)
+		for (PlayerItem* p = Player[nPlayer].m_ItemList.GetFirstItem(); p;
+			p = Player[nPlayer].m_ItemList.GetNextItem())
 		{
-			int nEventId = 0;
-			if (Lua_IsNumber(L, 1))
-			{
-				nEventId = (int)Lua_ValueToNumber(L,1);
-			}
-			else
-			{
-				char * szEventItm = (char *)Lua_ValueToString(L,1);
-				
-				if (!g_EventItemTab.GetInteger(szEventItm, "具体类别", 0, &nEventId))
-				{
-					Lua_PushNumber(L,0);
-					return 1;
-				}
-			}
-			
-			int nCount = Player[nPlayerIndex].m_ItemList.GetTaskItemNum(nEventId);
-			Lua_PushNumber(L, nCount);
-		}
-		else 
-		{
-			g_DebugLog("GetItemCount nPlayerIndex <= 0");
-			Lua_PushNumber(L,0);
+#ifdef _SERVER
+			if (g_NpcScriptExchange[nPlayer] && !IsScriptTaskItemPlace(p->nPlace))
+				continue;
+#endif
+			if (p->nIdx > 0 && Item[p->nIdx].GetGenre() == item_task && Item[p->nIdx].GetDetailType() == nEvent)
+				nCount += Item[p->nIdx].GetStackCount();
 		}
 	}
-	else
-	{
-		g_DebugLog("GetItem 参数不够!");
-		Lua_PushNumber(L , 0);
-	}
-	
+	Lua_PushNumber(L, nCount);
 	return 1;
 }
 
@@ -4504,83 +4346,53 @@ int LuaGetTaskItemCount(Lua_State * L)
 DelItem (nPlayerIndex, nItemTemplateId)
 功能：删除玩家身上某个物品
 */
-int LuaDelItem(Lua_State * L)
+int LuaDelItem(Lua_State *L)
 {
-	if (Lua_GetTopIndex(L) > 0)
+	int nPlayer = GetScriptPlayer(L), nEvent = 0;
+	BOOL bRemoved = FALSE;
+	if (nPlayer > 0 && ReadScriptEventItem(L, &nEvent))
 	{
-		int nPlayerIndex = GetPlayerIndex(L);
-		if (nPlayerIndex > 0)
+		KItemList& List = Player[nPlayer].m_ItemList;
+#ifdef _SERVER
+		if (g_NpcScriptExchange[nPlayer])
 		{
-			int nEventId = 0;
-			if (Lua_IsNumber(L, 1))
+			for (PlayerItem* p = List.GetFirstItem(); p; p = List.GetNextItem())
 			{
-				nEventId = (int)Lua_ValueToNumber(L,1);
-			}
-			else
-			{
-				char * szEventItm = (char *)Lua_ValueToString(L,1);
-				if (!g_EventItemTab.GetInteger(szEventItm, "具体类别", 0, &nEventId))
+				int nItem = p->nIdx;
+				if (nItem <= 0 || !IsScriptTaskItemPlace(p->nPlace) || Item[nItem].GetGenre() != item_task ||
+					Item[nItem].GetDetailType() != nEvent)
+					continue;
+				if (Item[nItem].GetStackCount() > 1)
 				{
-					return 0;
+					bRemoved = Item[nItem].SetStackCount(Item[nItem].GetStackCount() - 1);
+					if (bRemoved) List.SyncItem(nItem, TRUE);
 				}
+				else if (List.Remove(nItem))
+				{
+					ItemSet.Remove(nItem);
+					bRemoved = TRUE;
+				}
+				break;
 			}
-			
-			int nResult = Player[nPlayerIndex].m_ItemList.RemoveTaskItem(nEventId);
-			
 		}
-		else 
-		{
-			g_DebugLog("[TASK] Can Not Del Item ");
-		}
+		else
+#endif
+			bRemoved = List.RemoveTaskItem(nEvent);
 	}
-	else
-	{
-		g_DebugLog("HaveItem 参数不够!");
-	}
-	
-	return 0;
+#ifdef _SERVER
+	if (!bRemoved) RejectNpcScriptItem(L, nPlayer);
+#endif
+	Lua_PushNumber(L, bRemoved ? 1 : 0);
+	return 1;
 }
 /*HaveItem(nItemTemplateId);
 功能:检查玩家是否有某个物品
 */
 int LuaHaveItem(Lua_State *L)
 {
-	if (Lua_GetTopIndex(L) > 0)
-	{
-		int nPlayerIndex = GetPlayerIndex(L);
-		if (nPlayerIndex > 0)
-		{
-			int nEventId = 0;
-			if (Lua_IsNumber(L, 1))
-			{
-				nEventId = (int)Lua_ValueToNumber(L,1);
-			}
-			else
-			{
-				char * szEventItm = (char *)Lua_ValueToString(L,1);
-				
-				if (!g_EventItemTab.GetInteger(szEventItm, "具体类别", 0, &nEventId))
-				{
-					Lua_PushNumber(L,0);
-					return 1;
-				}
-			}
-			
-			int nResult = Player[nPlayerIndex].m_ItemList.IsTaskItemExist(nEventId);
-			Lua_PushNumber(L, (nResult != 0));
-		}
-		else 
-		{
-			g_DebugLog("HaveItem nPlayerIndex <= 0");
-			Lua_PushNumber(L,0);
-		}
-	}
-	else
-	{
-		g_DebugLog("HaveItem 参数不够!");
-		Lua_PushNumber(L , 0);
-	}
-	
+	LuaGetTaskItemCount(L);
+	int nCount = (int)Lua_ValueToNumber(L, -1);
+	Lua_PushNumber(L, nCount > 0 ? 1 : 0);
 	return 1;
 }
 
@@ -5448,6 +5260,11 @@ int LuaGetPlayerExp(Lua_State *L)
 //AddExp(200,10,0)
 int LuaModifyPlayerExp(Lua_State * L)
 {
+#ifdef _SERVER
+	int nPlayer = GetScriptPlayer(L);
+	if (nPlayer > 0 && g_NpcScriptExchange[nPlayer])
+		return RejectScriptTask(L, nPlayer);
+#endif
 	int bAllTeamGet = 0;
 	if(Lua_GetTopIndex(L) >= 3)		bAllTeamGet = (int)Lua_ValueToNumber(L,3);
 	
@@ -5465,27 +5282,23 @@ int LuaModifyPlayerExp(Lua_State * L)
 	return 0;
 }
 
-int LuaAddOwnExp(Lua_State * L)
+int LuaAddOwnExp(Lua_State *L)
 {
-	if (Lua_GetTopIndex(L) <=0 ) return 0;
-	int nPlayerIndex = GetPlayerIndex(L);				
-	if (nPlayerIndex > 0)								
-	{									
-		int nExp = (int)Lua_ValueToNumber(L,1);
+	int nPlayer = GetScriptPlayer(L), nExp = 0;
+	if (nPlayer <= 0 || Lua_GetTopIndex(L) != 1 || !ReadScriptInteger(L, 1, 0, 2147483647, &nExp))
+		return RejectScriptTask(L, nPlayer);
 #ifdef _SERVER
-		KNpcScriptExchange *pState = g_NpcScriptExchange[nPlayerIndex];
-		if (pState && nExp >= 0)
-		{
-			if (nExp > 0x7fffffff - pState->Experience)
-				RejectNpcScriptItem(L, nPlayerIndex);
-			pState->Experience += nExp;
-			return 0;
-		}
+	KNpcScriptExchange* pState = g_NpcScriptExchange[nPlayer];
+	__int64 nPending = (__int64)nExp + (pState ? pState->Experience : 0);
+	if (nPending > 2147483647 || nPending + Player[nPlayer].m_nExp > 2147483647)
+		return RejectScriptTask(L, nPlayer);
+	if (pState)
+		pState->Experience = (int)nPending;
+	else
 #endif
-		if (nExp >= 0)
-			Player[nPlayerIndex].DirectAddExp(nExp);
-	}
-	return 0;
+		Player[nPlayer].DirectAddExp(nExp);
+	Lua_PushNumber(L, 1);
+	return 1;
 }
 
 int LuaGetPlayerLevel(Lua_State * L)
@@ -5503,18 +5316,12 @@ int LuaGetPlayerLevel(Lua_State * L)
 // 新资源仍以一个持久任务整数保存四个字节，序号与原 GetByte/SetByte 一样从 1 开始。
 int LuaGetTaskByte(Lua_State *L)
 {
-	int nResult = 0;
-	int nParamNum = Lua_GetTopIndex(L);
-	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex > 0 && nParamNum == 2)
+	int nPlayer = GetScriptPlayer(L), nTask = 0, nByte = 0, nResult = 0;
+	if (nPlayer > 0 && Lua_GetTopIndex(L) == 2 &&
+		ReadScriptInteger(L, 1, 0, MAX_TASK - 1, &nTask) && ReadScriptInteger(L, 2, 1, 4, &nByte))
 	{
-		int nTaskId = (int)Lua_ValueToNumber(L, 1);
-		int nByte = (int)Lua_ValueToNumber(L, 2);
-		if (nTaskId >= 0 && nTaskId < MAX_TASK && nByte >= 1 && nByte <= 4)
-		{
-			DWORD dwValue = (DWORD)Player[nPlayerIndex].m_cTask.GetSaveVal(nTaskId);
-			nResult = (int)((dwValue >> ((nByte - 1) * 8)) & 0xff);
-		}
+		DWORD dwValue = (DWORD)Player[nPlayer].m_cTask.GetSaveVal(nTask);
+		nResult = (dwValue >> ((nByte - 1) * 8)) & 0xff;
 	}
 	Lua_PushNumber(L, nResult);
 	return 1;
@@ -5522,20 +5329,18 @@ int LuaGetTaskByte(Lua_State *L)
 
 int LuaSetTaskByte(Lua_State *L)
 {
-	int nParamNum = Lua_GetTopIndex(L);
-	int nPlayerIndex = GetPlayerIndex(L);
-	if (nPlayerIndex <= 0 || nParamNum != 3)
-		return 0;
-	int nTaskId = (int)Lua_ValueToNumber(L, 1);
-	int nByte = (int)Lua_ValueToNumber(L, 2);
-	if (nTaskId < 0 || nTaskId >= MAX_TASK || nByte < 1 || nByte > 4)
-		return 0;
+	int nPlayer = GetScriptPlayer(L), nTask = 0, nByte = 0, nValue = 0;
+	if (nPlayer <= 0 || Lua_GetTopIndex(L) != 3 ||
+		!ReadScriptInteger(L, 1, 0, MAX_TASK - 1, &nTask) || !ReadScriptInteger(L, 2, 1, 4, &nByte) ||
+		!ReadScriptInteger(L, 3, 0, 255, &nValue))
+		return RejectScriptTask(L, nPlayer);
 	DWORD dwShift = (nByte - 1) * 8;
-	DWORD dwByte = (DWORD)(int)Lua_ValueToNumber(L, 3) & 0xff;
-	DWORD dwValue = (DWORD)Player[nPlayerIndex].m_cTask.GetSaveVal(nTaskId);
-	dwValue = (dwValue & ~(0xffUL << dwShift)) | (dwByte << dwShift);
-	Player[nPlayerIndex].m_cTask.SetSaveVal(nTaskId, (int)dwValue);
-	return 0;
+	DWORD dwValue = (DWORD)Player[nPlayer].m_cTask.GetSaveVal(nTask);
+	dwValue = (dwValue & ~(0xffUL << dwShift)) | ((DWORD)nValue << dwShift);
+	Player[nPlayer].m_cTask.SetSaveVal(nTask, (int)dwValue);
+	ScriptTaskChanged(nPlayer, nTask == TASKVALUE_REPUTE);
+	Lua_PushNumber(L, 1);
+	return 1;
 }
 
 // 原 NPC 六参数接口：种类、详细类别、具体类别、等级、五行、幸运。
@@ -8248,6 +8053,7 @@ TLua_Funcs GameScriptFuns[] =
 	{"Time2LocalYMD", LuaTime2LocalYMD},
 	{"HaveEventItem", LuaGetTaskItemCount},
 	{"DelEventItem", LuaDelItem},
+	{"AddCredit", LuaModifyRepute},
 	{"AddRepute", LuaModifyRepute},	//修改声望值
 	{"GetRepute",LuaGetRepute},		
 	{"GetNpcIdx", LuaGetCurNpcIndex},

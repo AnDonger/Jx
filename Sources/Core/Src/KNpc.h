@@ -16,8 +16,9 @@ class KSkill;
 #include "KNpcRes.h"
 #endif
 //---------------------------------------------------------------------------
+// 服务端全部地图共享NPC池；0号保留，容纳各野外地图的原生刷怪点。
 #ifdef	_SERVER
-#define	MAX_NPC			16384
+#define	MAX_NPC			65536
 #else
 #define	MAX_NPC			256
 #endif
@@ -629,6 +630,9 @@ public:
 	void				SetCurrentCamp(int nCamp);
 	void				RestoreCurrentCamp();
 	void				SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pData, int nDataNum, int nTime = -1);	// 主动辅助技能与被动技能
+#ifdef _SERVER
+	void				SyncStateSkillEffects();
+#endif
 	void				RemoveStateSkillEffect(int nSkillID);
 	void				ClearStateSkillEffect();
 	void				ReCalcStateEffect();

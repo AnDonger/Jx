@@ -2163,7 +2163,16 @@ void KNpc::OnSkill()
 		if (pSkill)
 		{
 			pSkill->Cast(m_Index, m_DesX, m_DesY);
-			m_SkillList.SetNextCastTime(m_ActiveSkillID, SubWorld[m_SubWorldIndex].m_dwCurrentTime + pSkill->GetDelayPerCast(m_Index));
+#ifdef _SERVER
+			if (IsPlayer() && pSkill->GetDelayPerCast(m_Index) > 0)
+			{
+				// The accepted command already fixed this cast's deadline. Do not extend it
+				// at the effect frame, even if the cooldown ended during a slow animation.
+				m_SkillList.SyncPlayerSkillCooldown(m_ActiveSkillID);
+			}
+			else
+#endif
+				m_SkillList.SetNextCastTime(m_ActiveSkillID, SubWorld[m_SubWorldIndex].m_dwCurrentTime + pSkill->GetDelayPerCast(m_Index));
 		}
 		
 Label_ProcessAI:
@@ -4745,6 +4754,49 @@ void	KNpc::SetSeries(int nSeries)
 		m_Series = series_metal;
 }
 
+#ifdef _SERVER
+// Replay active timed states after the client acknowledges login initialization.
+// Stored state attributes are inverse values for removal; sending must not reapply them.
+void KNpc::SyncStateSkillEffects()
+{
+	if (!g_pServer || !IsPlayer() || m_nPlayerIdx <= 0 || m_nPlayerIdx >= MAX_PLAYER ||
+		Player[m_nPlayerIdx].m_nIndex != m_Index || !Player[m_nPlayerIdx].m_bFinishLoading ||
+		!Player[m_nPlayerIdx].m_bClientSyncReady ||
+		Player[m_nPlayerIdx].m_nNetConnectIdx < 0)
+		return;
+
+	for (KStateNode* pNode = (KStateNode*)m_StateSkillList.GetHead(); pNode;
+		pNode = (KStateNode*)pNode->GetNext())
+	{
+		if (pNode->m_LeftTime <= 0 || pNode->m_SkillID <= 0 || pNode->m_SkillID >= MAX_SKILL ||
+			pNode->m_Level <= 0 || pNode->m_Level >= MAX_SKILLLEVEL)
+			continue;
+		GAME_STATE_EFFECT_SYNC Sync;
+		memset(&Sync, 0, sizeof(Sync));
+		Sync.ProtocolType = s2c_syncstateeffect;
+		Sync.SkillId = pNode->m_SkillID;
+		Sync.Level = pNode->m_Level;
+		Sync.Time = pNode->m_LeftTime;
+		int nCount = 0;
+		for (int i = 0; i < MAX_SKILL_STATE; i++)
+		{
+			const KMagicAttrib& Attrib = pNode->m_State[i];
+			if (!Attrib.nAttribType)
+				continue;
+			int nType = GetCurrentMagicAttribId(Attrib.nAttribType);
+			if (nType < 0)
+				continue;
+			Sync.Attributes[nCount].Type = nType;
+			for (int j = 0; j < 3; j++)
+				Sync.Attributes[nCount].Value[j] = -Attrib.nValue[j];
+			nCount++;
+		}
+		Sync.Length = 14 + nCount * sizeof(GAME_STATE_ATTRIBUTE);
+		g_pServer->PackDataToClient(Player[m_nPlayerIdx].m_nNetConnectIdx, &Sync, Sync.Length + 1);
+	}
+}
+#endif
+
 /*!*****************************************************************************
 // Function		: KNpc::SetStateSkill
 // Purpose		: 
@@ -4809,7 +4861,8 @@ void KNpc::SetStateSkillEffect(int nLauncher, int nSkillID, int nLevel, void *pD
 		nDataNum = MAX_SKILL_STATE;
 	
 #ifdef _SERVER
-	if (IsPlayer() && pData && nDataNum >= 0)
+	if (g_pServer && IsPlayer() && pData && nDataNum >= 0 &&
+		Player[m_nPlayerIdx].m_bClientSyncReady)
 	{
 		GAME_STATE_EFFECT_SYNC	Sync;
 		memset(&Sync, 0, sizeof(Sync));
@@ -6607,7 +6660,7 @@ void KNpc::RemoveStateSkillEffect(int nSkillID)
 			continue;
 		}
 #ifdef _SERVER
-		if (IsPlayer() && g_pServer)
+		if (IsPlayer() && g_pServer && Player[m_nPlayerIdx].m_bClientSyncReady)
 		{
 			GAME_STATE_EFFECT_SYNC Sync;
 			memset(&Sync, 0, sizeof(Sync));
@@ -6647,7 +6700,7 @@ void KNpc::ClearStateSkillEffect()
 		if (pTempNode->m_LeftTime == -1)	// 被动技能
 			continue;
 
-		if (pTempNode->m_LeftTime > 0)
+		if (pTempNode->m_LeftTime >= 0)
 		{
 			for (int i = 0; i < MAX_SKILL_STATE; i++)
 			{
@@ -6779,7 +6832,9 @@ void KNpc::ReCalcStateEffect()
 	pNode = (KStateNode *)m_StateSkillList.GetHead();
 	while(pNode)
 	{
-		if (pNode->m_LeftTime != 0)	// 包括被动(-1)和主动(>0)
+		// Zero-frame nodes still own their applied attributes until removal.
+		// Reapply them after ResetCurrentAttributes so removal subtracts exactly once.
+		if (pNode->m_LeftTime >= -1)	// 包括被动(-1)和主动(>0)
 		{
 			int i;
 			for (i = 0; i < MAX_SKILL_STATE; i++)

@@ -618,6 +618,7 @@ int KPlayer::LoadDBPlayerInfo(BYTE *pPlayerInfo, int &nStep, unsigned int &nPara
 	{
 	case STEP_BASE_INFO:
 		m_bFinishLoading = FALSE;
+		m_bClientSyncReady = FALSE;
 		//数据库中玩家基本信息表
 		m_pCurStatusOffset = pPlayerInfo;
 		

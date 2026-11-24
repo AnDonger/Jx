@@ -295,9 +295,17 @@ CORE_API void g_InitCore()
 BOOL	InitTaskSetting()
 {
 #ifdef _SERVER
-	if (!g_EventItemTab.Load(QUESTITEM_TABFILE))
+	// 名称查询与原物品生成器采用同一版本目录优先级，兼容旧根目录。
+	KIniFile ItemVersion;
+	int nVersion = 1;
+	if (ItemVersion.Load("\\settings\\item\\itemversion.ini"))
+		ItemVersion.GetInteger("ItemVersion", "Version", 1, &nVersion);
+	char szQuestFile[MAX_PATH];
+	sprintf(szQuestFile, "\\settings\\item\\%03d\\questkey.txt", nVersion);
+	if (nVersion < 0 || nVersion > 999 ||
+		(!g_EventItemTab.Load(szQuestFile) && !g_EventItemTab.Load(QUESTITEM_TABFILE)))
 	{
-		g_DebugLog("[TASK]CAN NOT LOAD EventItem Setting File %s", QUESTITEM_TABFILE);
+		g_DebugLog("[TASK]CAN NOT LOAD EventItem Setting File %s", szQuestFile);
 	}
 	if (!g_WayPointTabFile.Load(WORLD_WAYPOINT_TABFILE))
 	{

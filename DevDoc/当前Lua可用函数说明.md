@@ -1,5 +1,13 @@
 # 当前 Lua 可用函数说明（Lua函数表）
 
+## 2026-11-23 主线／新手任务通用事务
+
+2026-11-23补修：在线声望统一使用5字节0xBA增量包，不发送会初始化人物并清空客户端物品列表的0x44登录快照。适用于AddCredit／AddRepute／DecCredit及直接修改声望任务槽；事务成功后发送最终值，失败不发布变化。三城六道轮回交付的物品保留已有原生封包回归，修复后客户端画面待复测。
+
+本轮新增原声望兼容名AddCredit；调整任务值、字节、任务日志、任务物品、声望和经验接口的校验、返回值及回滚行为，具体用法以对应函数条目为准。原生故障注入回归1167项通过，客户端在线声望刷新和三职业完整任务链尚待后续阶段实测。
+
+事务覆盖随身背包／快捷栏／鼠标物品、各货币房间、永久／临时任务值及日志（含声望）；固定经验在成功后结算，失败不升级。并非所有旧注册函数都具备回滚能力：AddExp在交换事务内拒绝执行；即时传送及其他外部副作用不能据此视为任意组合都可回滚，按后续阶段安全路径适配。Lua不得直接访问数据库。诊断WriteLog记录失败尝试用于审计，不因业务回滚删除服务器日志。
+
 ## 2026-11-21 选中装备模板转换与铸造窗口
 
 ### `TransformSelectedEquipment`
@@ -194,11 +202,11 @@ PlayerIndex = original
 
 `ReturnSelectedSocketGem(equipmentSlot, socket)`：仅当前真实背包装备及有效事务；按原gemID、原seed（包含0种子）生成并发回一颗永久绑定(mode2)的宝石，再清掉该孔GemID/Seed、保留TypeID。成功1；无镶嵌物、模板无效、满包或其他失败抛错并完整回滚。剥离材料及扣费须由Lua先按原表判断并在同次事务扣除。返回的玉石／卦符不会重新随机属性。
 
-### `GetSelectedItems`新增字段
+#### `GetSelectedItems`新增字段
 
 每项保留Genre、Detail、Particular、Level、Count、Bound、BindingMode，新增Version（模板实际版本）、RandomSeed（无符号32位数值）、UpgradeData、GenerationFlags、RequireLevel和Sockets（四项数组，每项GemID／TypeID／Seed）。槽号只能在当次请求内使用。空材料槽不在返回数组中，不能拿客户端槽位代替数组索引。
 
-### `EnchaseItem`新增重载
+#### `EnchaseItem`新增重载
 
 `EnchaseItem(1, "OnSocketOperation")`打开打孔／镶嵌／装饰窗口；`EnchaseItem(2, "OnSocketOperation")`打开剥离窗口。省略第二参数时回调名为OnSocketOperation。原`EnchaseItem("OnCompound")`仍打开旧合成窗口。回调名只允许字母、数字和下划线；窗口绑定当前NPC、脚本、地图与距离，不可跨NPC或切图沿用。
 
@@ -629,9 +637,9 @@ local version = GetGameVersion()
 Include(path)
 ```
 
-- 参数：path：脚本文件路径；以 / 或反斜杠开头则基于资源根，否则基于服务进程当前目录。
+- 参数：path：脚本文件路径；以 / 或反斜杠开头则基于 `g_GetRootPath` 的运行根目录，否则基于服务进程当前目录。该接口使用 `lua_dofile`，不会自动走 `g_SetResourcePath` 的资源查找。
 - 返回：无，不转交被载脚本返回值。
-- 限制／说明：直接执行文件并共享该脚本的全局环境；按原资源实际路径调用。内部忽略 lua_dofile 返回码；不能把它当可返回成功标志的加载API。
+- 限制／说明：直接执行文件并共享该脚本的全局环境；按原资源实际路径调用。当前 `Release/Server/script` 联接到有效 `Resources/script`；独立测试运行根也须建立指向隔离脚本目录的联接，不能误用正式资源。内部忽略 lua_dofile 返回码；不能把它当可返回成功标志的加载API。
 - 实现：[`LuaIncludeFile`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1995)。
 
 用法示例：
@@ -1111,22 +1119,20 @@ local credit = GetCredit()
 
 ### `DecCredit`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`DecCredit(amount)`：扣除与 `GetCredit`／`GetRepute` 共用的持久声望。
+
+- 参数：恰好1个0～2147483647的整数，不超过当前声望；0为合法空操作。
+- 返回：成功1；事务外声望不足返回0，事务内不足报错并完整回滚；非法参数总是报错并标记当前事务失败。
+- 同步／存档：与 `AddCredit` 相同，成功提交后同步最终值并请求正常C++存档；提示由Lua安排。修复后客户端在线声望与物品显示仍待复测。
 
 ```lua
-DecCredit(amount)
+if GetCredit() >= 10 then
+    DecCredit(10)
+    AddNormalItem(3, 1, 0, 0, 1, 0)
+end
 ```
 
-- 参数：amount：大于0且不超过当前声望的整数。
-- 返回：成功1，失败0。
-- 限制／说明：修改任务保存值，未自动发送业务提示。
-- 实现：[`LuaDecCredit`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1137)。
-
-用法示例：
-
-```lua
-local ok = DecCredit(10)
-```
+实现：[`LuaDecCredit`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2023)。
 
 ### `GetRepute`
 
@@ -1146,24 +1152,33 @@ GetRepute()
 local repute = GetRepute()
 ```
 
+### `AddCredit`
+
+`AddCredit(delta)`：兼容原新手／主线任务的声望接口，与 `AddRepute` 使用同一实现和 `TASKVALUE_REPUTE` 存档，不是铜钱或另一套积分。
+
+- 参数：恰好1个整数，范围 -2147483648～2147483647；累计声望必须在0～2147483647。
+- 返回：成功1；非法参数、声望不足或溢出报错，中止并标记当前NPC事务失败，即使Lua捕获错误也不允许提交。
+- 作用域：NPC脚本；未加入道具及宠物回调的额外白名单。
+- 同步／存档：事务成功后按最终值发送5字节0xBA声望增量包，并请求正常C++存档；回滚不发布声望变化。事务外成功则立即同步并请求存档。不会自动发送聊天提示。不得使用0x44登录初始化包更新在线声望，该包会清空客户端物品列表；修复后在线画面仍待复测。
+
+```lua
+AddCredit(10)
+Msg2Player("获得10点声望。")
+```
+
+实现：[`LuaModifyRepute`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1120)。
+
 ### `AddRepute`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`AddRepute(delta)`：增加或扣除持久声望，参数、返回值、错误、同步及回滚规则均同 `AddCredit`。
+
+恰好1个有符号32位整数，结果必须在0～2147483647；成功1，非法操作报错并标记当前事务失败。事务成功后按最终声望发送5字节0xBA声望增量包并请求C++存档，事务外立即同步；不自动发送聊天提示。客户端在线刷新画面仍待实测。
 
 ```lua
-AddRepute(delta)
+assert(AddRepute(10) == 1)
 ```
 
-- 参数：delta：声望增量整数，可负。
-- 返回：无。
-- 限制／说明：加到保存任务值；结果小于0或超过INT_MAX时拒绝，事务中报错回滚。原有接口无返回值，提示由脚本Msg2Player处理。
-- 实现：[`LuaModifyRepute`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:542)。
-
-用法示例：
-
-```lua
-AddRepute(10)
-```
+实现：[`LuaModifyRepute`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1120)。
 
 ### `ImproveItemMagicAttr`
 
@@ -1206,117 +1221,95 @@ local ok = AddItem(g, d, p, l, 0, 0, magicLevel)
 
 ### `AddEventItem`
 
-状态：旧接口；优先 AddNormalItem。作用域：游戏／NPC脚本。
+`AddEventItem(idOrName)`：生成并发放1个原任务物品（item_task）。
+
+- 参数：恰好1个非负整数具体类别ID，或当前版本原 `questkey.txt` 中存在的名称（不含嵌入NUL）；模板由原物品生成器校验。
+- 返回：成功1；事务外模板无效／背包满等失败返回0，事务内任何发放失败报错并标记整次交换失败，包括名称不存在。
+- 限制：服务端统一按当前版本生成，走真实背包入包／叠加；不再因背包满替换鼠标物品或把原物品丢到地上。用于原任务物品，普通奖励使用AddNormalItem。
 
 ```lua
-AddEventItem(idOrName)
+AddEventItem(0)
 ```
 
-- 参数：idOrName：旧事件物品具体类别ID，或 g_EventItemTab 中名称。
-- 返回：成功1、失败0；已有物品事务内失败抛错。
-- 限制／说明：旧任务物品接口。事务内按当前版本创建并寻位；事务外仍是旧生成路径与鼠标兜底。不能把普通物品四项模板压成一个ID。
-- 实现：[`LuaAddEventItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2517)。
-
-用法示例：
-
-```lua
-local ok = AddEventItem(eventId)
-```
+实现：[`LuaAddEventItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:4290)。
 
 ### `GetItemCount`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`GetItemCount(idOrName)`：查询原任务物品（item_task）的具体类别ID或原表名称。
+
+恰好1个非负整数ID或合法原表名称。返回匹配物品的堆叠数量之和；参数／角色无效或无匹配返回0。
+
+在NPC／道具等交换事务内，仅查询与事务快照一致的随身背包、快捷栏和鼠标物品；仓库、交易栏、回购栏等不计入，以免先判断有材料、随后扣到不可回滚的容器。事务外保留旧全部已登记物品查询范围。普通物品使用HaveNormalItem。
 
 ```lua
-GetItemCount(idOrName)
+local count = GetItemCount(0)
 ```
 
-- 参数：idOrName：旧任务物品具体类别ID或事件表名称。
-- 返回：原 GetTaskItemNum 数量，无匹配0。
-- 限制／说明：按item_task与GetDetailType匹配并累加所有已登记匹配物品的堆叠数，不过滤背包位置；不是按任意物品服务器索引查数量。
-- 实现：[`LuaGetTaskItemCount`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2715)。
-
-用法示例：
-
-```lua
-local count = GetItemCount(eventId)
-```
+实现：[`LuaGetTaskItemCount`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:4470)。
 
 ### `HaveEventItem`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`HaveEventItem(idOrName)`：查询原任务物品（item_task）的具体类别ID或原表名称。
+
+恰好1个非负整数ID或合法原表名称。2026-11-23第3阶段源码已将此只读别名补入怪物死亡回调白名单；该阶段已部署，死亡回调可使用该只读查询，普通NPC现有用法不受影响。与GetItemCount使用相同的事务内随身容器范围。返回匹配物品的堆叠数量之和；参数／角色无效或无匹配返回0。
+
+在NPC／道具等交换事务内，仅查询与事务快照一致的随身背包、快捷栏和鼠标物品；仓库、交易栏、回购栏等不计入，以免先判断有材料、随后扣到不可回滚的容器。事务外保留旧全部已登记物品查询范围。普通物品使用HaveNormalItem。
 
 ```lua
-HaveEventItem(idOrName)
+local count = HaveEventItem(0)
 ```
 
-- 参数：idOrName：旧任务物品具体类别ID或事件表名称。
-- 返回：原 GetTaskItemNum 数量，无匹配0。
-- 限制／说明：与 `GetItemCount` 同一实现、同一参数和返回值。按item_task与GetDetailType匹配并累加所有已登记匹配物品的堆叠数，不过滤背包位置；不是按任意物品服务器索引查数量。
-- 实现：[`LuaGetTaskItemCount`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2715)。
-
-用法示例：
-
-```lua
-local count = HaveEventItem(eventId)
-```
+实现：[`LuaGetTaskItemCount`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:4470)。
 
 ### `HaveItem`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`HaveItem(idOrName)`：查询原任务物品（item_task）的具体类别ID或原表名称。
+
+恰好1个非负整数ID或合法原表名称。返回存在1、不存在0；参数／角色无效或无匹配返回0。
+
+在NPC／道具等交换事务内，仅查询与事务快照一致的随身背包、快捷栏和鼠标物品；仓库、交易栏、回购栏等不计入，以免先判断有材料、随后扣到不可回滚的容器。事务外保留旧全部已登记物品查询范围。普通物品使用HaveNormalItem。
 
 ```lua
-HaveItem(idOrName)
+local count = HaveItem(0)
 ```
 
-- 参数：idOrName：旧任务物品具体类别ID或事件表名称。
-- 返回：有1、无0。
-- 限制／说明：只检查旧任务物品；四参数物品查询用 HaveNormalItem。
-- 实现：[`LuaHaveItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2804)。
-
-用法示例：
-
-```lua
-local exists = HaveItem(eventId)
-```
+实现：[`LuaHaveItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:4540)。
 
 ### `DelItem`
 
-状态：旧接口；不推荐新业务。作用域：游戏／NPC脚本。
+`DelItem(idOrName)`：删除1个匹配的原任务物品，两个名称使用同一实现。
+
+- 参数：恰好1个非负整数具体类别ID或合法原表名称，没有count参数。
+- 返回：成功1；事务外无匹配／非法参数等返回0，事务内删除失败报错并标记整次交换失败，防止未扣材料却推进任务。
+- 范围：事务内只扣随身背包、快捷栏或鼠标物品，与HaveEventItem查询及回滚快照一致；不扣仓库、交易栏和回购栏。事务外保留原RemoveTaskItem范围。
+- 普通材料使用DelNormalItem；参数仍是原item_task具体类别，不能把普通物品的多个模板字段压缩为该ID。
 
 ```lua
-DelItem(idOrName)
+if HaveEventItem(0) >= 1 then
+    DelItem(0)
+    SetTask(3, 1)
+end
 ```
 
-- 参数：idOrName：旧任务物品具体类别ID或事件表名称。
-- 返回：无；不返回内部 RemoveTaskItem 结果。
-- 限制／说明：按item_task及GetDetailType匹配，遍历已登记物品的首个匹配叠固定扣1，没有count参数；包装层不限制背包位置，也不检查返回值，不适合新的精确材料兑换。新业务用 DelNormalItem 或 DelSelectedItem。
-- 实现：[`LuaDelItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2765)。
-
-用法示例：
-
-```lua
-DelItem(eventId)
-```
+实现：[`LuaDelItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:4498)。
 
 ### `DelEventItem`
 
-状态：旧接口；不推荐新业务。作用域：游戏／NPC脚本。
+`DelEventItem(idOrName)`：删除1个匹配的原任务物品，两个名称使用同一实现。
+
+- 参数：恰好1个非负整数具体类别ID或合法原表名称，没有count参数。
+- 返回：成功1；事务外无匹配／非法参数等返回0，事务内删除失败报错并标记整次交换失败，防止未扣材料却推进任务。
+- 范围：事务内只扣随身背包、快捷栏或鼠标物品，与HaveEventItem查询及回滚快照一致；不扣仓库、交易栏和回购栏。事务外保留原RemoveTaskItem范围。
+- 普通材料使用DelNormalItem；参数仍是原item_task具体类别，不能把普通物品的多个模板字段压缩为该ID。
 
 ```lua
-DelEventItem(idOrName)
+if HaveEventItem(0) >= 1 then
+    DelEventItem(0)
+    SetTask(3, 1)
+end
 ```
 
-- 参数：idOrName：旧任务物品具体类别ID或事件表名称。
-- 返回：无；不返回内部 RemoveTaskItem 结果。
-- 限制／说明：与 `DelItem` 同一实现、同一参数和返回值。按item_task及GetDetailType匹配，遍历已登记物品的首个匹配叠固定扣1，没有count参数；包装层不限制背包位置，也不检查返回值，不适合新的精确材料兑换。新业务用 DelNormalItem 或 DelSelectedItem。
-- 实现：[`LuaDelItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2765)。
-
-用法示例：
-
-```lua
-DelEventItem(eventId)
-```
+实现：[`LuaDelItem`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:4498)。
 
 ### `DropItem`
 
@@ -1341,135 +1334,102 @@ DropItem(...)
 
 ### `GetTask`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`GetTask(index)`：读取持久任务值。
+
+- 参数：恰好1个整数槽号，0～2047。
+- 返回：有符号32位任务值；参数、槽号或角色无效返回nil，不截断小数。
+- 限制：持久槽由原资源约定，不可占用其他功能的槽号。
 
 ```lua
-GetTask(taskId)
+local step = GetTask(3)
 ```
 
-- 参数：taskId：原资源约定的保存任务槽编号，范围按 MAX_TASK。
-- 返回：任务槽整数；无玩家nil。
-- 限制／说明：任务数据随角色保存；不得随意占用原资源已用的任务ID。
-- 实现：[`LuaGetTaskValue`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2054)。
-
-用法示例：
-
-```lua
-local step = GetTask(taskId)
-```
+实现：[`LuaGetTaskValue`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2974)。
 
 ### `SetTask`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`SetTask(index, value)`：写入持久任务值。
+
+- 参数：恰好2个整数；index为0～2047；value为 -2147483648～2147483647。
+- 返回：成功1；非法参数、越界、小数或无有效角色时报错，当前事务标记失败并恢复本次变更，不能靠捕获Lua错误继续提交。
+- 回滚／存档：持久值在事务成功后请求正常C++存档，事务外成功立即请求存档；不会自动生成任务日志，应显式调用TaskNote。直接写声望槽也按最终值同步。
 
 ```lua
-SetTask(taskId, value)
+SetTask(3, 1)
 ```
 
-- 参数：taskId：保存任务槽；value：写入的整数。
-- 返回：无。
-- 限制／说明：在有物品事务的回调中该任务快照可回滚；不自动替代 TaskNote 的任务栏文本。
-- 实现：[`LuaSetTaskValue`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2069)。
-
-用法示例：
-
-```lua
-SetTask(taskId, 1)
-```
+实现：[`LuaSetTaskValue`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2984)。
 
 ### `GetTaskTemp`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`GetTaskTemp(index)`：读取临时任务值。
+
+- 参数：恰好1个整数槽号，0～2559（服务端）；客户端临时槽为0～499。
+- 返回：有符号32位任务值；参数、槽号或角色无效返回nil，不截断小数。
+- 限制：临时值参与当前事务回滚，但退出角色后清零，不写入数据库。
 
 ```lua
-GetTaskTemp(index)
+local step = GetTaskTemp(3)
 ```
 
-- 参数：index：0起始临时任务槽，小于 MAX_TEMP_TASK。
-- 返回：临时任务整数；无上下文或超上限nil。
-- 限制／说明：不作持久任务进度，调用者必须保证非负编号。
-- 实现：[`LuaGetTempTaskValue`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2086)。
-
-用法示例：
-
-```lua
-local state = GetTaskTemp(index)
-```
+实现：[`LuaGetTempTaskValue`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:3003)。
 
 ### `SetTaskTemp`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`SetTaskTemp(index, value)`：写入临时任务值。
+
+- 参数：恰好2个整数；index为0～2559（服务端）；客户端临时槽为0～499；value为 -2147483648～2147483647。
+- 返回：成功1；非法参数、越界、小数或无有效角色时报错，当前事务标记失败并恢复本次变更，不能靠捕获Lua错误继续提交。
+- 回滚／存档：临时值参与事务回滚，退出角色后清零，不持久化。
 
 ```lua
-SetTaskTemp(index, value)
+SetTaskTemp(3, 1)
 ```
 
-- 参数：index：有效临时槽；value：整数。
-- 返回：无。
-- 限制／说明：使用玩家临时任务值，不是全局变量或存档任务值；调用者先验证槽范围。
-- 实现：[`LuaSetTempTaskValue`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2116)。
-
-用法示例：
-
-```lua
-SetTaskTemp(index, 1)
-```
+实现：[`LuaSetTempTaskValue`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:3019)。
 
 ### `TaskNote`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`TaskNote(taskId, step [, text])`：更新任务日志，并使用原任务日志协议同步客户端。
+
+- 参数：恰好2或3个参数。taskId为1～65535整数，须有有效 `settings/taskinfo.tbl` 的 `Task_ID` 标题；step为-1～254整数，非负步骤须有非空 `Step_n`；可选text必须是无嵌入NUL的字符串，GBK字节长度小于128，省略为空串。
+- 返回：成功1；任务／步骤不存在、日志满64项、文本非法或其他失败时报错并标记当前事务失败，材料、费用、任务值及待发经验一起回滚。
+- 删除：step=-1删除；保留原仓库任务3／9／15在step=1删除的特殊规则；其他任务的最终步骤仍显示，完成清理由对应Lua明确执行。
+- 同步／存档：事务内日志消息延迟到成功提交，失败不会把新步骤发给客户端；持久日志沿现有C++存档保存。任务表首次使用后缓存，表变更需重启服务端。
+- 作用域：NPC与已有怪物死亡任务回调；未加入道具脚本白名单。
 
 ```lua
-TaskNote(taskId, step[, text=""])
+SetTask(3, 1)
+TaskNote(27, 0)
+-- 明确完成时：TaskNote(27, -1)
 ```
 
-- 参数：taskId：任务条目编号；step：原任务阶段，负数删除任务条目；text：任务显示文本，长度须小于MAX_TASK_NOTE_TEXT。
-- 返回：无，失败写 Task 拒绝日志。
-- 限制／说明：同时保存条目并同步任务栏；先校验settings/taskinfo.tbl的Task_ID及Step_n。当前任务3/9/15的step=1也按原仓库许可任务删除条目，其余不自动把最后一步当完成；普通任务需要显式负数阶段删除。示例taskId及阶段必须在原资源存在，不凭空分配ID。
-- 实现：[`LuaTaskNote`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1411)。
-
-用法示例：
-
-```lua
-TaskNote(taskId, 1, "使用仓库：收集所需材料。")
-```
+实现：[`LuaTaskNote`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2311)。
 
 ### `GetTaskByte`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`GetTaskByte(taskId, byteIndex)`：读取持久任务槽的指定无符号字节。
+
+参数恰好2个整数：taskId为0～2047，byteIndex为1～4（低字节为1）。返回0～255；参数或角色无效返回0，不截断小数。
 
 ```lua
-GetTaskByte(taskId, byteIndex)
+local progress = GetTaskByte(2031, 1)
 ```
 
-- 参数：taskId：0～MAX_TASK-1；byteIndex：1～4，低字节为1。
-- 返回：指定无符号字节0～255；参数无效0。
-- 实现：[`LuaGetTaskByte`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:3762)。
-
-用法示例：
-
-```lua
-local value = GetTaskByte(taskId, 1)
-```
+实现：[`LuaGetTaskByte`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:5466)。
 
 ### `SetTaskByte`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`SetTaskByte(taskId, byteIndex, value)`：替换持久任务槽中的1字节，保留其他3字节。
+
+参数恰好3个整数：taskId为0～2047，byteIndex为1～4，value为0～255。成功1；小数、负字节、超过255及其他非法参数报错并标记事务失败，不再通过截断或取低8位容忍错误。最高字节可写255，底层任务值按有符号32位保存。与SetTask使用相同回滚和存档机制。
 
 ```lua
-SetTaskByte(taskId, byteIndex, value)
+SetTaskByte(2031, 4, 255)
+assert(GetTaskByte(2031, 4) == 255)
 ```
 
-- 参数：taskId：保存任务槽；byteIndex：1～4；value：整数，仅低8位生效。
-- 返回：无。
-- 限制／说明：保留任务值中其他3个字节。
-- 实现：[`LuaSetTaskByte`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:3781)。
-
-用法示例：
-
-```lua
-SetTaskByte(taskId, 1, 2)
-```
+实现：[`LuaSetTaskByte`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:5479)。
 
 ### `GetBit`
 
@@ -2424,41 +2384,30 @@ SetRank(rankId)
 
 ### `AddOwnExp`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`AddOwnExp(amount)`：发放当前角色固定经验奖励。
 
-```lua
-AddOwnExp(amount)
-```
+参数恰好1个0～2147483647整数；单次／累计待发经验，以及累计值加当前经验不能溢出有符号32位。成功1；非法参数或溢出报错，标记当前事务失败。
 
-- 参数：amount：非负整数，角色直接经验奖励。
-- 返回：无。
-- 限制／说明：已有物品事务内先累计，最外层提交后发放；溢出拒绝回滚，负数不处理。任务奖励优先此接口。
-- 实现：[`LuaAddOwnExp`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:3726)。
-
-用法示例：
+NPC／道具／任务死亡事务内先累计，全部可失败操作成功后才交由原 `DirectAddExp` 结算升级，失败不改经验和等级；事务外立即结算。到现有等级上限仍遵守原引擎规则。任务奖励应使用此接口。
 
 ```lua
 AddOwnExp(100)
 ```
 
+实现：[`LuaAddOwnExp`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:5434)。
+
 ### `AddExp`
 
-状态：实现已核对。作用域：游戏／NPC脚本。
+`AddExp(amount, targetLevel [, shareTeam=0])`：旧战斗经验接口，带目标等级修正和可选队伍分配。
+
+参数及事务外返回值沿旧实现（无返回值）。由于会即时修改自身或队友经验和等级，**在NPC／道具交换等已启用事务的回调内禁止调用**：报错并标记事务失败，防止产生无法回滚的升级。固定任务奖励使用 `AddOwnExp`。
 
 ```lua
-AddExp(amount, targetLevel[, shareTeam=0])
-```
-
-- 参数：amount：经验值；targetLevel：经验来源目标等级；shareTeam：非0调用队伍分配，否则仅自身。
-- 返回：无。
-- 限制／说明：走旧战斗经验分配及等级修正，不是固定任务经验；未采用 AddOwnExp 的事务延迟方式。
-- 实现：[`LuaModifyPlayerExp`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:3707)。
-
-用法示例：
-
-```lua
+-- 仅旧战斗上下文；任务交付改用 AddOwnExp(100)。
 AddExp(100, 5, 0)
 ```
+
+实现：[`LuaModifyPlayerExp`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:5410)。
 
 ### `AddLeadExp`
 
@@ -3609,16 +3558,16 @@ Msg2IP(ip, id, text[, parameterId=0])
 
 ### `AddGlobalNews`
 
-状态：旧公告UI；新版表现需核对。作用域：游戏／NPC脚本。
+状态：已适配新版顶部公告封包，原生与正式服明文对照通过；当前客户端顶部显示待实测。 作用域：游戏／NPC脚本。
 
 ```lua
 AddGlobalNews(textOrId)
 ```
 
-- 参数：textOrId：文本ID或公告字符串，字符串原64字节缓冲。
+- 参数：textOrId：正整数文本ID，或非空GBK公告正文。正文连同颜色标签最多511字节，不含结尾零字节。
 - 返回：无。
-- 限制／说明：跨服广播入口BroadcastGlobal；是否跨游戏服还依赖原转发路由，不是当前玩家提示。
-- 实现：[`LuaAddGlobalNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1482)。
+- 限制／说明：全服广播，经现有Relay转发后送达各GameServer在线玩家，跨地图生效。使用新版0x79／UIAction=5封包；不再截为64字节。NPC／道具事务中先暂存，最外层成功提交才发送；失败、取消或嵌套事务回滚时丢弃。无角色上下文的内部调用直接发送。参数无效、正文含内嵌零字节或超长会报Lua错误，并使当前事务失败，保证不发送部分公告。
+- 实现：[`LuaAddGlobalNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2517)。
 
 用法示例：
 
@@ -3628,35 +3577,35 @@ AddGlobalNews("公告内容")
 
 ### `AddGlobalCountNews`
 
-状态：旧公告UI；计时单位待核对。作用域：游戏／NPC脚本。
+状态：已适配新版顶部公告封包，原生与正式服明文对照通过；当前客户端顶部显示待实测。 作用域：游戏／NPC脚本。
 
 ```lua
 AddGlobalCountNews(textOrId, duration)
 ```
 
-- 参数：textOrId：文本ID或字符串；duration：原NEWSMESSAGE_COUNTING计时整数，<=0改1。
+- 参数：textOrId：正整数文本ID，或非空GBK公告正文（连同颜色标签最多511字节）；duration：整数计时参数，正数最大65535，<=0按原行为改为1。
 - 返回：无。
-- 限制／说明：跨服广播入口BroadcastGlobal；包装层不换算时间，客户端计时单位须按旧UI协议核对，不能直接假定秒。
-- 实现：[`LuaAddGlobalCountNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1568)。
+- 限制／说明：全服广播，经现有Relay转发后送达各GameServer在线玩家，跨地图生效。使用新版0x79／UIAction=5封包；不再截为64字节。NPC／道具事务中先暂存，最外层成功提交才发送；失败、取消或嵌套事务回滚时丢弃。无角色上下文的内部调用直接发送。参数无效、正文含内嵌零字节或超长会报Lua错误，并使当前事务失败，保证不发送部分公告。计时尾部保留4字节；当前客户端取低16位写入SYSTEMTIME.wSecond，故限制最大65535。实际顶部停留时长尚待客户端观察。
+- 实现：[`LuaAddGlobalCountNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2529)。
 
 用法示例：
 
 ```lua
-AddGlobalCountNews("倒计时公告", duration)
+AddGlobalCountNews("<color=green>任务公告<color>", 20)
 ```
 
 ### `AddGlobalTimeNews`
 
-状态：旧公告UI；新版表现需核对。作用域：游戏／NPC脚本。
+状态：已适配新版顶部公告封包，原生与正式服明文对照通过；当前客户端顶部显示待实测。 作用域：游戏／NPC脚本。
 
 ```lua
 AddGlobalTimeNews(textOrId, year, month, day, hour, minute)
 ```
 
-- 参数：第1项：文本ID或字符串；其余为本地时间的年、月、日、时、分。
+- 参数：textOrId：正整数文本ID，或非空GBK公告正文（连同颜色标签最多511字节）；year／month／day／hour／minute：有效本地日期时间整数，秒为0，Windows转换成UTC SYSTEMTIME发送。
 - 返回：无。
-- 限制／说明：跨服广播入口BroadcastGlobal；Windows路径转SYSTEMTIME到UTC，秒为0。不是回调定时器。
-- 实现：[`LuaAddGlobalTimeNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1670)。
+- 限制／说明：全服广播，经现有Relay转发后送达各GameServer在线玩家，跨地图生效。使用新版0x79／UIAction=5封包；不再截为64字节。NPC／道具事务中先暂存，最外层成功提交才发送；失败、取消或嵌套事务回滚时丢弃。无角色上下文的内部调用直接发送。参数无效、正文含内嵌零字节或超长会报Lua错误，并使当前事务失败，保证不发送部分公告。到期公告按原TIMEEND语义处理，不是Lua回调定时器。
+- 实现：[`LuaAddGlobalTimeNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2541)。
 
 用法示例：
 
@@ -3666,16 +3615,16 @@ AddGlobalTimeNews("定时公告", 2026, 11, 7, 20, 0)
 
 ### `AddLocalNews`
 
-状态：旧公告UI；新版表现需核对。作用域：游戏／NPC脚本、世界脚本。
+状态：已适配新版顶部公告封包，原生与正式服明文对照通过；当前客户端顶部显示待实测。 作用域：游戏／NPC脚本、世界脚本。
 
 ```lua
 AddLocalNews(textOrId)
 ```
 
-- 参数：textOrId：文本ID或公告字符串，字符串原64字节缓冲。
+- 参数：textOrId：正整数文本ID，或非空GBK公告正文。正文连同颜色标签最多511字节，不含结尾零字节。
 - 返回：无。
-- 限制／说明：当前服务器BroadcastLocalServer；是否跨游戏服还依赖原转发路由，不是当前玩家提示。
-- 实现：[`LuaAddLocalNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1525)。
+- 限制／说明：广播给当前GameServer的全部在线玩家，跨地图生效；不跨其他GameServer。使用新版0x79／UIAction=5封包；不再截为64字节。NPC／道具事务中先暂存，最外层成功提交才发送；失败、取消或嵌套事务回滚时丢弃。无角色上下文的内部调用直接发送。参数无效、正文含内嵌零字节或超长会报Lua错误，并使当前事务失败，保证不发送部分公告。
+- 实现：[`LuaAddLocalNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2523)。
 
 用法示例：
 
@@ -3685,35 +3634,35 @@ AddLocalNews("公告内容")
 
 ### `AddLocalCountNews`
 
-状态：旧公告UI；计时单位待核对。作用域：游戏／NPC脚本、世界脚本。
+状态：已适配新版顶部公告封包，原生与正式服明文对照通过；当前客户端顶部显示待实测。 作用域：游戏／NPC脚本、世界脚本。
 
 ```lua
 AddLocalCountNews(textOrId, duration)
 ```
 
-- 参数：textOrId：文本ID或字符串；duration：原NEWSMESSAGE_COUNTING计时整数，<=0改1。
+- 参数：textOrId：正整数文本ID，或非空GBK公告正文（连同颜色标签最多511字节）；duration：整数计时参数，正数最大65535，<=0按原行为改为1。
 - 返回：无。
-- 限制／说明：当前服务器BroadcastLocalServer；包装层不换算时间，客户端计时单位须按旧UI协议核对，不能直接假定秒。
-- 实现：[`LuaAddLocalCountNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1619)。
+- 限制／说明：广播给当前GameServer的全部在线玩家，跨地图生效；不跨其他GameServer。使用新版0x79／UIAction=5封包；不再截为64字节。NPC／道具事务中先暂存，最外层成功提交才发送；失败、取消或嵌套事务回滚时丢弃。无角色上下文的内部调用直接发送。参数无效、正文含内嵌零字节或超长会报Lua错误，并使当前事务失败，保证不发送部分公告。计时尾部保留4字节；当前客户端取低16位写入SYSTEMTIME.wSecond，故限制最大65535。实际顶部停留时长尚待客户端观察。
+- 实现：[`LuaAddLocalCountNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2535)。
 
 用法示例：
 
 ```lua
-AddLocalCountNews("倒计时公告", duration)
+AddLocalCountNews("<color=green>任务公告<color>", 20)
 ```
 
 ### `AddLocalTimeNews`
 
-状态：旧公告UI；新版表现需核对。作用域：游戏／NPC脚本。
+状态：已适配新版顶部公告封包，原生与正式服明文对照通过；当前客户端顶部显示待实测。 作用域：游戏／NPC脚本。
 
 ```lua
 AddLocalTimeNews(textOrId, year, month, day, hour, minute)
 ```
 
-- 参数：第1项：文本ID或字符串；其余为本地时间的年、月、日、时、分。
+- 参数：textOrId：正整数文本ID，或非空GBK公告正文（连同颜色标签最多511字节）；year／month／day／hour／minute：有效本地日期时间整数，秒为0，Windows转换成UTC SYSTEMTIME发送。
 - 返回：无。
-- 限制／说明：当前服务器BroadcastLocalServer；Windows路径转SYSTEMTIME到UTC，秒为0。不是回调定时器。
-- 实现：[`LuaAddLocalTimeNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1734)。
+- 限制／说明：广播给当前GameServer的全部在线玩家，跨地图生效；不跨其他GameServer。使用新版0x79／UIAction=5封包；不再截为64字节。NPC／道具事务中先暂存，最外层成功提交才发送；失败、取消或嵌套事务回滚时丢弃。无角色上下文的内部调用直接发送。参数无效、正文含内嵌零字节或超长会报Lua错误，并使当前事务失败，保证不发送部分公告。到期公告按原TIMEEND语义处理，不是Lua回调定时器。
+- 实现：[`LuaAddLocalTimeNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:2547)。
 
 用法示例：
 
@@ -3997,7 +3946,7 @@ AddLoaclTimeNews(textOrId, year, month, day, hour, minute)
 
 - 参数：第1项：文本ID或字符串；其余为本地时间的年、月、日、时、分。
 - 返回：无。
-- 限制／说明：WorldScriptFuns专用的原始拼写（Loacl），不是Local。参数和行为与游戏脚本 AddLocalTimeNews 相同。与 `AddLocalTimeNews` 同一实现、同一参数和返回值。当前服务器BroadcastLocalServer；Windows路径转SYSTEMTIME到UTC，秒为0。不是回调定时器。
+- 限制／说明：WorldScriptFuns原始拼写（Loacl），与AddLocalTimeNews共享实现；文本／时间限制、新版顶部封包及事务行为见同名主接口，作用域仅当前GameServer。
 - 实现：[`LuaAddLocalTimeNews`](F:/mxd/Jx/Sources/Core/Src/ScriptFuns.cpp:1734)。
 
 用法示例：
@@ -6682,9 +6631,9 @@ debug()
 
 | 名字 | 参数／返回及限制 |
 | --- | --- |
-| `AddLocalNews` | `AddLocalNews(textOrId)`；textOrId：文本ID或公告字符串，字符串原64字节缓冲。 返回：无。见上方同名条目。 |
+| `AddLocalNews` | `AddLocalNews(textOrId)`；textOrId：文本ID或公告字符串，非空GBK正文连同颜色标签最多511字节；无效参数报错并回滚当前事务。 返回：无。见上方同名条目。 |
 | `AddLoaclTimeNews` | `AddLoaclTimeNews(textOrId, year, month, day, hour, minute)`；第1项：文本ID或字符串；其余为本地时间的年、月、日、时、分。 返回：无。见上方同名条目。 |
-| `AddLocalCountNews` | `AddLocalCountNews(textOrId, duration)`；textOrId：文本ID或字符串；duration：原NEWSMESSAGE_COUNTING计时整数，<=0改1。 返回：无。见上方同名条目。 |
+| `AddLocalCountNews` | `AddLocalCountNews(textOrId, duration)`；textOrId：文本ID或字符串；duration：NEWSMESSAGE_COUNTING计时整数，<=0改1，正数最大65535；正文连同颜色标签最多511字节；无效参数报错并回滚当前事务。 返回：无。见上方同名条目。 |
 | `Msg2SubWorld` | `Msg2SubWorld(text)`；text：字符串。 返回：无。见上方同名条目。 |
 | `Msg2IP` | `Msg2IP(ip, id, text[, parameterId=0])`；ip：IPv4字符串；id：原IP路由ID；text：消息；parameterId：GM附加路由参数。 返回：无。见上方同名条目。 |
 | `SubWorldID2Idx` | `SubWorldID2Idx(mapId)`；mapId：地图资源ID。 返回：本服务器已加载的运行时世界索引；未找到-1。见上方同名条目。 |

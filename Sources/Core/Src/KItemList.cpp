@@ -2095,6 +2095,33 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 		return;
 #endif
 
+#ifdef _SERVER
+	// 快捷栏和背包共用原子交换；必须在改动矩阵前校验原模板权限。
+	BOOL bImmediacy = SrcPos->nPlace == pos_immediacy;
+	if (bImmediacy)
+	{
+		if (bTrading || !Player[m_PlayerIdx].CanChangeInventory() ||
+			SrcPos->nX < 0 || SrcPos->nX >= IMMEDIACY_ROOM_WIDTH || SrcPos->nY != 0 ||
+			DesPos->nX < 0 || DesPos->nX >= IMMEDIACY_ROOM_WIDTH || DesPos->nY != 0)
+			return;
+		if (m_Hand)
+		{
+			if (Item[m_Hand].GetWidth() != 1 || Item[m_Hand].GetHeight() != 1)
+				return;
+			int nGenre = Item[m_Hand].GetGenre();
+			if (nGenre != item_medicine && nGenre != item_townportal)
+			{
+				const KBASICPROP_NORMALITEM* pTemplate = ItemGen.GetNormalItemTemplate(nGenre,
+					Item[m_Hand].GetDetailType(), Item[m_Hand].GetParticular(),
+					Item[m_Hand].GetLevel(), Item[m_Hand].GetItemParam()->nVersion);
+				if (nGenre != item_magicorscript || !pTemplate || !pTemplate->m_bCanPlaceInImmediacy)
+					return;
+			}
+		}
+		nGridRoom = room_immediacy;
+	}
+#endif
+
 	int nTempHand = m_Hand;
 	int	nEquipIdx1 = 0;
 
@@ -2117,7 +2144,7 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 		if (SrcPos->nPlace == pos_immediacy)
 			nRoom = room_immediacy;
 		int nTarget = m_Room[nRoom].FindItem(SrcPos->nX, SrcPos->nY);
-		if (nTarget > 0 && Item[nTarget].GetMaxStackCount() > 1 &&
+		if (nTarget > 0 && nTarget != m_Hand && Item[nTarget].GetMaxStackCount() > 1 &&
 			Item[m_Hand].GetMaxStackCount() > 1 &&
 			Item[nTarget].GetGenre() == Item[m_Hand].GetGenre() &&
 			Item[nTarget].GetDetailType() == Item[m_Hand].GetDetailType() &&
@@ -2171,7 +2198,8 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 	{
 		KInventory& Room = m_Room[nGridRoom];
 		int nSource = Room.FindItem(SrcPos->nX, SrcPos->nY);
-		if (nSource < 0) return;
+		if (nSource < 0 || (nSource && nSource == m_Hand)) return;
+		if ((m_Hand && FindSame(m_Hand) <= 0) || (nSource && FindSame(nSource) <= 0)) return;
 		// Do not send an implicit client stack merge while cancellation relies on
 		// unchanged instances and quantities. Split/merge before opening trade.
 		if (bTrading && m_Hand && nSource && Item[nSource].CanStackWith(Item[m_Hand]))
@@ -2193,7 +2221,12 @@ void KItemList::ExchangeItem(ItemPos* SrcPos, ItemPos* DesPos)
 			Entry.nY = DesPos->nY;
 		}
 		m_Hand = nSource;
-		if (nSource) m_Items[FindSame(nSource)].nPlace = pos_hand;
+		if (nSource)
+		{
+			PlayerItem& Entry = m_Items[FindSame(nSource)];
+			Entry.nPlace = pos_hand;
+			Entry.nX = Entry.nY = 0;
+		}
 		g_pServer->PackDataToClient(Player[m_PlayerIdx].m_nNetConnectIdx, &sMove, sizeof(sMove));
 		return;
 	}

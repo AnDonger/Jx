@@ -2278,16 +2278,19 @@ KMissleMagicAttribsData* KSkill::CreateMissleMagicAttribsData(int nLauncher)  co
 	//根据玩家的基本属性，确定子弹的伤害
 	if (nLauncher)
 	{
-		// Hostile curses may provide only state attributes but still request a base hit.
-		// Keep configured damage formulas and the physical/magic classification unchanged.
+		// AddBaseDamage applies to elemental spells as well as state-only hostile hits.
+		// Supply a missing physical slot; retain explicit formulas and spell classification.
 		KMagicAttrib BaseDamageAttribs[MAX_MISSLE_DAMAGEATTRIB];
 		KMagicAttrib* pSource = (KMagicAttrib*)m_DamageAttribs;
-		if (m_bAddBaseDamage && m_bTargetEnemy && m_nDamageAttribsNum == 0)
+		if (m_bAddBaseDamage && m_bTargetEnemy &&
+			m_DamageAttribs[2].nAttribType != magic_physicsdamage_v &&
+			m_DamageAttribs[2].nAttribType != magic_physicsenhance_p)
 		{
 			memcpy(BaseDamageAttribs, m_DamageAttribs, sizeof(BaseDamageAttribs));
+			memset(&BaseDamageAttribs[2], 0, sizeof(BaseDamageAttribs[2]));
 			BaseDamageAttribs[2].nAttribType = magic_physicsenhance_p;
 			pSource = BaseDamageAttribs;
-			pMissleMagicAttribsData->m_nDamageMagicAttribsNum = 1;
+			pMissleMagicAttribsData->m_nDamageMagicAttribsNum++;
 		}
 		// 只有实际攻击可携带蓝怪附伤，纯状态、光环和治疗不能凭空造成伤害。
 		BOOL bAddNpcElement = m_bTargetEnemy && (m_bAddBaseDamage || m_nDamageAttribsNum > 0);

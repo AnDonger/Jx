@@ -211,6 +211,7 @@ public:
 	BYTE*			m_pCurStatusOffset;			//二进制时，记录读到指针位置了
 	BOOL			m_bMallOpen;
 	BOOL			m_bFinishLoading;			//完成加载
+	BOOL			m_bClientSyncReady;		// Runtime only: client acknowledged initial synchronization.
 	BYTE			m_SaveBuffer[64 * 1024];	//保存缓冲
 	int				m_nLastNetOperationTime;	//最后一次网络操作时间
 	BOOL			m_bSleepMode;
@@ -473,6 +474,8 @@ public:
 	BOOL			Save();									// 保存玩家数据
 	BOOL			CanSave();
 	void			ProcessUser();
+	BOOL			SendCurPlayerSyncData(); // Login initialization only: resets client inventory.
+	BOOL			SyncReputation();
 	BOOL			SendSyncData(int &nStep, unsigned int &nParam);	// 发送同步数据
 	BOOL			SendSyncData_Skill();					// 发送同步数据 - 技能
 	void SyncEquipmentAttributes();

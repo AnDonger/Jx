@@ -109,6 +109,7 @@ typedef struct
 	BOOL		m_bValid;
 	char		m_szScript[260];
 	BOOL		m_bConsumeOnUse;
+	BOOL		m_bCanPlaceInImmediacy;	// 原表参数5：是否可放快捷栏。
 	int			m_nCopperPrice;		// 原资源铜钱价格，仅供铜钱商店结算。
 	int			m_nExistDays;		// 原表存在时间，按客户端本地日界计天，0为不限时。
 	BOOL		m_bCanTrade;		// 原资源“是否可以交换”；兼容缺列的旧普通物品。

@@ -71,6 +71,7 @@ public:
 	KNpcScriptTransaction(int nPlayer);
 	~KNpcScriptTransaction();
 	void Commit() { m_bCommitted = TRUE; }
+	BOOL IsActive() const { return m_nPlayer > 0; }
 	BOOL HasFailed() const;
 };
 
