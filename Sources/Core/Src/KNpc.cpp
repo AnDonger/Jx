@@ -1796,14 +1796,10 @@ void KNpc::DoSkill(int nX, int nY)
 			)
 		{
 #ifdef _SERVER
-			// 效果帧到达前也必须拒绝同一冷却技能，避免重复扣内力和重置动作。
-			if (((KSkill*)pSkill)->GetDelayPerCast(m_Index) > 0)
-			{
+			// Non-player skills retain their existing effect-frame timing.
+			if (!IsPlayer() && ((KSkill*)pSkill)->GetDelayPerCast(m_Index) > 0)
 				m_SkillList.SetNextCastTime(m_ActiveSkillID,
 					SubWorld[m_SubWorldIndex].m_dwCurrentTime + ((KSkill*)pSkill)->GetDelayPerCast(m_Index), FALSE);
-				// 即使施法动作随后中断，已预留的冷却也必须让客户端可见。
-				m_SkillList.SyncPlayerSkillCooldowns(m_ActiveSkillID);
-			}
 			if (IsPlayer() && m_nPlayerIdx > 0)
 				Player[m_nPlayerIdx].m_ItemList.Abrade(enumAbradeAttack);
 #endif
@@ -1884,6 +1880,18 @@ void KNpc::DoSkill(int nX, int nY)
 				|| eStyle == SKILL_SS_Summon)
 			{
 				DoOrdinSkill((KSkill *) pSkill, nX, nY);
+#ifdef _SERVER
+				if (IsPlayer() && ((KSkill*)pSkill)->GetDelayPerCast(m_Index) > 0)
+				{
+					// The client predicts animation-end + configured delay at its effect frame.
+					// Reserve that endpoint after the actual action length is known. The cast
+					// broadcast above must reach the client before its authoritative timer.
+					int nActionFrames = max(0, m_Frames.nTotalFrame - m_Frames.nCurrentFrame);
+					m_SkillList.SetNextCastTime(m_ActiveSkillID,
+						SubWorld[m_SubWorldIndex].m_dwCurrentTime + nActionFrames +
+						((KSkill*)pSkill)->GetDelayPerCast(m_Index));
+				}
+#endif
 			}
 			else
 			{
@@ -2164,13 +2172,9 @@ void KNpc::OnSkill()
 		{
 			pSkill->Cast(m_Index, m_DesX, m_DesY);
 #ifdef _SERVER
-			if (IsPlayer() && pSkill->GetDelayPerCast(m_Index) > 0)
-			{
-				// The accepted command already fixed this cast's deadline. Do not extend it
-				// at the effect frame, even if the cooldown ended during a slow animation.
-				m_SkillList.SyncPlayerSkillCooldown(m_ActiveSkillID);
-			}
-			else
+			// The player endpoint was reserved with the complete action duration.
+			// Re-sending it here races the client's own effect-frame update.
+			if (!IsPlayer() || pSkill->GetDelayPerCast(m_Index) <= 0)
 #endif
 				m_SkillList.SetNextCastTime(m_ActiveSkillID, SubWorld[m_SubWorldIndex].m_dwCurrentTime + pSkill->GetDelayPerCast(m_Index));
 		}
