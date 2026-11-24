@@ -3919,7 +3919,8 @@ BOOL KNpc::SendMorphSync(int nClient)
 	if (Player[m_nPlayerIdx].m_bSleepMode) Sync.m_btSomeFlag |= 0x08;
 	if (Player[m_nPlayerIdx].m_cTong.GetOpenFlag()) Sync.m_btSomeFlag |= 0x10;
 	if (m_bRideHorse) Sync.m_btSomeFlag |= 0x20;
-	Sync.AppearanceFlags = 0x08;
+	// 4B +20 bit2 carries canCast; bit3 retains the movement override.
+	Sync.AppearanceFlags = (BYTE)(0x08 | (m_bMorphCanCast ? 0x04 : 0));
 	Sync.AppearanceType = (WORD)(GetMorphType() >= 0 ? GetMorphType() : 0x7FFF);
 	return SUCCEEDED(g_pServer->PackDataToClient(nClient, &Sync, sizeof(Sync)));
 }
@@ -4182,7 +4183,8 @@ void KNpc::NormalSync()
 
 		// 当前客户端将 0x7FFF 解释为 -1，恢复角色本身形象。
 		// 不能使用零值占位，否则会选中 NPC 资源的第 0 号形象。
-		PlayerSync.AppearanceFlags = 0x08;
+		// 4B +20 bit2 carries canCast; bit3 retains the movement override.
+		PlayerSync.AppearanceFlags = (BYTE)(0x08 | (m_bMorphCanCast ? 0x04 : 0));
 		PlayerSync.AppearanceType = (WORD)(GetMorphType() >= 0 ? GetMorphType() : 0x7FFF);
 
 		int nMaxCount = MAX_PLAYER;//MAX_BROADCAST_COUNT;
