@@ -1215,16 +1215,7 @@ void KNpc::OnDeath()
 			// Send only after natural death animation completion, not ExecuteRevive().
 			if (IsPlayer() && m_CurrentLife <= 0 && m_Doing == do_revive && g_pServer)
 			{
-				GAME_NPC_DEATH_DIALOG_SYNC Sync;
-				memset(&Sync, 0, sizeof(Sync));
-				Sync.ProtocolType = 0xF0;
-				Sync.Length = sizeof(Sync) - 1;
-				Sync.SubType = 0x0A;
-				Sync.ID = m_dwID;
-				g_pServer->PackDataToClient(Player[m_nPlayerIdx].m_nNetConnectIdx,
-					&Sync, sizeof(Sync));
-				g_DebugLog("[Revive] Death dialog sent: player=%d npc=%lu",
-					m_nPlayerIdx, m_dwID);
+				Player[m_nPlayerIdx].SendReviveDialog();
 			}
 #else
 			// ¿Í»§¶Ë°ÑNPCÉ¾³ý

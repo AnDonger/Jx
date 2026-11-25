@@ -258,6 +258,7 @@ struct KNpcScriptExchange
 	int TeleportY;
 	int TeleportFight;
 	int TeleportRevival;
+	int TeleportLoginType;
 };
 
 static KNpcScriptExchange *g_NpcScriptExchange[MAX_PLAYER] = {NULL};
@@ -332,6 +333,7 @@ KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
 	pState->HasTeleport = FALSE;
 	pState->ConsumedUseItem = FALSE;
 	pState->TeleportRevival = 0;
+	pState->TeleportLoginType = -1;
 	KItemList& List = Player[m_nPlayer].m_ItemList;
 	for (int i = 0; i < room_num; i++)
 		pState->Money[i] = List.GetMoney(i);
@@ -368,9 +370,17 @@ static BOOL IsScriptTeleportTarget(int nMap, int nX, int nY)
 static BOOL IsScriptTeleportValid(int nPlayer, const KNpcScriptExchange& State)
 {
 	KPlayer& Role = Player[nPlayer];
-	int nItem = Role.FindUseScriptItem();
-	if (!nItem || Item[nItem].GetID() != State.TeleportItemID ||
-		!IsScriptTeleportTarget(State.TeleportMap, State.TeleportX, State.TeleportY))
+	if (!IsScriptTeleportTarget(State.TeleportMap, State.TeleportX, State.TeleportY))
+		return FALSE;
+	if (State.TeleportItemID)
+	{
+		int nItem = Role.FindUseScriptItem();
+		if (!nItem || Item[nItem].GetID() != State.TeleportItemID)
+			return FALSE;
+	}
+	else if (!Role.m_bFinishLoading || Role.m_bExchangeServer || Role.m_nIndex <= 0 ||
+		Role.m_nIndex >= MAX_NPC || Npc[Role.m_nIndex].m_CurrentLife <= 0 ||
+		Npc[Role.m_nIndex].m_Doing == do_death)
 		return FALSE;
 	if (State.TeleportRevival)
 	{
@@ -407,8 +417,8 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 			pState->Failed = TRUE;
 		else
 		{
-			int nItem = Role.FindUseScriptItem();
-			if (!Role.m_ItemList.ConsumeItem(nItem, 1) ||
+			int nItem = pState->TeleportItemID ? Role.FindUseScriptItem() : 0;
+			if ((pState->TeleportItemID && !Role.m_ItemList.ConsumeItem(nItem, 1)) ||
 				Npc[Role.m_nIndex].ChangeWorld(pState->TeleportMap,
 					pState->TeleportX, pState->TeleportY) != 1)
 				pState->Failed = TRUE;
@@ -417,6 +427,8 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 				Npc[Role.m_nIndex].SetFightMode(pState->TeleportFight);
 				if (pState->TeleportRevival)
 					Role.SetRevivalPos(pState->TeleportMap, pState->TeleportRevival);
+				if (pState->TeleportLoginType >= 0)
+					Role.SetLoginType(pState->TeleportLoginType);
 				Role.m_ulLastSaveTime = 0;
 				Role.m_bWaitingPlayerFeedBack = false;
 				Role.m_nAvailableAnswerNum = 0;
@@ -451,13 +463,25 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 				pItem->nPlace == pos_hand)
 				Indices.push_back(pItem->nIdx);
 		}
-		for (size_t i = 0; i < Indices.size(); i++)
+		// 条件不满足而尚未改动物品时，不删除重建原物品，避免无谓的恢复风险。
+		BOOL bItemsChanged = Indices.size() != pState->Items.size();
+		for (size_t i = 0; i < pState->Items.size() && !bItemsChanged; i++)
+		{
+			const KNpcScriptItem& Saved = pState->Items[i];
+			int nItem = List.SearchID(Saved.Data.GetID());
+			BOOL bPosition = FALSE;
+			for (PlayerItem* p = List.GetFirstItem(); p; p = List.GetNextItem())
+				if (p->nIdx == nItem && p->nPlace == Saved.Place && p->nX == Saved.X && p->nY == Saved.Y)
+					bPosition = TRUE;
+			bItemsChanged = !nItem || !bPosition || memcmp(&Item[nItem], &Saved.Data, sizeof(KItem)) != 0;
+		}
+		for (size_t i = 0; bItemsChanged && i < Indices.size(); i++)
 		{
 			List.Remove(Indices[i]);
 			ItemSet.Remove(Indices[i]);
 		}
 		BOOL bRestored = TRUE;
-		for (size_t i = 0; i < pState->Items.size(); i++)
+		for (size_t i = 0; bItemsChanged && i < pState->Items.size(); i++)
 		{
 			KNpcScriptItem& Saved = pState->Items[i];
 			int nItem = ItemSet.Add(&Saved.Data);
@@ -466,12 +490,18 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 				Item[nItem].SetID(Saved.Data.GetID());
 				if (!List.Add(nItem, Saved.Place, Saved.X, Saved.Y, TRUE))
 				{
+					printf("[NpcScript] Restore placement failed role=%s id=%lu place=%d x=%d y=%d\n",
+						Role.m_PlayerName, Saved.Data.GetID(), Saved.Place, Saved.X, Saved.Y);
 					ItemSet.Remove(nItem);
 					bRestored = FALSE;
 				}
 			}
 			else
+			{
+				printf("[NpcScript] Restore allocation failed role=%s id=%lu place=%d x=%d y=%d\n",
+					Role.m_PlayerName, Saved.Data.GetID(), Saved.Place, Saved.X, Saved.Y);
 				bRestored = FALSE;
+			}
 		}
 		for (int i = 0; i < room_num; i++)
 			List.SetRoomMoney(i, pState->Money[i]);
@@ -485,13 +515,23 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 		ZeroMemory(&Info, sizeof(Info));
 		Info.m_bUIId = UI_MSGINFO;
 		Info.m_bParam2 = 1;
-		strcpy(Info.m_pContent, "操作未完成，物品、金钱和任务进度已恢复，请检查背包空间及材料。");
+		strcpy(Info.m_pContent, bRestored ?
+			"操作未完成，物品、金钱和任务进度已恢复，请检查背包空间及材料。" :
+			"角色状态恢复失败，已保留最近安全存档，请重新登录。");
 		Info.m_nBufferLen = strlen(Info.m_pContent);
 		Role.DoScriptAction(&Info);
+		printf("[NpcScript] Exchange rolled back role=%s player=%d items=%d changed=%d restored=%d\n",
+			Role.m_PlayerName, m_nPlayer, (int)pState->Items.size(), bItemsChanged, bRestored);
 		if (!bRestored)
+		{
+			// 禁止用不完整的运行状态覆盖安全存档，也不能让角色继续在此状态下战斗。
 			Role.m_bFinishLoading = FALSE;
-		g_DebugLog("[NpcScript] Exchange rolled back: player=%d items=%d restored=%d",
-			m_nPlayer, (int)pState->Items.size(), bRestored);
+			if (g_pServer && Role.m_nNetConnectIdx >= 0)
+			{
+				g_pServer->SendPackToClient(Role.m_nNetConnectIdx);
+				g_pServer->ShutdownClient(Role.m_nNetConnectIdx);
+			}
+		}
 	}
 	else
 	{
@@ -722,6 +762,62 @@ int LuaConsumeUseItem(Lua_State* L)
 	}
 	pState->ConsumedUseItem = TRUE;
 	Player[nPlayer].m_ulLastSaveTime = 0;
+	Lua_PushNumber(L, 1);
+	return 1;
+}
+
+// NPC通用延迟传送：与物品、金钱及任务一起提交，不消耗当前使用物品。
+// 未加载地图拒绝，避免跨服切换先改变位置再使业务回滚。
+int LuaQueueTeleport(Lua_State* L)
+{
+	int nPlayer = GetScriptPlayer(L);
+	KNpcScriptExchange* pState = nPlayer > 0 ? g_NpcScriptExchange[nPlayer] : NULL;
+	int nMap = 0, nX = 0, nY = 0;
+	int nCount = Lua_GetTopIndex(L);
+	int nFight = -1, nRevival = 0, nLoginType = -1;
+	if (!pState || pState->Failed || pState->HasTeleport || pState->HasMorph ||
+		pState->ConsumedUseItem || Player[nPlayer].m_dwUseItemScriptID ||
+		g_PlayerScriptAction[nPlayer] || (nCount < 3 || nCount > 6) ||
+		!ReadScriptInteger(L, 1, 1, 0x03ffffff, &nMap) ||
+		!ReadScriptInteger(L, 2, 1, 0x03ffffff, &nX) ||
+		!ReadScriptInteger(L, 3, 1, 0x03ffffff, &nY) ||
+		(nCount >= 4 && !ReadScriptInteger(L, 4, 0, 1, &nFight)) ||
+		(nCount >= 5 && !ReadScriptInteger(L, 5, 0, 0x7fffffff, &nRevival)) ||
+		(nCount >= 6 && !ReadScriptInteger(L, 6, 0, 1, &nLoginType)))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	if (Player[nPlayer].m_nIndex <= 0 || Player[nPlayer].m_nIndex >= MAX_NPC)
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	int nNpc = Player[nPlayer].GetTargetNpc();
+	if (nNpc <= 0 || nNpc >= MAX_NPC || Npc[nNpc].m_Kind != kind_dialoger ||
+		!Npc[nNpc].m_ActionScriptID ||
+		Npc[nNpc].m_SubWorldIndex != Npc[Player[nPlayer].m_nIndex].m_SubWorldIndex)
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	pState->TeleportItemID = 0;
+	pState->TeleportMap = nMap;
+	pState->TeleportX = nX * 32;
+	pState->TeleportY = nY * 32;
+	pState->TeleportFight = nFight >= 0 ? nFight : Npc[Player[nPlayer].m_nIndex].m_FightMode;
+	pState->TeleportRevival = nRevival;
+	pState->TeleportLoginType = nLoginType;
+	if (!IsScriptTeleportValid(nPlayer, *pState))
+	{
+		RejectNpcScriptItem(L, nPlayer);
+		Lua_PushNumber(L, 0);
+		return 1;
+	}
+	pState->HasTeleport = TRUE;
 	Lua_PushNumber(L, 1);
 	return 1;
 }
@@ -8085,6 +8181,7 @@ TLua_Funcs GameScriptFuns[] =
 	{"GetPos",			LuaGetPos},			//GetPos() return x,y,subworldindex
 	{"GetWorldPos",		LuaGetNewWorldPos},	//W,X,Y = GetWorldPos()返回于NewWorld配陪的坐标
 	{"NewWorld",		LuaEnterNewWorld},
+	{"QueueTeleport",	LuaQueueTeleport},
 	{"GetUseItemInfo", LuaGetUseItemInfo},
 	{"ConsumeUseItem", LuaConsumeUseItem},
 	{"TeleportWithItem", LuaTeleportWithItem},

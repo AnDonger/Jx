@@ -944,7 +944,8 @@ BOOL KPlayer::SendSyncData(int &nStep, unsigned int &nParam)
 		bRet = TRUE;
 		break;
 	case STEP_TASK_LIST:
-		bRet = m_cTask.SyncNotes(m_nPlayerIndex);
+		// 基础人物包先于任务存档加载，完整任务载入后单独同步声望。
+		bRet = SyncReputation() && m_cTask.SyncNotes(m_nPlayerIndex);
 		break;
 	case STEP_SYNC_END:
 		SendPetSyncData(m_nNetConnectIdx, TRUE);
@@ -4507,9 +4508,26 @@ void KPlayer::BackToTownPortal()
 //-------------------------------------------------------------------------
 //	功能：主角死后重生
 //-------------------------------------------------------------------------
+void KPlayer::SendReviveDialog()
+{
+	if (!g_pServer || m_nIndex <= 0 || m_nIndex >= MAX_NPC || m_nNetConnectIdx < 0)
+		return;
+	KNpc& Owner = ::Npc[m_nIndex];
+	if (!Owner.IsPlayer() || Owner.GetPlayerIdx() != m_nPlayerIndex || Owner.m_CurrentLife > 0 ||
+		(Owner.m_Doing != do_death && Owner.m_Doing != do_revive))
+		return;
+	GAME_NPC_DEATH_DIALOG_SYNC Sync;
+	memset(&Sync, 0, sizeof(Sync));
+	Sync.ProtocolType = 0xF0;
+	Sync.Length = sizeof(Sync) - 1;
+	Sync.SubType = 0x0A;
+	Sync.ID = Owner.m_dwID;
+	g_pServer->PackDataToClient(m_nNetConnectIdx, &Sync, sizeof(Sync));
+}
+
 void KPlayer::Revive(int nType)
 {
-	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC || !m_bFinishLoading || m_bExchangeServer)
+	if (m_nIndex <= 0 || m_nIndex >= MAX_NPC || m_bExchangeServer)
 		return;
 	KNpc& Npc = ::Npc[m_nIndex];
 	if (!Npc.IsPlayer() || Npc.GetPlayerIdx() != m_nPlayerIndex || Npc.m_bExchangeServer ||
@@ -4518,6 +4536,13 @@ void KPlayer::Revive(int nType)
 		return;
 	if (nType != REMOTE_REVIVE_TYPE && nType != LOCAL_REVIVE_TYPE)
 		return;
+	if (!m_bFinishLoading)
+	{
+		printf("[Revive] Rejected unsafe state role=%s player=%d loaded=0 type=%d\n",
+			m_PlayerName, m_nPlayerIndex, nType);
+		SendReviveDialog();
+		return;
+	}
 
 	int nSubWorldID = 0;
 	int nMpsX = 0, nMpsY = 0;
@@ -4532,6 +4557,7 @@ void KPlayer::Revive(int nType)
 		{
 			g_DebugLog("[Revive] Invalid revival point: player=%d map=%d position=(%d,%d)",
 				m_nPlayerIndex, nSubWorldID, nMpsX, nMpsY);
+			SendReviveDialog();
 			return;
 		}
 	}
@@ -4540,20 +4566,29 @@ void KPlayer::Revive(int nType)
 	if (nType == LOCAL_REVIVE_TYPE)
 	{
 		if (CheckTrading())
-			return;
-		// 与奇货商场相同，只使用背包内的铜钱（questkey.txt：4,47）。
-		// 先确认死亡状态，再扣一枚；复活后重复请求不会再次扣除。
-		int nCopper = 0;
-		for (PlayerItem* pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
 		{
-			if (IsBagItemPlace(pItem->nPlace) && Item[pItem->nIdx].GetGenre() == item_task &&
-				Item[pItem->nIdx].GetDetailType() == 47 && Item[pItem->nIdx].GetStackCount() > 0)
+			SendReviveDialog();
+			return;
+		}
+		// 优先背包，背包没有时再从本人仓库各页扣除一枚铜钱。
+		int nCopper = 0;
+		BOOL bStorage = FALSE;
+		for (int nPass = 0; nPass < 2 && !nCopper; nPass++)
+		{
+			for (PlayerItem* pItem = m_ItemList.GetFirstItem(); pItem; pItem = m_ItemList.GetNextItem())
 			{
-				nCopper = pItem->nIdx;
-				break;
+				BOOL bPlace = nPass == 0 ? IsBagItemPlace(pItem->nPlace) :
+					StoreBoxPageFromPlace(pItem->nPlace) >= 0;
+				if (bPlace && Item[pItem->nIdx].GetGenre() == item_task &&
+					Item[pItem->nIdx].GetDetailType() == 47 && Item[pItem->nIdx].GetStackCount() > 0)
+				{
+					nCopper = pItem->nIdx;
+					bStorage = nPass != 0;
+					break;
+				}
 			}
 		}
-		if (!nCopper || !m_ItemList.ConsumeItem(nCopper, 1))
+		if (!nCopper || !m_ItemList.ConsumeItem(nCopper, 1, bStorage))
 		{
 			PLAYER_SCRIPTACTION_SYNC Info;
 			memset(&Info, 0, sizeof(Info));
@@ -4563,6 +4598,7 @@ void KPlayer::Revive(int nType)
 			Info.m_nBufferLen = strlen(Info.m_pContent);
 			DoScriptAction(&Info);
 			g_DebugLog("[Revive] Insufficient copper: player=%d", m_nPlayerIndex);
+			SendReviveDialog();
 			return;
 		}
 		GAME_CURRENCY_NOTICE_SYNC Notice;
@@ -4572,7 +4608,8 @@ void KPlayer::Revive(int nType)
 		Notice.Currency = 1;
 		Notice.Amount = 1;
 		g_pServer->PackDataToClient(m_nNetConnectIdx, &Notice, sizeof(Notice));
-		g_DebugLog("[Revive] Copper consumed: player=%d count=1", m_nPlayerIndex);
+		printf("[Revive] Copper consumed role=%s player=%d storage=%d count=1\n",
+			m_PlayerName, m_nPlayerIndex, bStorage);
 	}
 
 	static DWORD dwNextReviveToken = 0;

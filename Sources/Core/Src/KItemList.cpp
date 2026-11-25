@@ -3461,14 +3461,15 @@ int KItemList::CountNormalItem(int nGenre, int nDetail, int nParticular, int nLe
 	return nCount;
 }
 
-BOOL KItemList::ConsumeItem(int nIdx, int nCount)
+BOOL KItemList::ConsumeItem(int nIdx, int nCount, BOOL bStorage)
 {
 	if (nIdx <= 0 || nIdx >= MAX_ITEM || nCount <= 0)
 		return FALSE;
 	BOOL bOwned = FALSE;
 	for (PlayerItem* p = GetFirstItem(); p; p = GetNextItem())
 	{
-		if (p->nIdx == nIdx && (IsBagItemPlace(p->nPlace) || p->nPlace == pos_immediacy))
+		if (p->nIdx == nIdx && (IsBagItemPlace(p->nPlace) || p->nPlace == pos_immediacy ||
+			(bStorage && StoreBoxPageFromPlace(p->nPlace) >= 0)))
 		{
 			bOwned = TRUE;
 			break;

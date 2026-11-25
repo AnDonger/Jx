@@ -123,7 +123,7 @@ public:
 	int		CompoundItems(const GAME_COMPOUND_ITEM_POS* pPositions, int nCount, int nSocket = 0, int nParameter = -1);
 	int			CountNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, BOOL bQuick = FALSE);
 	BOOL		ConsumeNormalItem(int nGenre, int nDetail, int nParticular, int nLevel, int nCount, BOOL bQuick = FALSE);
-	BOOL		ConsumeItem(int nIdx, int nCount);
+	BOOL		ConsumeItem(int nIdx, int nCount, BOOL bStorage = FALSE);
 	void		Abrade(int nType);
 	void		TradeMoveMoney(int nMoney);			// 调用此接口必须保证传入的nMoney是一个有效数(正数且不超过所有钱数)
 	void		SendMoneySync();					// 服务器发money同步信息给客户端

@@ -2764,7 +2764,19 @@ void KSwordOnLineSever::PlayerLogoutGateway()
 		}
 		else if (m_pCoreServerShell->IsCharacterQuiting(nIndex))
 		{
-			SavePlayerData(nIndex, true);			
+			if (!SavePlayerData(nIndex, true) && m_pDatabaseClient)
+			{
+				// 已离线且本次存档被拒绝时保留数据库旧档，释放本服持有的角色锁。
+				// 跨服保存失败仍保留锁；这里只处理即将移除的离线角色。
+				tagRoleEnterGame Unlock;
+				memset(&Unlock, 0, sizeof(Unlock));
+				Unlock.ProtocolType = c2s_roleserver_lock;
+				Unlock.bLock = false;
+				m_pCoreServerShell->GetGameData(SGDI_CHARACTER_NAME, (unsigned int)Unlock.Name, nIndex);
+				m_pDatabaseClient->SendPackToServer(&Unlock, sizeof(Unlock));
+				printf("[RoleStorage] Quit save rejected role=%s player=%d; stored data preserved, role unlocked.\n",
+					Unlock.Name, nIndex);
+			}
 //			if (!SavePlayerData(nIndex))
 //				continue;
 

@@ -342,6 +342,7 @@ public:
 	void			ReCalcState();							// 重新计算身上的状态
 
 	void			ChangePlayerCamp(int nCamp);			// 改变玩家阵营
+	void			SendReviveDialog();
 	void			Revive(int nType);						// 重生	
 
 	BOOL			CheckTrading();
@@ -378,8 +379,8 @@ public:
 			m_nPhysicsSkillID = nPhysicsSkillID;
 	};
 
-#ifndef _SERVER
 	int				GetTargetNpc() { return m_nPeapleIdx; };
+#ifndef _SERVER
 	int				GetTargetObj() { return m_nObjectIdx; };
 	void			SetTargetNpc(int n) { m_nPeapleIdx = n; };
 	void			SetTargetObj(int n) { m_nObjectIdx = n; };
