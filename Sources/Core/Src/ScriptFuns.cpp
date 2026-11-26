@@ -6101,7 +6101,7 @@ int LuaAttackNpc(Lua_State * L)
 		DamageMagicAttribs[i + 2].nValue[2] = (int)Lua_ValueToNumber(L, 2 + i);
 	}
 	
-	Npc[nNpcIndex].ReceiveDamage(Player[nPlayerIndex].m_nIndex, 0, DamageMagicAttribs, 0, TRUE);
+	Npc[nNpcIndex].ReceiveDamage(Player[nPlayerIndex].m_nIndex, 0, DamageMagicAttribs, 0, 100);
 	return 0;
 }
 
@@ -6206,7 +6206,7 @@ int LuaKillNpc(Lua_State * L)
 	DamageMagicAttribs[2].nValue[0] = 50000;
 	DamageMagicAttribs[2].nValue[2] = 50000;
 	
-	Npc[nNpcIndex].ReceiveDamage(Player[nPlayerIndex].m_nIndex, 0, DamageMagicAttribs, 0, TRUE);
+	Npc[nNpcIndex].ReceiveDamage(Player[nPlayerIndex].m_nIndex, 0, DamageMagicAttribs, 0, 100);
 	return 0;
 }
 
@@ -6228,7 +6228,7 @@ int LuaKillPlayer(Lua_State * L)
 	DamageMagicAttribs[2].nValue[0] = 50000;
 	DamageMagicAttribs[2].nValue[2] = 50000;
 	
-	Npc[Player[nPlayerIndex].m_nIndex].ReceiveDamage(Player[nPlayerIndex].m_nIndex, 0, DamageMagicAttribs, 0, TRUE);
+	Npc[Player[nPlayerIndex].m_nIndex].ReceiveDamage(Player[nPlayerIndex].m_nIndex, 0, DamageMagicAttribs, 0, 100);
 	return 0;
 }
 

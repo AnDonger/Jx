@@ -60,7 +60,7 @@ KSkill::KSkill()
 	m_nSkillCostType = attrib_mana;
     m_nWaitTime = 0;
 	m_nEquiptLimited = 0;
-	m_bDoHurt = 1;
+	m_nDoHurtPercent = 100;
 	
 #ifndef _SERVER
 	m_szSkillDesc[0] = 0;
@@ -1351,7 +1351,27 @@ int		KSkill::CastExtractiveLineMissle(TOrdinSkillParam* pSkillParam,  int nDir,i
 	_ASSERT(pSkillParam);
 	
 	int nLauncher = pSkillParam->nLauncher;
-	if (pSkillParam->eLauncherType != SKILL_SLT_Npc) return 0;	
+	if (pSkillParam->eLauncherType != SKILL_SLT_Npc) return 0;
+#ifdef _SERVER
+	// Zero-speed, target-only line effects are created at the selected target.
+	// Apply level overrides before deciding; real travelling missiles retain their path.
+	if (m_bBaseSkill && m_bTargetOnly && pSkillParam->nTargetId > 0 &&
+		pSkillParam->nTargetId < MAX_NPC)
+	{
+		int nSpeed = g_MisslesLib[m_nChildSkillId].m_nSpeed;
+		eMissleMoveKind eMoveKind = g_MisslesLib[m_nChildSkillId].m_eMoveKind;
+		for (int i = 0; i < m_nMissleAttribsNum; i++)
+		{
+			if (m_MissleAttribs[i].nAttribType == magic_missle_speed_v)
+				nSpeed = m_MissleAttribs[i].nValue[0];
+			else if (m_MissleAttribs[i].nAttribType == magic_missle_movekind_v)
+				eMoveKind = (eMissleMoveKind)m_MissleAttribs[i].nValue[0];
+		}
+		if (eMoveKind == MISSLE_MMK_Line && !m_bIsMelee &&
+			Npc[nLauncher].ModifyMissleSpeed(nSpeed) <= 0)
+			return CastLine(pSkillParam, nDir, nDesX, nDesY);
+	}
+#endif	
 	int	nDirIndex		= g_Dir2DirIndex(nDir, MaxMissleDir);
 	int nDesSubX		= 0;
 	int nDesSubY		= 0;
@@ -1969,7 +1989,7 @@ void	KSkill::CreateMissle(int nLauncher, int nChildSkillId, int nMissleIndex)  c
 	pMissle->m_nInteruptTypeWhenMove = m_nInteruptTypeWhenMove;
 	pMissle->m_bHeelAtParent	= m_bHeelAtParent;
 	pMissle->m_bUseAttackRating	= m_bUseAttackRate;
-	pMissle->m_bDoHurt			= m_bDoHurt;
+	pMissle->m_nDoHurtPercent			= m_nDoHurtPercent;
 	
 	if (pMissle->m_nInteruptTypeWhenMove)
 	{
@@ -2063,7 +2083,8 @@ BOOL	KSkill::GetInfoFromTabFile(KITabFile *pSkillsSettingFile, int nRow)
 	pSkillsSettingFile->GetInteger(nRow, "EqtLimit",		-2, (int *)&m_nEquiptLimited, TRUE);
 	pSkillsSettingFile->GetInteger(nRow, "HorseLimit",		0, (int *)&m_nHorseLimited, TRUE);
 
-	pSkillsSettingFile->GetInteger(nRow, "DoHurt",			1, (int *)&m_bDoHurt);
+	pSkillsSettingFile->GetInteger(nRow, "DoHurt",			0, &m_nDoHurtPercent);
+	m_nDoHurtPercent = min(100, max(0, m_nDoHurtPercent));
 	pSkillsSettingFile->GetInteger(nRow, "ChildSkillNum",	0, &m_nChildSkillNum,TRUE);
 	pSkillsSettingFile->GetInteger(nRow, "MisslesForm",		0, (int *)&m_eMisslesForm, TRUE);
 	pSkillsSettingFile->GetInteger(nRow, "CharClass",		0, &m_nCharClass, TRUE);

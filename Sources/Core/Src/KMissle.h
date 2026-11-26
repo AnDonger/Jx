@@ -115,7 +115,7 @@ public:
 	BOOL				m_bNeedReclaim;			//是否已纠正过一次子单的方向问题
 	TMisslePos			m_NeedReclaimPos[4];
 
-	BOOL				m_bDoHurt;				//受伤时是否需要作受伤动作
+	int					m_nDoHurtPercent;		//每次命中触发受伤动作的概率（0～100）
 	
 	//单一飞行子单时，精确命中！
 	int					m_nXFactor;

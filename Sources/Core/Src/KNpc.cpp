@@ -400,6 +400,51 @@ void KNpc::RestoreCurrentCamp()
 #define		NPC_SHOW_CHAT_TIME		15000
 int		IR_IsTimePassed(unsigned int uInterval, unsigned int& uLastTimer);
 
+#ifdef _SERVER
+void KNpc::TraceCombat(int nStage, int nSkill, int nTarget)
+{
+	static const char* Stages[] = {"request", "target-missing", "action-busy", "rejected", "accepted", "effect", "interrupted"};
+	static DWORD Ids[MAX_PLAYER] = {0};
+	static DWORD Last[MAX_PLAYER][7] = {0};
+	if (!IsPlayer() || m_nPlayerIdx <= 0 || m_nPlayerIdx >= MAX_PLAYER ||
+		nStage < 0 || nStage >= 7 || m_SubWorldIndex < 0 || m_RegionIndex < 0)
+		return;
+	if (Ids[m_nPlayerIdx] != m_dwID)
+	{
+		Ids[m_nPlayerIdx] = m_dwID;
+		memset(Last[m_nPlayerIdx], 0, sizeof(Last[m_nPlayerIdx]));
+	}
+	DWORD now = GetTickCount();
+	DWORD& last = Last[m_nPlayerIdx][nStage];
+	if (last && now - last < 2000)
+		return;
+	last = now;
+	int x, y, tx = 0, ty = 0, distance = -1, targetLife = 0, targetRegion = -1;
+	DWORD targetId = 0;
+	GetMpsPos(&x, &y);
+	if (nTarget > 0 && nTarget < MAX_NPC && Npc[nTarget].m_Index)
+	{
+		KNpc& target = Npc[nTarget];
+		target.GetMpsPos(&tx, &ty);
+		targetId = target.m_dwID;
+		targetLife = target.m_CurrentLife;
+		targetRegion = target.m_RegionIndex;
+		distance = NpcSet.GetDistance(m_Index, nTarget);
+	}
+	const KSkill* skill = (const KSkill*)g_SkillManager.GetSkill(nSkill, m_SkillList.GetCurrentLevel(nSkill));
+	SYSTEMTIME time;
+	GetLocalTime(&time);
+	printf("[CombatTrace] %02u:%02u:%02u.%03u stage=%s role=%s player=%d npc=%lu world=%lu region=%d active=%d skill=%d doing=%d frame=%d/%d ai=%d state=%d hp=%d mana=%d freeze=%d stun=%d pos=%d,%d target=%lu targetRegion=%d targetLife=%d targetPos=%d,%d distance=%d radius=%d\n",
+		time.wHour, time.wMinute, time.wSecond, time.wMilliseconds, Stages[nStage], Name,
+		m_nPlayerIdx, m_dwID, SubWorld[m_SubWorldIndex].m_SubWorldID, m_RegionIndex,
+		SubWorld[m_SubWorldIndex].m_Region[m_RegionIndex].IsActive(), nSkill, m_Doing,
+		m_Frames.nCurrentFrame, m_Frames.nTotalFrame, m_ProcessAI, m_ProcessState,
+		m_CurrentLife, m_CurrentMana, m_FreezeState.nTime, m_StunState.nTime,
+		x, y, targetId, targetRegion, targetLife, tx, ty, distance, skill ? skill->GetAttackRadius() : -1);
+	fflush(stdout);
+}
+#endif
+
 void KNpc::Activate()
 {
 	// 不存在这个NPC
@@ -669,6 +714,10 @@ void KNpc::ProcCommand(int nAI)
 #endif
 			break;
 		default:
+#ifdef _SERVER
+			if (m_Command.CmdKind == do_skill)
+				TraceCombat(2, m_Command.Param_X, m_Command.Param_Y == -1 ? m_Command.Param_Z : 0);
+#endif
 			break;
 		}
 	}
@@ -1278,6 +1327,10 @@ void KNpc::DoHurt(int nHurtFrames, int nX, int nY)
 		return;
 	}
 #endif
+#ifdef _SERVER
+	if (m_Doing == do_attack || m_Doing == do_magic || m_Doing == do_skill)
+		TraceCombat(6, m_ActiveSkillID, m_DesX == -1 ? m_DesY : 0);
+#endif
 	m_Doing = do_hurt;
 	m_ProcessAI	= 0;
 
@@ -1787,6 +1840,7 @@ void KNpc::DoSkill(int nX, int nY)
 			)
 		{
 #ifdef _SERVER
+			TraceCombat(4, m_ActiveSkillID, nX == -1 ? nY : 0);
 			// Non-player skills retain their existing effect-frame timing.
 			if (!IsPlayer() && ((KSkill*)pSkill)->GetDelayPerCast(m_Index) > 0)
 				m_SkillList.SetNextCastTime(m_ActiveSkillID,
@@ -1902,6 +1956,9 @@ void KNpc::DoSkill(int nX, int nY)
 		}	
 		else
 		{
+#ifdef _SERVER
+			TraceCombat(3, m_ActiveSkillID, nX == -1 ? nY : 0);
+#endif
 			m_nPeopleIdx = 0;
 			m_nObjectIdx = 0;
 			DoStand();
@@ -2161,6 +2218,9 @@ void KNpc::OnSkill()
 		pSkill =(KSkill*) GetActiveSkill();
 		if (pSkill)
 		{
+#ifdef _SERVER
+			TraceCombat(5, m_ActiveSkillID, m_DesX == -1 ? m_DesY : 0);
+#endif
 			pSkill->Cast(m_Index, m_DesX, m_DesY);
 #ifdef _SERVER
 			// The player endpoint was reserved with the complete action duration.
@@ -2766,7 +2826,7 @@ int KNpc::CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL 
 #endif
 
 #ifdef _SERVER
-BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR, BOOL bDoHurt)
+BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR, int nDoHurtPercent)
 {
 	if (m_Doing == do_death || m_Doing == do_revive)
 		return FALSE;
@@ -2808,7 +2868,7 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 	KMagicAttrib* pDamage = (KMagicAttrib*)pData;
 	BOOL bCritical = g_RandPercent(min(100, max(0, pDamage[DAMAGE_ATTRIB_CRITICAL].nValue[0] -
 		m_CurrentAdditionalAttrib[191] - m_CurrentAdditionalAttrib[269])));
-	int nPhysicalDamage = CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_physics, bIsMelee, bDoHurt, FALSE, bCritical);
+	int nPhysicalDamage = CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_physics, bIsMelee, FALSE, FALSE, bCritical);
 	if (nPhysicalDamage > 0 && Launcher.m_CurrentLife > 0 && Launcher.m_Doing != do_death)
 	{
 		int nLifeSteal = min(100, max(0, pDamage[DAMAGE_ATTRIB_STEAL_LIFE].nValue[0]));
@@ -2819,7 +2879,7 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 		Launcher.m_CurrentStamina = min(Launcher.m_CurrentStaminaMax, Launcher.m_CurrentStamina + (int)((__int64)nPhysicalDamage * nStaminaSteal / 100));
 	}
 	pTemp++;
-	int nColdDamage = CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_cold, bIsMelee, bDoHurt, FALSE,
+	int nColdDamage = CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_cold, bIsMelee, FALSE, FALSE,
 		g_RandPercent(min(100, max(0, Launcher.m_CurrentAdditionalAttrib[263] + Launcher.m_CurrentAdditionalAttrib[266] -
 		m_CurrentAdditionalAttrib[270] - m_CurrentAdditionalAttrib[273]))));
 	if (nColdDamage > 0 && m_CurrentLife > 0 && m_Doing != do_death && m_FreezeState.nTime <= 0 &&
@@ -2828,15 +2888,15 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 		m_FreezeState.nTime = max(0, pTemp->nValue[1] * (100 - min(100, max(0, m_CurrentFreezeTimeReducePercent))) / 100 - max(0, m_CurrentAdditionalAttrib[148]) * 18);
 	}
 	pTemp++;
-	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_fire, bIsMelee, bDoHurt, FALSE,
+	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_fire, bIsMelee, FALSE, FALSE,
 		g_RandPercent(min(100, max(0, Launcher.m_CurrentAdditionalAttrib[263] + Launcher.m_CurrentAdditionalAttrib[264] -
 		m_CurrentAdditionalAttrib[270] - m_CurrentAdditionalAttrib[271]))));
 	pTemp++;
-	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_light, bIsMelee, bDoHurt, FALSE,
+	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_light, bIsMelee, FALSE, FALSE,
 		g_RandPercent(min(100, max(0, Launcher.m_CurrentAdditionalAttrib[263] + Launcher.m_CurrentAdditionalAttrib[265] -
 		m_CurrentAdditionalAttrib[270] - m_CurrentAdditionalAttrib[272]))));
 	pTemp++;
-	int nPoisonDamage = CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[0], damage_poison, bIsMelee, bDoHurt);
+	int nPoisonDamage = CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[0], damage_poison, bIsMelee, FALSE);
 	if (nPoisonDamage > 0 && m_CurrentLife > 0 && m_Doing != do_death)
 	{
 		int nPoisonTime = max(0, pTemp->nValue[1] * (100 - min(100, max(0, m_CurrentPoisonTimeReducePercent))) / 100 - max(0, m_CurrentAdditionalAttrib[148]) * 18);
@@ -2864,10 +2924,10 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 		}
 	}
 	pTemp++;
-	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_magic, bIsMelee, bDoHurt, FALSE,
+	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_magic, bIsMelee, FALSE, FALSE,
 		g_RandPercent(min(100, max(0, Launcher.m_CurrentAdditionalAttrib[263] - m_CurrentAdditionalAttrib[270]))));
 	pTemp++;
-	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_earth, bIsMelee, bDoHurt, FALSE,
+	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_earth, bIsMelee, FALSE, FALSE,
 		g_RandPercent(min(100, max(0, Launcher.m_CurrentAdditionalAttrib[263] + Launcher.m_CurrentAdditionalAttrib[267] -
 		m_CurrentAdditionalAttrib[270] - m_CurrentAdditionalAttrib[274]))));
 	if (m_CurrentLife > 0 && m_Doing != do_death &&
@@ -2875,7 +2935,7 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 	{
 		// 有效技能表“万骨全枯”明确为当前生命的四分之一。
 		int nFatalDamage = m_CurrentLife / 4;
-		CalcDamage(nLauncher, nFatalDamage, nFatalDamage, damage_magic, bIsMelee, bDoHurt);
+		CalcDamage(nLauncher, nFatalDamage, nFatalDamage, damage_magic, bIsMelee, FALSE);
 	}
 	if (m_CurrentLife > 0 && m_Doing != do_death && m_StunState.nTime <= 0 &&
 		pDamage[DAMAGE_ATTRIB_STUN].nValue[1] > 0 && !m_CurrentAdditionalAttrib[316] &&
@@ -2884,6 +2944,12 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 	{
 		m_StunState.nTime = max(0, pDamage[DAMAGE_ATTRIB_STUN].nValue[1] *
 			(100 - min(100, max(0, m_CurrentStunTimeReducePercent))) / 100 - max(0, m_CurrentAdditionalAttrib[148]) * 18);
+	}
+	// DoHurt是一次命中的百分比，不按物理、五行等伤害分量重复判定。
+	if (m_CurrentLife < nLife && m_CurrentLife > 0 && m_Doing != do_death &&
+		g_RandPercent(min(100, max(0, nDoHurtPercent))))
+	{
+		DoHurt();
 	}
 	m_nPeopleIdx = nLauncher;
 

@@ -3350,11 +3350,15 @@ void KProtocolProcess::CurrentSkillCommand(int nIndex, BYTE* pProtocol)
 	{
 		nY = Player[nIndex].FindAroundNpc((DWORD)nY);
 		if (nY <= 0 || ::Npc[nY].m_SubWorldIndex != Npc.m_SubWorldIndex)
+		{
+			Npc.TraceCombat(1, pCommand->SkillId, 0);
 			return;
+		}
 	}
 	else if (nX < 0 || nY <= 0)
 		return;
 	// 位置由服务器维护，不能以请求中的施法坐标直接移动角色。
+	Npc.TraceCombat(0, pCommand->SkillId, nX == -1 ? nY : 0);
 	Npc.SendCommand(do_skill, pCommand->SkillId, nX, nY);
 	g_DebugLog("[Combat] player=%d frame=%lu skill=%u target=(%d,%d)",
 		nIndex, pCommand->SimulationFrame, pCommand->SkillId, nX, nY);

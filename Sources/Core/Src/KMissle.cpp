@@ -1076,7 +1076,7 @@ BOOL KMissle::ProcessDamage(int nNpcId)
 	if (m_pMagicAttribsData) 
 	{
 		int nOldLife = Npc[nNpcId].m_CurrentLife;
-		if (Npc[nNpcId].ReceiveDamage(m_nLauncher, m_bIsMelee, m_pMagicAttribsData->m_pDamageMagicAttribs, m_bUseAttackRating, m_bDoHurt))
+		if (Npc[nNpcId].ReceiveDamage(m_nLauncher, m_bIsMelee, m_pMagicAttribsData->m_pDamageMagicAttribs, m_bUseAttackRating, m_nDoHurtPercent))
 		{
 			if (Npc[m_nLauncher].IsPlayer() && Npc[nNpcId].m_Kind == kind_normal &&
 				(Npc[nNpcId].m_CurrentLife < nOldLife || m_pMagicAttribsData->m_nStateMagicAttribsNum > 0))

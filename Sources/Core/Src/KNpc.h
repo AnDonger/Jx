@@ -678,6 +678,7 @@ public:
 	void				ExecuteRevive(){DoRevive();};
 	BOOL				SendSyncData(int nClient);						// 向一个客户端发完整同步数据
 	BOOL				SendPositionSync(int nClient);
+	void				TraceCombat(int nStage, int nSkill, int nTarget);
 	void SendItemBuffGraphics(int nClient = -1);
 	BOOL CanPolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds, int nBuffTemplate = 0);
 	BOOL PolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds, int nBuffTemplate = 0, DWORD dwItemEndTime = 0);
@@ -694,7 +695,7 @@ public:
 	void				SyncDamage(int nAttacker, int nDamage, BYTE bFlags);
 	void				SyncDodge(int nAttacker);
 	int					CalcDamage(int nAttacker, int nMin, int nMax, DAMAGE_TYPE nType, BOOL bIsMelee, BOOL bDoHurt = TRUE, BOOL bReturn = FALSE, BOOL bCritical = FALSE);
-	BOOL				ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR, BOOL bDoHurt);
+	BOOL				ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR, int nDoHurtPercent);
 
 	// mode == 0 npc 导致 == 1 player 导致，不掉东西 == 2 player 导致，掉东西
 	// 与 DoDeath 的参数对应 具体参阅 enumDEATH_MODE

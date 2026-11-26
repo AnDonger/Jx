@@ -128,7 +128,7 @@ private:
 	int					m_nHorseLimited;		//骑马限制 0表示没任何限制
 												//		   1表示不能骑马
 												//		   2表示必须骑马
-	BOOL				m_bDoHurt;
+	int					m_nDoHurtPercent;		//每次命中触发受伤动作的概率（0～100）
 
 public:
 	KSkill();
