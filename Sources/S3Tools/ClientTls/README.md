@@ -44,6 +44,8 @@ Heaven 在启动时从 EXE 目录的 `../../Resources/ServerConfig/ClientTls` �
 | 2026-10-30 | 32,083,968 | `2F795666BC02B4948B6B7416855272FF703C543CE404523AD44E4727912975BF` |
 | 2026-11-03 | 32,313,344 | `6EF957059B1A8EF28A24BA14038018D8710AFAF524D2FCD68C40761467D05D27` |
 | 2026-11-12 | 32,247,808 | `2755912E00E7CA4EF49BBED520460965A3AC5FAAF789D8EAF8B60AC444712E86` |
+| 2026-11-19 | 32,145,408 | `B01F10674D4D5A9F6743864009804FFB8CC5D4964EB9D94D32E35C209153A19A` |
+| 2026-11-26 | 31,940,608 | `4DC8AB0909F1AD13F92AFBB8D6E88598DAFFCAA67A26B96AEA9D84006EF1F30F` |
 
 上述构建均为 x86，固定映像基址 `0x400000`，未启用 ASLR。未知构建或已修改构建拒绝处理，不按版本文件名或统一地址增量推测布局。
 
@@ -88,3 +90,5 @@ Heaven 在启动时从 EXE 目录的 `../../Resources/ServerConfig/ClientTls` �
 2026-11-01 已完成该轮真实客户端测试，用户反馈暂未发现异常，登录和游戏监听均完成 TLS 1.3，角色列表、进图、移动和心跳有日志依据。实际记录见 `Test/Client20261030/actual-client-pin-verification.json`，当前已部署 SHA256 为 `1480DD54638B7B7DBAB9BC0AFB33F4A1B5DFA0FE759D16E03276163DC2010B6C`。本轮约 35 秒的通信记录不能代替长期稳定性或其他功能测试。
 
 回退时先退出测试客户端并确认账号离线，再从 `Test/Client20261030/BeforeDeployment` 对应备份恢复客户端和 Heaven.dll，重新启动原服务。固定证书文件可以保留；旧程序不会读取它们。不要为回退修改 Windows 根证书库。
+
+2026-11-26 profile and deployment: `DevDoc/2026-11-26-新版客户端接入适配.md`. Build with `-OutputRoot F:\mxd\Jx\Test\Client20261126\Tools`; use `Test/Client20261126/Game.unpacked.original.exe` as the exact input. This input already includes the seven-cache reboot fix. The deployed client passed user testing and actual TLS transport verification; no machine reboot was performed in this task.
