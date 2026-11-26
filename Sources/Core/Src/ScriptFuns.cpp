@@ -253,6 +253,7 @@ struct KNpcScriptExchange
 	BOOL HasTeleport;
 	BOOL ConsumedUseItem;
 	DWORD TeleportItemID;
+	BOOL TeleportConsumeItem;
 	int TeleportMap;
 	int TeleportX;
 	int TeleportY;
@@ -331,6 +332,7 @@ KNpcScriptTransaction::KNpcScriptTransaction(int nPlayer)
 	pState->Experience = 0;
 	pState->Failed = FALSE;
 	pState->HasTeleport = FALSE;
+	pState->TeleportConsumeItem = TRUE;
 	pState->ConsumedUseItem = FALSE;
 	pState->TeleportRevival = 0;
 	pState->TeleportLoginType = -1;
@@ -418,7 +420,7 @@ KNpcScriptTransaction::~KNpcScriptTransaction()
 		else
 		{
 			int nItem = pState->TeleportItemID ? Role.FindUseScriptItem() : 0;
-			if ((pState->TeleportItemID && !Role.m_ItemList.ConsumeItem(nItem, 1)) ||
+			if ((pState->TeleportItemID && pState->TeleportConsumeItem && !Role.m_ItemList.ConsumeItem(nItem, 1)) ||
 				Npc[Role.m_nIndex].ChangeWorld(pState->TeleportMap,
 					pState->TeleportX, pState->TeleportY) != 1)
 				pState->Failed = TRUE;
@@ -829,18 +831,18 @@ int LuaTeleportWithItem(Lua_State* L)
 	int nCount = Lua_GetTopIndex(L);
 	int nPlayer = GetPlayerIndex(L);
 	KNpcScriptExchange* pState = nPlayer > 0 ? g_NpcScriptExchange[nPlayer] : NULL;
-	if (!pState || pState->Failed || pState->HasTeleport || pState->ConsumedUseItem ||
+	if (!pState || pState->Failed || pState->HasTeleport || pState->HasMorph || pState->ConsumedUseItem ||
 		!Player[nPlayer].FindUseScriptItem())
 	{
 		Lua_PushNumber(L, 0);
 		return 1;
 	}
-	int nMap = 0, nX = 0, nY = 0, nFight = 0, nRevival = 0;
+	int nMap = 0, nX = 0, nY = 0, nFight = 0, nRevival = 0, nConsume = 1;
 	if (nCount == 0)
 		Player[nPlayer].GetDeathRevivalPos(&nMap, &nX, &nY);
 	else
 	{
-		if (nCount != 4 && nCount != 5)
+		if (nCount < 4 || nCount > 6)
 		{
 			Lua_PushNumber(L, 0);
 			return 1;
@@ -858,15 +860,17 @@ int LuaTeleportWithItem(Lua_State* L)
 		nX = (int)Lua_ValueToNumber(L, 2) * 32;
 		nY = (int)Lua_ValueToNumber(L, 3) * 32;
 		nFight = (int)Lua_ValueToNumber(L, 4);
-		nRevival = nCount == 5 ? (int)Lua_ValueToNumber(L, 5) : 0;
+		nRevival = nCount >= 5 ? (int)Lua_ValueToNumber(L, 5) : 0;
+		nConsume = nCount == 6 ? (int)Lua_ValueToNumber(L, 6) : 1;
 	}
 	pState->TeleportItemID = Player[nPlayer].m_dwUseItemID;
+	pState->TeleportConsumeItem = nConsume != 0;
 	pState->TeleportMap = nMap;
 	pState->TeleportX = nX;
 	pState->TeleportY = nY;
 	pState->TeleportFight = nFight;
 	pState->TeleportRevival = nRevival;
-	if (nFight > 1 || !IsScriptTeleportValid(nPlayer, *pState))
+	if (nFight > 1 || nConsume > 1 || !IsScriptTeleportValid(nPlayer, *pState))
 	{
 		Lua_PushNumber(L, 0);
 		return 1;

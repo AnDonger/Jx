@@ -5018,7 +5018,7 @@ void	KPlayer::DoScriptAction(PLAYER_SCRIPTACTION_SYNC * pUIInfo) //要求显示某个U
 			m_dwScriptDialogScriptID = Npc[m_nIndex].m_ActionScriptID;
 			m_dwScriptDialogItemID = m_dwScriptDialogScriptID == m_dwUseItemScriptID ? m_dwUseItemID : 0;
 			m_nScriptDialogWorld = Npc[m_nIndex].m_SubWorldIndex;
-			m_dwScriptDialogNpcID = m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC ?
+			m_dwScriptDialogNpcID = !m_dwScriptDialogItemID && m_nPeapleIdx > 0 && m_nPeapleIdx < MAX_NPC ?
 				Npc[m_nPeapleIdx].m_dwID : 0;
 			Info.SourceToken = m_dwScriptDialogToken;
 			if (pUIInfo->m_bUIId == UI_ROULETTE)

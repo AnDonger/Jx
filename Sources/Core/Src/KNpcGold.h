@@ -36,7 +36,7 @@ private:
 	int		m_nPhycicsResistMax;		// 物理抗性最大值
 public:
 #ifdef _SERVER
-	static int LoadHardNpcConfig();
+	static double LoadHardNpcConfig();
 #endif
 	void	Init(int nIdx);
 	void	SetGoldType(BOOL bFlag);	// 设定是否为黄金怪物

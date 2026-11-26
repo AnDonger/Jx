@@ -13,6 +13,8 @@
 #include	"KNpcGold.h"
 #include "KSkillManager.h"
 #include "KSkills.h"
+#include <errno.h>
+#include <float.h>
 
 #define		defNPC_GOLD_SKILL_NO		5
 #define		defNPC_GOLD_RATE			20
@@ -23,24 +25,28 @@ extern KLuaScript		*g_pNpcLevelScript;
 
 
 #ifdef _SERVER
-static int s_nHardNpcSpawnPercent = 1;
+static double s_fHardNpcSpawnPercent = 1.0;
+// 2^24个等概率档位，避免整数百分比抽签把0.1%错误放大为1%。
+static const UINT HARD_NPC_SPAWN_RANDOM_RANGE = 1u << 24;
 
-int KNpcGold::LoadHardNpcConfig()
+double KNpcGold::LoadHardNpcConfig()
 {
-	s_nHardNpcSpawnPercent = 1;
+	s_fHardNpcSpawnPercent = 1.0;
 	KIniFile Config;
 	const char* pFile = "\\ServerConfig\\BlueMonster.ini";
 	if (Config.Load(pFile))
 	{
-		char szRate[32];
+		char szRate[128];
 		Config.GetString("BlueMonster", "SpawnRatePercent", "1", szRate, sizeof(szRate));
 		char* pEnd = NULL;
-		long nRate = strtol(szRate, &pEnd, 10);
+		errno = 0;
+		double fRate = strtod(szRate, &pEnd);
+		int nParseError = errno;
 		BOOL bHasNumber = pEnd != szRate;
 		while (*pEnd == ' ' || *pEnd == '\t' || *pEnd == '\r' || *pEnd == '\n')
 			pEnd++;
-		if (bHasNumber && !*pEnd && nRate >= 0 && nRate <= 100)
-			s_nHardNpcSpawnPercent = (int)nRate;
+		if (bHasNumber && !*pEnd && nParseError != ERANGE && _finite(fRate) && fRate >= 0.0 && fRate <= 100.0)
+			s_fHardNpcSpawnPercent = fRate;
 		else
 			g_DebugLog("[BlueNpc] Invalid SpawnRatePercent; using default 1%%");
 	}
@@ -48,9 +54,9 @@ int KNpcGold::LoadHardNpcConfig()
 	{
 		g_DebugLog("[BlueNpc] Cannot load %s; using default 1%%", pFile);
 	}
-	g_DebugLog("[BlueNpc] SpawnRatePercent=%d config=%s (restart required for changes)",
-		s_nHardNpcSpawnPercent, pFile);
-	return s_nHardNpcSpawnPercent;
+	g_DebugLog("[BlueNpc] SpawnRatePercent=%.9g config=%s (restart required for changes)",
+		s_fHardNpcSpawnPercent, pFile);
+	return s_fHardNpcSpawnPercent;
 }
 
 // 当前蓝怪使用hardnpc.txt，与旧黄金怪的倍率和放置标记相互独立。
@@ -78,7 +84,8 @@ void KNpc::RefreshHardNpc()
 	m_AiSkillRadiusLoadFlag = 1;
 	m_Experience = m_CurrentExperience = pBase->m_Experience;
 	m_nHardNpcAttrib = -1;
-	if (g_Random(100) >= s_nHardNpcSpawnPercent)
+	if ((double)g_Random(HARD_NPC_SPAWN_RANDOM_RANGE) * 100.0 >=
+		s_fHardNpcSpawnPercent * HARD_NPC_SPAWN_RANDOM_RANGE)
 		return;
 	const KNpcTemplate::HardNpcData& Data = pBase->m_HardNpc;
 	int Slots[8], nSlots = 0;
