@@ -3243,6 +3243,9 @@ BOOL g_CallNpcDeathScript(int nPlayer, int nNpc, const char* pszScript)
 	}
 	if (!bSuccess)
 	{
+		printf("[NpcDeathLua] Failed role=%s player=%d npc=%lu template=%d script=%s members=%d items=%d\n",
+			Player[nPlayer].m_PlayerName, nPlayer, Npc[nNpc].m_dwID, Npc[nNpc].m_NpcSettingIdx,
+			pszScript, (int)Context.Members.size(), (int)Context.Items.size());
 		for (size_t i = 0; i < Objects.size(); i++)
 			Object[Objects[i]].Remove(FALSE);
 		// 已挂到地面对象的物品由原对象删除流程回收，不能重复释放索引。
