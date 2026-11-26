@@ -52,6 +52,7 @@ void KNpcSet::Init()
 	LoadPlayerBaseValue(PLAYER_BASE_VALUE);
 
 #ifdef _SERVER
+	KNpcGold::LoadHardNpcConfig();
 	KIniFile	cPKIni;
 //	g_SetFilePath("\\");
 	if (cPKIni.Load(PLAYER_PK_RATE_FILE))

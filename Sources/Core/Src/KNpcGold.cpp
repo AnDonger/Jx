@@ -23,6 +23,36 @@ extern KLuaScript		*g_pNpcLevelScript;
 
 
 #ifdef _SERVER
+static int s_nHardNpcSpawnPercent = 1;
+
+int KNpcGold::LoadHardNpcConfig()
+{
+	s_nHardNpcSpawnPercent = 1;
+	KIniFile Config;
+	const char* pFile = "\\ServerConfig\\BlueMonster.ini";
+	if (Config.Load(pFile))
+	{
+		char szRate[32];
+		Config.GetString("BlueMonster", "SpawnRatePercent", "1", szRate, sizeof(szRate));
+		char* pEnd = NULL;
+		long nRate = strtol(szRate, &pEnd, 10);
+		BOOL bHasNumber = pEnd != szRate;
+		while (*pEnd == ' ' || *pEnd == '\t' || *pEnd == '\r' || *pEnd == '\n')
+			pEnd++;
+		if (bHasNumber && !*pEnd && nRate >= 0 && nRate <= 100)
+			s_nHardNpcSpawnPercent = (int)nRate;
+		else
+			g_DebugLog("[BlueNpc] Invalid SpawnRatePercent; using default 1%%");
+	}
+	else
+	{
+		g_DebugLog("[BlueNpc] Cannot load %s; using default 1%%", pFile);
+	}
+	g_DebugLog("[BlueNpc] SpawnRatePercent=%d config=%s (restart required for changes)",
+		s_nHardNpcSpawnPercent, pFile);
+	return s_nHardNpcSpawnPercent;
+}
+
 // 当前蓝怪使用hardnpc.txt，与旧黄金怪的倍率和放置标记相互独立。
 void KNpc::RefreshHardNpc()
 {
@@ -48,7 +78,7 @@ void KNpc::RefreshHardNpc()
 	m_AiSkillRadiusLoadFlag = 1;
 	m_Experience = m_CurrentExperience = pBase->m_Experience;
 	m_nHardNpcAttrib = -1;
-	if (g_Random(100) >= 5)
+	if (g_Random(100) >= s_nHardNpcSpawnPercent)
 		return;
 	const KNpcTemplate::HardNpcData& Data = pBase->m_HardNpc;
 	int Slots[8], nSlots = 0;

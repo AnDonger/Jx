@@ -35,6 +35,9 @@ private:
 	int		m_nPhycicsResist;			// 物理抗性
 	int		m_nPhycicsResistMax;		// 物理抗性最大值
 public:
+#ifdef _SERVER
+	static int LoadHardNpcConfig();
+#endif
 	void	Init(int nIdx);
 	void	SetGoldType(BOOL bFlag);	// 设定是否为黄金怪物
 	void	SetGoldTypeAndBackData();	// 设定类型为黄金怪物，同时备份相应数据
