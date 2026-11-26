@@ -1061,6 +1061,36 @@ int KItem::GetMagicAttribCount() const
 	return nCount;
 }
 
+// 当前客户端 0x738460：按原模板品质与实际随机属性判定，不能使用角色五行 GetSeries()。
+int KItem::GetQualityLabel() const
+{
+	if (GetGenre() != item_equip)
+		return 0;
+	const KBASICPROP_EQUIPMENT* pTemplate = ItemGen.GetEquipmentTemplate(
+		GetDetailType(), GetParticular(), GetLevel(), m_GeneratorParam.nVersion);
+	if (!pTemplate)
+		return 0;
+	int nQuality = pTemplate->m_nSeries;
+	// 客户端详细类别15使用独立品质编码；其余装备的1000代表黄金。
+	if (GetDetailType() == 15)
+	{
+		switch (nQuality)
+		{
+		case 1000: return 1;
+		case 2000: return 3;
+		case 3000: return 4;
+		default: return 0;
+		}
+	}
+	if (nQuality == 0)
+		return m_aryMagicAttrib[0].nAttribType != 0 ? 1 : 0;
+	if (nQuality > 0 && nQuality < 1000)
+		return 2;
+	if (nQuality == 1000)
+		return 3;
+	return nQuality == 2000 ? 4 : 0;
+}
+
 int KItem::GetRequireLevel() const
 {
 	int nLevel = 0;

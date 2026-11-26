@@ -207,6 +207,7 @@ public:
 	int		GetMaxDurability();
 	int		GetTotalMagicLevel();
 	int		GetMagicAttribCount() const;
+	int		GetQualityLabel() const; // 地面名称颜色：白0、蓝1、绿2、黄3、紫4。
 	int		GetRequireLevel() const;
 	BYTE	GetGenerationFlags() const { return m_btGenerationFlags; };
 	KItemNormalAttrib GetAppliedAttrib(const KItemNormalAttrib& Attrib, BOOL bMagic = FALSE) const;

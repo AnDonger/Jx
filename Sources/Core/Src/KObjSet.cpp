@@ -230,6 +230,10 @@ int		KObjSet::Add(int nDataID, KMapPos MapPos, KObjItemInfo sItemInfo)
 {
 	if (sItemInfo.m_nItemID > 0)
 	{
+		if (sItemInfo.m_nItemID >= MAX_ITEM || !Item[sItemInfo.m_nItemID].GetID())
+			return -1;
+		// 统一处理怪物、Lua和玩家丢弃，保存给首次广播及重新入场使用同一品质颜色。
+		sItemInfo.m_nColorID = Item[sItemInfo.m_nItemID].GetQualityLabel();
 		g_DebugLog("[ITEM]Object ItemIndex:%d, ID:%d", sItemInfo.m_nItemID, Item[sItemInfo.m_nItemID].GetID());
 	}
 	int nAddNo;
