@@ -1435,10 +1435,80 @@ void KNpcSet::RemoveSummon(int nIndex)
 	Remove(nIndex);
 }
 
+BOOL KNpcSet::IsValidSummonTarget(int nSummon, int nTarget, DWORD dwTarget)
+{
+	if (nSummon <= 0 || nSummon >= MAX_NPC || nTarget <= 0 || nTarget >= MAX_NPC || !dwTarget)
+		return FALSE;
+	KNpc& Summon = Npc[nSummon];
+	int nOwner = Summon.GetCombatOwner();
+	if (Summon.m_Kind != kind_summon || !nOwner || Npc[nOwner].GetSummon() != nSummon)
+		return FALSE;
+	KNpc& Target = Npc[nTarget];
+	return Summon.m_CurrentLife > 0 && Summon.m_Doing != do_death && Summon.m_Doing != do_revive &&
+		Summon.m_RegionIndex >= 0 && Npc[nOwner].m_RegionIndex >= 0 &&
+		Npc[nOwner].m_CurrentLife > 0 && Npc[nOwner].m_Doing != do_death && Npc[nOwner].m_Doing != do_revive &&
+		Target.m_Index == nTarget && Target.m_dwID == dwTarget && Target.m_CurrentLife > 0 &&
+		Target.m_Doing != do_death && Target.m_Doing != do_revive && Target.m_RegionIndex >= 0 &&
+		Target.m_SubWorldIndex == Summon.m_SubWorldIndex &&
+		Npc[nOwner].m_SubWorldIndex == Summon.m_SubWorldIndex &&
+		GetRelation(nSummon, nTarget) == relation_enemy &&
+		GetDistance(nOwner, nSummon) <= Summon.m_CurrentActiveRadius &&
+		GetDistance(nOwner, nTarget) <= Summon.m_CurrentActiveRadius;
+}
+
+int KNpcSet::SelectSummonTarget(int nSummon)
+{
+	if (nSummon <= 0 || nSummon >= MAX_NPC || Npc[nSummon].m_Kind != kind_summon)
+		return 0;
+	KNpc& Summon = Npc[nSummon];
+	if (!IsValidSummonTarget(nSummon, Summon.m_nSummonOwnerTarget, Summon.m_dwSummonOwnerTarget))
+	{
+		Summon.m_nSummonOwnerTarget = 0;
+		Summon.m_dwSummonOwnerTarget = 0;
+	}
+	if (!IsValidSummonTarget(nSummon, Summon.m_nSummonRetaliationTarget, Summon.m_dwSummonRetaliationTarget))
+	{
+		Summon.m_nSummonRetaliationTarget = 0;
+		Summon.m_dwSummonRetaliationTarget = 0;
+	}
+	int nTarget = Summon.m_nSummonOwnerTarget ? Summon.m_nSummonOwnerTarget : Summon.m_nSummonRetaliationTarget;
+	DWORD dwTarget = nTarget ? Npc[nTarget].m_dwID : 0;
+	if (Summon.m_nPeopleIdx != nTarget || Summon.m_dwSummonTarget != dwTarget)
+		g_DebugLog("[SummonTarget] owner=%lu summon=%lu target=%lu source=%s",
+			Summon.m_dwSummonOwner, Summon.m_dwID, dwTarget,
+			Summon.m_nSummonOwnerTarget ? "owner" : (nTarget ? "retaliation" : "follow"));
+	Summon.m_nPeopleIdx = nTarget;
+	Summon.m_dwSummonTarget = dwTarget;
+	return nTarget;
+}
+
+void KNpcSet::NotifySummonOwnerAttack(int nOwner, int nTarget, BOOL bTargeted)
+{
+	// A summon hit must not masquerade as another attack command from its owner.
+	if (nOwner <= 0 || nOwner >= MAX_NPC || !Npc[nOwner].IsPlayer() ||
+		nTarget <= 0 || nTarget >= MAX_NPC)
+		return;
+	int nSummon = Npc[nOwner].GetSummon();
+	if (!IsValidSummonTarget(nSummon, nTarget, Npc[nTarget].m_dwID))
+		return;
+	KNpc& Summon = Npc[nSummon];
+	// Ground/AOE hits can start assistance, but later splash hits or old missiles
+	// must not replace a valid monster explicitly attacked by the player.
+	if (bTargeted || !IsValidSummonTarget(nSummon, Summon.m_nSummonOwnerTarget, Summon.m_dwSummonOwnerTarget))
+	{
+		Summon.m_nSummonOwnerTarget = nTarget;
+		Summon.m_dwSummonOwnerTarget = Npc[nTarget].m_dwID;
+	}
+	SelectSummonTarget(nSummon);
+	Summon.m_NextAITime = SubWorld[Summon.m_SubWorldIndex].m_dwCurrentTime;
+}
+
 void KNpcSet::NotifySummonAttacked(int nVictim, int nAttacker)
 {
 	if (nVictim <= 0 || nVictim >= MAX_NPC || nAttacker <= 0 || nAttacker >= MAX_NPC)
 		return;
+	// Also covers actual hostile ground/AOE hits before hit/dodge resolution.
+	NotifySummonOwnerAttack(nAttacker, nVictim, FALSE);
 	KNpc& Victim = Npc[nVictim];
 	KNpc& Attacker = Npc[nAttacker];
 	int nOwner = Victim.GetCombatOwner();
@@ -1453,13 +1523,11 @@ void KNpcSet::NotifySummonAttacked(int nVictim, int nAttacker)
 	if (!nSummon)
 		return;
 	KNpc& Summon = Npc[nSummon];
-	if (Summon.m_CurrentLife <= 0 || Summon.m_Doing == do_death ||
-		Summon.m_Doing == do_revive || Summon.m_RegionIndex < 0 ||
-		Summon.m_SubWorldIndex != Victim.m_SubWorldIndex ||
-		GetDistance(nOwner, nAttacker) > Summon.m_CurrentActiveRadius)
+	if (!IsValidSummonTarget(nSummon, nAttacker, Attacker.m_dwID))
 		return;
-	Summon.m_nPeopleIdx = nAttacker;
-	Summon.m_dwSummonTarget = Attacker.m_dwID;
+	Summon.m_nSummonRetaliationTarget = nAttacker;
+	Summon.m_dwSummonRetaliationTarget = Attacker.m_dwID;
+	SelectSummonTarget(nSummon);
 	Summon.m_NextAITime = SubWorld[Summon.m_SubWorldIndex].m_dwCurrentTime;
 }
 
@@ -1497,6 +1565,8 @@ void KNpcSet::MoveOwnedSummon(int nOwner)
 	Summon.m_DesY = Summon.m_OriginY;
 	Summon.m_nPeopleIdx = 0;
 	Summon.m_dwSummonTarget = 0;
+	Summon.m_nSummonOwnerTarget = Summon.m_nSummonRetaliationTarget = 0;
+	Summon.m_dwSummonOwnerTarget = Summon.m_dwSummonRetaliationTarget = 0;
 	Summon.m_nLastDamageIdx = Summon.m_nLastPoisonDamageIdx = 0;
 	Summon.m_SkillParam1 = Summon.m_SkillParam2 = 0;
 	Summon.SendCommand(do_none);

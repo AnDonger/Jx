@@ -208,6 +208,10 @@ public:
 	int m_nSummonIndex;
 	DWORD m_dwSummonId;
 	DWORD m_dwSummonTarget;
+	int m_nSummonOwnerTarget;
+	DWORD m_dwSummonOwnerTarget;
+	int m_nSummonRetaliationTarget;
+	DWORD m_dwSummonRetaliationTarget;
 	int GetCombatOwner() const;
 	int GetSummon() const;
 	void SyncSummon(BOOL bRemoved = FALSE);

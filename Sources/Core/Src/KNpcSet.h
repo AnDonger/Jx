@@ -195,6 +195,9 @@ public:
 	void RemoveSummon(int nIndex);
 	void RemoveOwnedSummon(int nOwner);
 	void MoveOwnedSummon(int nOwner);
+	BOOL IsValidSummonTarget(int nSummon, int nTarget, DWORD dwTarget);
+	int SelectSummonTarget(int nSummon);
+	void NotifySummonOwnerAttack(int nOwner, int nTarget, BOOL bTargeted);
 	void NotifySummonAttacked(int nVictim, int nAttacker);
 	BOOL SyncNpc(DWORD dwID, int nPlayerIdx);
 	void BroadcastRemove(int nIndex, int nExceptClient = -1);

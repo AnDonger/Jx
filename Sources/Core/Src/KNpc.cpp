@@ -138,6 +138,8 @@ void KNpc::Init()
 	m_Treasure1 = 0;
 	m_nSummonOwner = m_nSummonSkill = m_nSummonIndex = 0;
 	m_dwSummonTarget = 0;
+	m_nSummonOwnerTarget = m_nSummonRetaliationTarget = 0;
+	m_dwSummonOwnerTarget = m_dwSummonRetaliationTarget = 0;
 	m_dwSummonOwner = m_dwSummonId = 0;
 #endif
 	m_Series = series_metal;
@@ -1888,7 +1890,10 @@ void KNpc::DoSkill(int nX, int nY)
 			}
 
 			if (nX == -1 && ((KSkill*)pSkill)->IsTargetEnemy())
+			{
+				NpcSet.NotifySummonOwnerAttack(m_Index, nY, TRUE);
 				NpcSet.NotifySummonAttacked(nY, m_Index);
+			}
 
 			m_SkillParam1 = nX;
 			m_SkillParam2 = nY;

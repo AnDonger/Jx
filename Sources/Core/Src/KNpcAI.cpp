@@ -2361,16 +2361,8 @@ void KNpcAI::ProcessSummon()
 		return;
 	Summon.m_NextAITime = dwNow + Summon.m_AIMAXTime;
 	int nOwnerDistance = NpcSet.GetDistance(m_nIndex, nOwner);
-	int nTarget = Summon.m_nPeopleIdx;
-	if (nTarget <= 0 || nTarget >= MAX_NPC || Npc[nTarget].m_CurrentLife <= 0 ||
-		Npc[nTarget].m_dwID != Summon.m_dwSummonTarget ||
-		Npc[nTarget].m_Doing == do_death || Npc[nTarget].m_Doing == do_revive ||
-		Npc[nTarget].m_RegionIndex < 0 || Npc[nTarget].m_SubWorldIndex != Summon.m_SubWorldIndex ||
-		NpcSet.GetRelation(m_nIndex, nTarget) != relation_enemy ||
-		NpcSet.GetDistance(nOwner, nTarget) > Summon.m_CurrentActiveRadius)
-		nTarget = 0;
-	if (nOwnerDistance > Summon.m_CurrentActiveRadius)
-		nTarget = 0;
+	// Owner attack always wins; retain a separate defensive fallback.
+	int nTarget = NpcSet.SelectSummonTarget(m_nIndex);
 
 	if (nTarget > 0 && Npc[nTarget].m_CurrentLife > 0 &&
 		NpcSet.GetDistance(nOwner, nTarget) <= Summon.m_CurrentActiveRadius && Summon.SetActiveSkill(1))
