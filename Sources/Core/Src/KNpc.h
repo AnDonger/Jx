@@ -613,6 +613,30 @@ public:
 	void				SendCommand(NPCCMD cmd, int x = 0, int y = 0, int z = 0);
 #ifdef _SERVER
 	BOOL				StopMovement();
+	void SyncSkillRangeFailure(ISkill* pSkill, int nX, int nY);
+	BOOL ReconcilePlayerMovement(DWORD dwClientFrame, int nFrames, int nX, int nY);
+	void BeginPlayerMovement();
+	void EndPlayerMovement();
+	void ResetPlayerMovement();
+	void FlushPlayerMovement();
+	void UpdatePlayerMovementBudget();
+	void RecordPlayerMovementPoint();
+	BOOL RestorePlayerMovementPoint(int nFrames, int nX, int nY);
+	DWORD m_dwLastSkillTargetSync; // 只刷新超距目标，不强制纠正角色位置。
+	DWORD m_dwPlayerMovementFrame;
+	DWORD m_dwPlayerMovementBudgetFrame;
+	int m_nPlayerMovementFrames;
+	int m_nPlayerMovementBudget;
+	BOOL m_bPlayerMovementFrameValid;
+	BOOL m_bPlayerMovementActive;
+	// 仅保存服务端原生移动经过的最近端点，核对异步请求中多走的步数。
+	struct PlayerMovementPoint
+	{
+		int nFrames;
+		int nFixedX;
+		int nFixedY;
+	};
+	PlayerMovementPoint m_PlayerMovementPoints[7];
 	BOOL				CanSwitchRideHorse();
 	BOOL				SwitchRideHorse(BOOL bRideHorse);
 #endif
@@ -684,6 +708,7 @@ public:
 	BOOL				SendPositionSync(int nClient);
 	void				TraceCombat(int nStage, int nSkill, int nTarget);
 	void SendItemBuffGraphics(int nClient = -1);
+	void SendFreezeStateSync(int nClient = -1);
 	BOOL CanPolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds, int nBuffTemplate = 0);
 	BOOL PolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds, int nBuffTemplate = 0, DWORD dwItemEndTime = 0);
 	int GetMorphType() const;

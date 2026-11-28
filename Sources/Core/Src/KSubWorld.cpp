@@ -390,7 +390,7 @@ BYTE KSubWorld::TestBarrier(int nRegion, int nMapX, int nMapY, int nDx, int nDy,
 #endif
 }
 
-BYTE KSubWorld::TestBarrierMin(int nRegion, int nMapX, int nMapY, int nDx, int nDy, int nChangeX, int nChangeY)
+BYTE KSubWorld::TestBarrierMin(int nRegion, int nMapX, int nMapY, int nDx, int nDy, int nChangeX, int nChangeY, BOOL bCheckNpc)
 {
 	int nOldMapX = nMapX;
 	int nOldMapY = nMapY;
@@ -462,7 +462,7 @@ BYTE KSubWorld::TestBarrierMin(int nRegion, int nMapX, int nMapY, int nDx, int n
 
 	if (nMapX == nOldMapX && nMapY == nOldMapY && nRegion == nOldRegion)
 		return Obstacle_NULL;
-	return m_Region[nRegion].GetBarrierMin(nMapX, nMapY, nDx, nDy, TRUE);
+	return m_Region[nRegion].GetBarrierMin(nMapX, nMapY, nDx, nDy, bCheckNpc);
 
 #else
 
@@ -471,7 +471,7 @@ BYTE KSubWorld::TestBarrierMin(int nRegion, int nMapX, int nMapY, int nDx, int n
 		return m_Region[nRegion].GetBarrierMin(nMapX, nMapY, nDx, nDy, FALSE);
 	}
 
-	return m_Region[nRegion].GetBarrierMin(nMapX, nMapY, nDx, nDy, TRUE);
+	return m_Region[nRegion].GetBarrierMin(nMapX, nMapY, nDx, nDy, bCheckNpc);
 #endif
 }
 

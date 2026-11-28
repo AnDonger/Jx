@@ -131,6 +131,8 @@ void KNpc::Init()
 	m_Kind = kind_normal;
 #ifdef _SERVER
 	m_dwStateSkillRevision = 0;
+	m_dwLastSkillTargetSync = 0;
+	ResetPlayerMovement();
 	m_nHardNpcAttrib = -1;
 	m_bHardNpcSpawn = FALSE;
 	m_szDeathScript[0] = 0;
@@ -717,6 +719,14 @@ void KNpc::ProcCommand(int nAI)
 			break;
 		default:
 #ifdef _SERVER
+			// 动作未结束时保留玩家最新输入；后续移动/停止仍可覆盖它。
+			// 原来这里无条件清空，恰好撞上施法/受击帧的移动会永久丢失。
+			if (IsPlayer() && m_CurrentLife > 0 && m_nPlayerIdx > 0 && m_nPlayerIdx < MAX_PLAYER &&
+				Player[m_nPlayerIdx].m_bFinishLoading && !Player[m_nPlayerIdx].m_bExchangeServer &&
+				m_Doing != do_death && m_Doing != do_revive &&
+				(m_Command.CmdKind == do_run || m_Command.CmdKind == do_walk ||
+				 m_Command.CmdKind == do_stand || m_Command.CmdKind == do_skill))
+				return;
 			if (m_Command.CmdKind == do_skill)
 				TraceCombat(2, m_Command.Param_X, m_Command.Param_Y == -1 ? m_Command.Param_Z : 0);
 #endif
@@ -929,7 +939,10 @@ BOOL KNpc::ProcessState()
 	if (m_FreezeState.nTime > 0)
 	{
 		m_FreezeState.nTime--;
-		if (m_FreezeState.nTime & 1)
+		if (!m_FreezeState.nTime)
+			SendFreezeStateSync();
+		// 与当前客户端78BB60一致，使用世界帧奇偶，不用剩余时长奇偶。
+		if (m_FreezeState.nTime > 0 && (SubWorld[m_SubWorldIndex].m_dwCurrentTime & 1))
 		{
 			nRet = TRUE;
 		}
@@ -1098,6 +1111,9 @@ void KNpc::DoDeath(int nMode/* = 0*/)
 		this->SetBlood(this->m_CurrentLife);
 #endif
 
+#ifdef _SERVER
+	ResetPlayerMovement();
+#endif
 	m_Doing = do_death;
 	m_ProcessAI	= 0;
 	m_ProcessState = 0;
@@ -1332,6 +1348,9 @@ void KNpc::DoHurt(int nHurtFrames, int nX, int nY)
 #ifdef _SERVER
 	if (m_Doing == do_attack || m_Doing == do_magic || m_Doing == do_skill)
 		TraceCombat(6, m_ActiveSkillID, m_DesX == -1 ? m_DesY : 0);
+#endif
+#ifdef _SERVER
+	m_bPlayerMovementActive = FALSE;
 #endif
 	m_Doing = do_hurt;
 	m_ProcessAI	= 0;
@@ -1967,6 +1986,9 @@ void KNpc::DoSkill(int nX, int nY)
 			m_nPeopleIdx = 0;
 			m_nObjectIdx = 0;
 			DoStand();
+#ifdef _SERVER
+			SyncSkillRangeFailure(pSkill, nX, nY);
+#endif
 		}
 	}
 	else
@@ -2891,6 +2913,8 @@ BOOL KNpc::ReceiveDamage(int nLauncher, BOOL bIsMelee, void *pData, BOOL bUseAR,
 		!m_CurrentAdditionalAttrib[317])
 	{
 		m_FreezeState.nTime = max(0, pTemp->nValue[1] * (100 - min(100, max(0, m_CurrentFreezeTimeReducePercent))) / 100 - max(0, m_CurrentAdditionalAttrib[148]) * 18);
+		if (m_FreezeState.nTime > 0)
+			SendFreezeStateSync();
 	}
 	pTemp++;
 	CalcDamage(nLauncher, pTemp->nValue[0], pTemp->nValue[2], damage_fire, bIsMelee, FALSE, FALSE,
@@ -3193,6 +3217,15 @@ void KNpc::ServeMove(int MoveSpeed)
 	if (m_RegionIndex < 0)
 		return;
 #endif
+#ifdef _SERVER
+	if (IsPlayer() && m_bPlayerMovementActive)
+	{
+		UpdatePlayerMovementBudget();
+		// 冻结时一步需要两个逻辑帧额度；补步也共用此额度。
+		if (m_nPlayerMovementBudget < (m_FreezeState.nTime > 0 ? 2 : 1))
+			return;
+	}
+#endif
 	int x, y;
 
 	SubWorld[m_SubWorldIndex].Map2Mps(m_RegionIndex, m_MapX, m_MapY, 0, 0, &x, &y);
@@ -3328,6 +3361,15 @@ void KNpc::ServeMove(int MoveSpeed)
 		m_dwRegionID = SubWorld[0].m_Region[m_RegionIndex].m_RegionID;
 #endif
 	}
+#ifdef _SERVER
+	if (IsPlayer() && m_bPlayerMovementActive)
+	{
+		m_nPlayerMovementFrames++;
+		m_nPlayerMovementBudget -= m_FreezeState.nTime > 0 ? 2 : 1;
+		RecordPlayerMovementPoint();
+	}
+#endif
+
 }
 
 void KNpc::ServeJump(int nSpeed)
@@ -3453,6 +3495,231 @@ void KNpc::SendCommand(NPCCMD cmd,int x,int y, int z)
 }
 
 #ifdef _SERVER
+// 只补同步目标；攻击失败不能用 F3 清空主人移动预测并强制回拉。
+void KNpc::SyncSkillRangeFailure(ISkill* pSkill, int nX, int nY)
+{
+	if (!pSkill || !g_pServer || !IsPlayer() || m_nPlayerIdx <= 0 || m_nPlayerIdx >= MAX_PLAYER ||
+		m_SubWorldIndex < 0 || m_SubWorldIndex >= MAX_SUBWORLD || m_RegionIndex < 0 ||
+		m_RegionIndex >= SubWorld[m_SubWorldIndex].m_nTotalRegion || m_bExchangeServer ||
+		m_CurrentLife <= 0 || m_Doing == do_death || m_Doing == do_revive || nX != -1 ||
+		nY <= 0 || nY >= MAX_NPC || !Npc[nY].m_Index || Npc[nY].m_RegionIndex < 0 ||
+		Npc[nY].m_SubWorldIndex != m_SubWorldIndex || Npc[nY].m_CurrentLife <= 0 ||
+		Npc[nY].m_bExchangeServer || NpcSet.GetDistance(m_Index, nY) <= pSkill->GetAttackRadius())
+		return;
+	KPlayer& Owner = Player[m_nPlayerIdx];
+	if (Owner.m_nIndex != m_Index || !Owner.m_bFinishLoading || Owner.m_bExchangeServer ||
+		Owner.m_nNetConnectIdx < 0)
+		return;
+	DWORD dwNow = GetTickCount();
+	if (m_dwLastSkillTargetSync && dwNow - m_dwLastSkillTargetSync < 2000)
+		return;
+	m_dwLastSkillTargetSync = dwNow;
+	Npc[nY].SendSyncData(Owner.m_nNetConnectIdx);
+}
+
+// 移动预测最多领先六个逻辑帧。补步与正常行走共用预算，不能每包重新获得额度。
+static const int MAX_PLAYER_MOVEMENT_CATCHUP = 6;
+
+void KNpc::ResetPlayerMovement()
+{
+	m_dwPlayerMovementFrame = 0;
+	m_dwPlayerMovementBudgetFrame = 0;
+	m_nPlayerMovementFrames = 0;
+	m_nPlayerMovementBudget = MAX_PLAYER_MOVEMENT_CATCHUP;
+	m_bPlayerMovementFrameValid = FALSE;
+	m_bPlayerMovementActive = FALSE;
+	for (int i = 0; i < 7; i++)
+		m_PlayerMovementPoints[i].nFrames = -1;
+}
+
+void KNpc::UpdatePlayerMovementBudget()
+{
+	DWORD dwFrame = SubWorld[m_SubWorldIndex].m_dwCurrentTime;
+	DWORD dwElapsed = dwFrame - m_dwPlayerMovementBudgetFrame;
+	m_nPlayerMovementBudget = min(MAX_PLAYER_MOVEMENT_CATCHUP,
+		m_nPlayerMovementBudget + (int)min(dwElapsed, (DWORD)MAX_PLAYER_MOVEMENT_CATCHUP));
+	m_dwPlayerMovementBudgetFrame = dwFrame;
+}
+
+void KNpc::FlushPlayerMovement()
+{
+	// 同一轮网络接收中的移动不能在逻辑帧执行前被后续停止/施法覆盖。
+	// 这里只接纳移动命令，不步进；冰冻隔帧时也须保存路径，避免被后续施法覆盖。
+	// 动作锁定和眩晕仍由原动作流程处理。
+	if (IsPlayer() && m_nPlayerIdx > 0 && m_nPlayerIdx < MAX_PLAYER &&
+		Player[m_nPlayerIdx].m_bFinishLoading && !Player[m_nPlayerIdx].m_bExchangeServer &&
+		!m_bExchangeServer && m_ProcessAI && m_CurrentLife > 0 &&
+		!m_StunState.nTime &&
+		(m_Command.CmdKind == do_run || m_Command.CmdKind == do_walk))
+		ProcCommand(m_ProcessAI);
+}
+
+void KNpc::BeginPlayerMovement()
+{
+	m_nPlayerMovementFrames = 0;
+	m_bPlayerMovementActive = TRUE;
+	UpdatePlayerMovementBudget();
+	for (int i = 0; i < 7; i++)
+		m_PlayerMovementPoints[i].nFrames = -1;
+	RecordPlayerMovementPoint();
+	FlushPlayerMovement();
+}
+
+void KNpc::EndPlayerMovement()
+{
+	m_bPlayerMovementActive = FALSE;
+	// 冷却或资源不足也应停止旧路径，但不打断已经执行中的技能/受击动作。
+	if (m_ProcessAI && (m_Doing == do_run || m_Doing == do_walk))
+		DoStand();
+}
+
+void KNpc::RecordPlayerMovementPoint()
+{
+	if (!IsPlayer() || !m_bPlayerMovementActive || m_RegionIndex < 0)
+		return;
+	if (m_nPlayerMovementFrames && m_Doing != do_run && m_Doing != do_walk)
+	{
+		// 受击位移不是本段跑动；后续请求不能拿跑动帧数撤销击退。
+		for (int i = 0; i < 7; i++)
+			m_PlayerMovementPoints[i].nFrames = -1;
+		return;
+	}
+	int nX, nY;
+	SubWorld[m_SubWorldIndex].Map2Mps(m_RegionIndex, m_MapX, m_MapY, 0, 0, &nX, &nY);
+	PlayerMovementPoint& Point = m_PlayerMovementPoints[m_nPlayerMovementFrames % 7];
+	Point.nFrames = m_nPlayerMovementFrames;
+	Point.nFixedX = (nX << 10) + m_OffX;
+	Point.nFixedY = (nY << 10) + m_OffY;
+}
+
+BOOL KNpc::RestorePlayerMovementPoint(int nFrames, int nX, int nY)
+{
+	if (!m_bPlayerMovementActive || nFrames < 0 || nFrames >= m_nPlayerMovementFrames ||
+		m_nPlayerMovementFrames - nFrames > MAX_PLAYER_MOVEMENT_CATCHUP ||
+		(m_Doing != do_run && m_Doing != do_walk && m_Doing != do_stand))
+		return FALSE;
+	const PlayerMovementPoint& Point = m_PlayerMovementPoints[nFrames % 7];
+	const PlayerMovementPoint& Current = m_PlayerMovementPoints[m_nPlayerMovementFrames % 7];
+	if (Point.nFrames != nFrames || Current.nFrames != m_nPlayerMovementFrames ||
+		g_GetDistance(Point.nFixedX >> 10, Point.nFixedY >> 10, nX, nY) > 2)
+		return FALSE;
+	int nCellX, nCellY;
+	SubWorld[m_SubWorldIndex].Map2Mps(m_RegionIndex, m_MapX, m_MapY, 0, 0, &nCellX, &nCellY);
+	if ((nCellX << 10) + m_OffX != Current.nFixedX ||
+		(nCellY << 10) + m_OffY != Current.nFixedY)
+		return FALSE;
+	int nRegion, nMapX, nMapY, nOffX, nOffY;
+	SubWorld[m_SubWorldIndex].Mps2Map(Point.nFixedX >> 10, Point.nFixedY >> 10,
+		&nRegion, &nMapX, &nMapY, &nOffX, &nOffY);
+	if (nRegion < 0 || SubWorld[m_SubWorldIndex].GetTrap(nX, nY) ||
+		SubWorld[m_SubWorldIndex].m_Region[m_RegionIndex].GetTrap(m_MapX, m_MapY))
+		return FALSE;
+	nOffX += Point.nFixedX & 1023;
+	nOffY += Point.nFixedY & 1023;
+	if (SubWorld[m_SubWorldIndex].TestBarrierMin(nRegion, nMapX, nMapY, nOffX, nOffY, 0, 0, FALSE))
+		return FALSE;
+	int nOldRegion = m_RegionIndex;
+	CURREGION.DecRef(m_MapX, m_MapY, obj_npc);
+	m_RegionIndex = nRegion;
+	m_MapX = nMapX;
+	m_MapY = nMapY;
+	m_OffX = nOffX;
+	m_OffY = nOffY;
+	CURREGION.AddRef(m_MapX, m_MapY, obj_npc);
+	if (nOldRegion != nRegion)
+	{
+		SubWorld[m_SubWorldIndex].NpcChangeRegion(nOldRegion, nRegion, m_Index);
+		SubWorld[m_SubWorldIndex].PlayerChangeRegion(nOldRegion, nRegion, m_nPlayerIdx);
+	}
+	// 保留命令、动作与已消耗额度，不发主人F3；端点来自服务端历史而非任意上报坐标。
+	g_DebugLog("[MoveReconcile] player=%d verified-end elapsed=%d applied=%d point=(%d,%d)",
+		m_nPlayerIdx, nFrames, m_nPlayerMovementFrames, Point.nFixedX >> 10, Point.nFixedY >> 10);
+	m_nPlayerMovementFrames = nFrames;
+	return TRUE;
+}
+
+BOOL KNpc::ReconcilePlayerMovement(DWORD dwClientFrame, int nFrames, int nX, int nY)
+{
+	if (!IsPlayer() || m_nPlayerIdx <= 0 || m_nPlayerIdx >= MAX_PLAYER ||
+		m_SubWorldIndex < 0 || m_SubWorldIndex >= MAX_SUBWORLD || m_RegionIndex < 0 ||
+		m_bExchangeServer || Player[m_nPlayerIdx].m_bExchangeServer ||
+		!Player[m_nPlayerIdx].m_bFinishLoading || m_CurrentLife <= 0 ||
+		m_Doing == do_death || m_Doing == do_revive)
+		return FALSE;
+	if (m_bPlayerMovementFrameValid && (LONG)(dwClientFrame - m_dwPlayerMovementFrame) < 0)
+		return FALSE;
+	m_dwPlayerMovementFrame = dwClientFrame;
+	m_bPlayerMovementFrameValid = TRUE;
+	FlushPlayerMovement();
+	UpdatePlayerMovementBudget();
+
+	if (nFrames < 0 || nFrames > 180)
+		return TRUE;
+	if (RestorePlayerMovementPoint(nFrames, nX, nY))
+		return TRUE;
+	int nStepCost = m_FreezeState.nTime > 0 ? 2 : 1;
+	int nMissing = min(MAX_PLAYER_MOVEMENT_CATCHUP, min(m_nPlayerMovementBudget / nStepCost,
+		max(0, nFrames - m_nPlayerMovementFrames)));
+	if (!m_bPlayerMovementActive || nFrames <= 0 || nFrames > 180 || !nMissing ||
+		!m_ProcessAI || m_CurrentLife <= 0 || m_StunState.nTime ||
+		(m_CurrentAdditionalAttrib[288] > 0 && !m_CurrentAdditionalAttrib[317]) ||
+		(m_Doing != do_run && m_Doing != do_walk) || !Player[m_nPlayerIdx].m_bFinishLoading)
+		return TRUE;
+
+	int nSpeed = min(SubWorld[m_SubWorldIndex].m_nCellWidth - 1,
+		m_Doing == do_run ? m_CurrentRunSpeed : m_CurrentWalkSpeed);
+	int nPosX, nPosY;
+	GetMpsPos(&nPosX, &nPosY);
+	int nDistance = g_GetDistance(nPosX, nPosY, nX, nY);
+	if (nSpeed <= 0 || nDistance <= 2 || nDistance > nSpeed * nMissing + 2)
+		return TRUE;
+
+	// 先用原目标、原速度和原碰撞表预演；客户端坐标只用于核对，不用来 SetPos。
+	int nCellX, nCellY;
+	SubWorld[m_SubWorldIndex].Map2Mps(m_RegionIndex, m_MapX, m_MapY, 0, 0, &nCellX, &nCellY);
+	int nFixedX = (nCellX << 10) + m_OffX;
+	int nFixedY = (nCellY << 10) + m_OffY;
+	int nSteps = 0;
+	int nBestDistance = nDistance;
+	for (int i = 0; i < nMissing; i++)
+	{
+		if (g_GetDistance(nFixedX >> 10, nFixedY >> 10, m_DesX, m_DesY) <= nSpeed)
+			break;
+		int nDir = g_GetPlayerMoveDirIndex(nFixedX >> 10, nFixedY >> 10, m_DesX, m_DesY);
+		int nDeltaX = g_DirCos(nDir, 64) * nSpeed;
+		int nDeltaY = g_DirSin(nDir, 64) * nSpeed;
+		int nRegion, nMapX, nMapY, nOffX, nOffY;
+		SubWorld[m_SubWorldIndex].Mps2Map(nFixedX >> 10, nFixedY >> 10,
+			&nRegion, &nMapX, &nMapY, &nOffX, &nOffY);
+		if (nRegion < 0 || SubWorld[m_SubWorldIndex].TestBarrierMin(nRegion, nMapX, nMapY,
+			nOffX + (nFixedX & 1023), nOffY + (nFixedY & 1023), nDeltaX, nDeltaY, FALSE))
+			return TRUE;
+		nFixedX += nDeltaX;
+		nFixedY += nDeltaY;
+		int nNextDistance = g_GetDistance(nFixedX >> 10, nFixedY >> 10, nX, nY);
+		if (nNextDistance >= nBestDistance)
+			break;
+		nBestDistance = nNextDistance;
+		nSteps = i + 1;
+	}
+	// 偏离原路径、伪造远坐标、隔墙位置均不补步，也不反向拉回角色。
+	if (!nSteps || nBestDistance > max(2, nSpeed / 2))
+		return TRUE;
+	int nWorld = m_SubWorldIndex;
+	g_DebugLog("[MoveReconcile] player=%d frame=%lu elapsed=%d applied=%d replay=%d old=(%d,%d) reported=(%d,%d)",
+		m_nPlayerIdx, dwClientFrame, nFrames, m_nPlayerMovementFrames, nSteps, nPosX, nPosY, nX, nY);
+	for (int i = 0; i < nSteps; i++)
+	{
+		ServeMove(nSpeed);
+		CheckTrap();
+		if (m_bExchangeServer || m_SubWorldIndex != nWorld || !m_bPlayerMovementActive)
+			return FALSE;
+		if (m_Doing != do_run && m_Doing != do_walk)
+			break;
+	}
+	return TRUE;
+}
+
 BOOL KNpc::StopMovement()
 {
 	if (m_Command.CmdKind != do_none && m_Command.CmdKind != do_walk && m_Command.CmdKind != do_run)
@@ -4007,6 +4274,35 @@ BOOL KNpc::SendPositionSync(int nClient)
 	return SUCCEEDED(g_pServer->PackDataToClient(nClient, (BYTE*)&Position, sizeof(Position)));
 }
 
+void KNpc::SendFreezeStateSync(int nClient)
+{
+	if (!g_pServer || !m_Index || !m_dwID || m_SubWorldIndex < 0 ||
+		m_SubWorldIndex >= MAX_SUBWORLD || m_RegionIndex < 0)
+		return;
+	GAME_NPC_FREEZE_SYNC Sync = {};
+	Sync.ProtocolType = 0xF8;
+	Sync.Length = sizeof(Sync) - 1;
+	Sync.SubType = 0x48;
+	Sync.ID = m_dwID;
+	Sync.State = m_FreezeState.nTime > 0 ? 1 : 0;
+	if (nClient >= 0)
+		g_pServer->PackDataToClient(nClient, &Sync, sizeof(Sync));
+	else
+	{
+		const POINT Offsets[8] = {{0, 32}, {-16, 32}, {-16, 0}, {-16, -32},
+			{0, -32}, {16, -32}, {16, 0}, {16, 32}};
+		int nCount = MAX_PLAYER;
+		CURREGION.BroadCast(&Sync, sizeof(Sync), nCount, m_MapX, m_MapY);
+		for (int i = 0; i < 8; i++)
+		{
+			int nRegion = CURREGION.m_nConnectRegion[i];
+			if (nRegion >= 0)
+				SubWorld[m_SubWorldIndex].m_Region[nRegion].BroadCast(&Sync, sizeof(Sync),
+					nCount, m_MapX - Offsets[i].x, m_MapY - Offsets[i].y);
+		}
+	}
+}
+
 void KNpc::SendItemBuffGraphics(int nClient)
 {
 	if (!IsPlayer() || !g_pServer || m_SubWorldIndex < 0 || m_RegionIndex < 0)
@@ -4159,6 +4455,8 @@ BOOL KNpc::SendSyncData(int nClient)
 		if (nClient != Player[m_nPlayerIdx].m_nNetConnectIdx || Player[m_nPlayerIdx].m_bFinishLoading)
 			Player[m_nPlayerIdx].SendPetSyncData(nClient, TRUE);
 	}
+	if (bRet)
+		SendFreezeStateSync(nClient);
 	return bRet;
 }
 
@@ -4269,6 +4567,7 @@ void KNpc::NormalSync()
 		sSync.m_wOffY = m_OffY;
 		g_pServer->PackDataToClient(Player[m_nPlayerIdx].m_nNetConnectIdx, (BYTE*)&sSync, sizeof(sSync));
 	}
+	SendFreezeStateSync();
 }
 
 void KNpc::BroadCastRevive(int nType)
@@ -6564,6 +6863,9 @@ int KNpc::SetPos(int nX, int nY)
 		return 0;
 	}
 
+#ifdef _SERVER
+	ResetPlayerMovement();
+#endif
 	int nOldRegion = m_RegionIndex;
 	if (m_RegionIndex >= 0)
 	{
@@ -6617,6 +6919,9 @@ int KNpc::ChangeWorld(DWORD dwSubWorldID, int nX, int nY)
 		return 2;	// 需要加切换服务器的处理 -- spe
 	}
 
+#ifdef _SERVER
+	ResetPlayerMovement();
+#endif
 	Player[m_nPlayerIdx].CloseStoreBox();
 	Player[m_nPlayerIdx].m_nPrePayMoney = 0;// 不是跨服务器，不用还钱
 	// 切换的世界就是本身
@@ -6790,6 +7095,9 @@ void KNpc::ClearStateSkillEffect()
 
 void KNpc::ClearNormalState()
 {
+#ifdef _SERVER
+	BOOL bFrozen = m_FreezeState.nTime > 0;
+#endif
 	ZeroMemory(&m_PhysicsArmor, sizeof(m_PhysicsArmor));
 	ZeroMemory(&m_ColdArmor, sizeof(m_ColdArmor));
 	ZeroMemory(&m_FireArmor, sizeof(m_FireArmor));
@@ -6804,6 +7112,10 @@ void KNpc::ClearNormalState()
 	ZeroMemory(&m_LifeState, sizeof(m_LifeState));
 	ZeroMemory(&m_ManaState, sizeof(m_ManaState));
 	ZeroMemory(&m_DrunkState, sizeof(m_DrunkState));
+#ifdef _SERVER
+	if (bFrozen)
+		SendFreezeStateSync();
+#endif
 }
 
 void KNpc::CheckTrap()

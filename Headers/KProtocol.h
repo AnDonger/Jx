@@ -316,6 +316,16 @@ struct GAME_CURPLAYER_NORMAL_SYNC
 	BYTE m_btTeamData;
 };
 
+// 当前客户端 F8/48：冻结开关，+8按有符号字节读取；正式服样本为0/1。
+struct GAME_NPC_FREEZE_SYNC
+{
+	BYTE ProtocolType;
+	WORD Length;
+	BYTE SubType;
+	DWORD ID;
+	char State;
+};
+
 struct GAME_NPC_NORMAL_SYNC
 {
 	BYTE ProtocolType;
@@ -529,7 +539,7 @@ struct GAME_SKILL_COMMAND
 	WORD SkillId;
 	LONG TargetX;
 	LONG TargetY;
-	LONG unknown_1;
+	LONG ElapsedMovementFrames;
 	WORD MapX;
 	WORD MapY;
 	BYTE MapHigh;

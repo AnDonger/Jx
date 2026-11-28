@@ -3352,12 +3352,21 @@ void KProtocolProcess::CurrentSkillCommand(int nIndex, BYTE* pProtocol)
 		if (nY <= 0 || ::Npc[nY].m_SubWorldIndex != Npc.m_SubWorldIndex)
 		{
 			Npc.TraceCombat(1, pCommand->SkillId, 0);
+			// 目标已离场时回传移除，避免客户端继续锁定旧实体空放。
+			NpcSet.SyncNpc((DWORD)pCommand->TargetY, nIndex);
 			return;
 		}
 	}
 	else if (nX < 0 || nY <= 0)
 		return;
-	// 位置由服务器维护，不能以请求中的施法坐标直接移动角色。
+	int nPosX = pCommand->MapX | ((pCommand->MapHigh & 15) << 16);
+	int nPosY = pCommand->MapY | ((pCommand->MapHigh & 240) << 12);
+	int nWorld = Npc.m_SubWorldIndex;
+	if (!Npc.ReconcilePlayerMovement(pCommand->SimulationFrame, pCommand->ElapsedMovementFrames, nPosX, nPosY) ||
+		Npc.m_bExchangeServer || Npc.m_SubWorldIndex != nWorld || Player[nIndex].m_bExchangeServer)
+		return;
+	Npc.EndPlayerMovement();
+	// 补步仍经过原有寻路/碰撞，技能继续使用服务器实际距离、冷却和消耗。
 	Npc.TraceCombat(0, pCommand->SkillId, nX == -1 ? nY : 0);
 	Npc.SendCommand(do_skill, pCommand->SkillId, nX, nY);
 	g_DebugLog("[Combat] player=%d frame=%lu skill=%u target=(%d,%d)",
@@ -3489,9 +3498,14 @@ void KProtocolProcess::CurrentRunCommand(int nIndex, BYTE* pProtocol)
 	if (nRegion < 0)
 		return;
 
-	// 仅将目标位置交给原有移动流程，不直接采用客户端上报的当前位置。
-	// 沿用原有指令队列、寻路、碰撞和逐帧移动。
+	int nPosX = pCommand->MapX | ((pCommand->MapHigh & 15) << 16);
+	int nPosY = pCommand->MapY | ((pCommand->MapHigh & 240) << 12);
+	int nWorld = Npc.m_SubWorldIndex;
+	if (!Npc.ReconcilePlayerMovement(pCommand->SimulationFrame, pCommand->ElapsedMovementFrames, nPosX, nPosY) ||
+		Npc.m_bExchangeServer || Npc.m_SubWorldIndex != nWorld || Player[nIndex].m_bExchangeServer)
+		return;
 	Npc.SendCommand(do_run, nTargetX, nTargetY);
+	Npc.BeginPlayerMovement();
 	g_DebugLog("[Move] player=%d frame=%lu steps=%u target=(%d,%d)",
 		nIndex, pCommand->SimulationFrame, pCommand->ElapsedMovementFrames, nTargetX, nTargetY);
 }
@@ -3689,6 +3703,13 @@ void KProtocolProcess::CurrentExtensionCommand(int nIndex, BYTE* pProtocol)
 	KNpc &Npc = ::Npc[nNpcIndex];
 	if (Npc.m_SubWorldIndex < 0 || Npc.m_RegionIndex < 0 || Npc.m_bExchangeServer)
 		return;
+	int nPosX = pCommand->MapX | ((pCommand->MapHigh & 15) << 16);
+	int nPosY = pCommand->MapY | ((pCommand->MapHigh & 240) << 12);
+	int nWorld = Npc.m_SubWorldIndex;
+	if (!Npc.ReconcilePlayerMovement(pCommand->SimulationFrame, pCommand->ElapsedFrames, nPosX, nPosY) ||
+		Npc.m_bExchangeServer || Npc.m_SubWorldIndex != nWorld || Player[nIndex].m_bExchangeServer)
+		return;
+	Npc.m_bPlayerMovementActive = FALSE;
 	if (Npc.StopMovement())
 	{
 		g_DebugLog("[Move] player=%d stop frame=%lu steps=%u",

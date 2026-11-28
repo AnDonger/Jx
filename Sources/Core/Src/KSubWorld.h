@@ -80,7 +80,7 @@ public:
 	void		GetMps(int *nX, int *nY, int nSpeed, int nDir, int nMaxDir = 64);			// 取得某方向某速度下一点的坐标
 	BYTE		TestBarrier(int nMpsX, int nMpsY);
 	BYTE		TestBarrier(int nRegion, int nMapX, int nMapY, int nDx, int nDy, int nChangeX, int nChangeY);	// 检测下一点是否为障碍
-	BYTE		TestBarrierMin(int nRegion, int nMapX, int nMapY, int nDx, int nDy, int nChangeX, int nChangeY);	// 检测下一点是否为障碍
+	BYTE		TestBarrierMin(int nRegion, int nMapX, int nMapY, int nDx, int nDy, int nChangeX, int nChangeY, BOOL bCheckNpc = TRUE);	// 检测下一点是否为障碍
 	BYTE		GetBarrier(int nMpsX, int nMpsY);											// 取得某点的障碍信息
 	DWORD		GetTrap(int nMpsX, int nMpsY);
 	void		MessageLoop();

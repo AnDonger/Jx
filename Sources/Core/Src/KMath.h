@@ -7,6 +7,9 @@
 int g_InitMath();
 int g_UnInitMath();
 
+// 当前客户端玩家寻路的查表平方根及取整规则。
+int g_GetPlayerMoveDirIndex(int nX1, int nY1, int nX2, int nY2);
+
 void g_InitSeries();
 
 #ifdef __linux

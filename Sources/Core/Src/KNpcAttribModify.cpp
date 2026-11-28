@@ -985,7 +985,12 @@ void KNpcAttribModify::CurrentAttrib(KNpc* pNpc, void* pData)
 	if (nType == 317 && nValue > 0 && pNpc->m_CurrentAdditionalAttrib[nType] > 0)
 	{
 		// 原免控属性同时解除现有冻结、眩晕与混乱；负向撤销不再清理。
+		BOOL bFrozen = pNpc->m_FreezeState.nTime > 0;
 		ZeroMemory(&pNpc->m_FreezeState, sizeof(pNpc->m_FreezeState));
+#ifdef _SERVER
+		if (bFrozen)
+			pNpc->SendFreezeStateSync();
+#endif
 		ZeroMemory(&pNpc->m_StunState, sizeof(pNpc->m_StunState));
 		if (pNpc->m_ConfuseState.nTime > 0)
 			pNpc->m_CurrentCamp = pNpc->m_Camp;
