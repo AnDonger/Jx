@@ -75,11 +75,11 @@ int	KNpcFindPath::GetDir(int nXpos,int nYpos, int nDir, int nDestX, int nDestY, 
 
 	int		x, y, nWantDir;
 #ifdef _SERVER
-	if (Npc[m_NpcIdx].IsPlayer())
-		nWantDir = g_GetPlayerMoveDirIndex(nXpos >> 10, nYpos >> 10, nDestX, nDestY);
-	else
+	// Current client uses this movement predictor for players, monsters and summons.
+	nWantDir = g_GetPlayerMoveDirIndex(nXpos >> 10, nYpos >> 10, nDestX, nDestY);
+#else
+	nWantDir = g_GetDirIndex(nXpos >> 10, nYpos >> 10, nDestX, nDestY);
 #endif
-		nWantDir = g_GetDirIndex(nXpos >> 10, nYpos >> 10, nDestX, nDestY);
 	x = g_DirCos(nWantDir, 64) * nMoveSpeed;
 	y = g_DirSin(nWantDir, 64) * nMoveSpeed;
 	// 如果有路，直接走
@@ -269,7 +269,7 @@ BOOL	KNpcFindPath::CheckDistance(int x1, int y1, int x2, int y2, int nDistance)
 int	KNpcFindPath::CheckBarrier(int nChangeX, int nChangeY)
 {
 #ifdef _SERVER
-	return SubWorld[Npc[m_NpcIdx].m_SubWorldIndex].TestBarrierMin(Npc[m_NpcIdx].m_RegionIndex, Npc[m_NpcIdx].m_MapX, Npc[m_NpcIdx].m_MapY, Npc[m_NpcIdx].m_OffX, Npc[m_NpcIdx].m_OffY, nChangeX, nChangeY, !Npc[m_NpcIdx].IsPlayer());
+	return SubWorld[Npc[m_NpcIdx].m_SubWorldIndex].TestBarrierMin(Npc[m_NpcIdx].m_RegionIndex, Npc[m_NpcIdx].m_MapX, Npc[m_NpcIdx].m_MapY, Npc[m_NpcIdx].m_OffX, Npc[m_NpcIdx].m_OffY, nChangeX, nChangeY, FALSE);
 #else
 	if (Npc[m_NpcIdx].m_RegionIndex >= 0)
 		return SubWorld[0].TestBarrierMin(Npc[m_NpcIdx].m_RegionIndex, Npc[m_NpcIdx].m_MapX, Npc[m_NpcIdx].m_MapY, Npc[m_NpcIdx].m_OffX, Npc[m_NpcIdx].m_OffY, nChangeX, nChangeY);

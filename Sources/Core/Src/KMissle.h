@@ -26,6 +26,7 @@
 #include "GameDataDef.h"
 #ifdef _SERVER
 #include "KMissleMagicAttribsData.h"
+#include <vector>
 #endif
 enum 
 {
@@ -161,6 +162,19 @@ public:
 	
 #ifdef _SERVER
 	unsigned long		m_ulNextCalDamageTime;	//	下一次计算伤害的游戏世界时间
+	struct DamageTargetInterval
+	{
+		DWORD dwNpcID;
+		unsigned long ulNextDamageTime;
+	};
+	std::vector<DamageTargetInterval> m_DamageTargetIntervals;
+	BOOL IsPersistentDamage() const
+	{
+		return !m_bIsMelee && !m_bCollideVanish &&
+			m_nDamageRange > 0 &&
+			m_nLifeTime > m_nStartLifeTime &&
+			(unsigned long)(m_nLifeTime - m_nStartLifeTime) > m_ulDamageInterval;
+	}
 #endif
 
 #ifndef _SERVER

@@ -33,6 +33,57 @@
 #include "../../Engine/Src/KSG_StringProcess.h"
 #endif
 
+#ifdef _SERVER
+// 限量记录范围效果的真实结算，区分闪避、空范围和障碍消亡。
+static void TraceMissleImpact(const KMissle& Missle, const char* pszReason, int nTarget, int nOldLife, int nResult)
+{
+	if (Missle.m_nDamageRange <= 1 || Missle.m_nLauncher <= 0 || Missle.m_nLauncher >= MAX_NPC)
+		return;
+	if (nTarget <= 0 || nTarget >= MAX_NPC)
+		nTarget = Missle.m_nFollowNpcIdx;
+	int nOwner = Npc[Missle.m_nLauncher].GetCombatOwner();
+	if (nOwner <= 0 && nTarget > 0 && nTarget < MAX_NPC)
+		nOwner = Npc[nTarget].GetCombatOwner();
+	if (nOwner <= 0 || nOwner >= MAX_NPC)
+		return;
+	int nPlayer = Npc[nOwner].GetPlayerIdx();
+	if (nPlayer <= 0 || nPlayer >= MAX_PLAYER)
+		return;
+	static DWORD Window[MAX_PLAYER] = {0};
+	static int Counts[MAX_PLAYER] = {0};
+	DWORD dwNow = GetTickCount();
+	if (dwNow - Window[nPlayer] >= 2000)
+	{
+		Window[nPlayer] = dwNow;
+		Counts[nPlayer] = 0;
+	}
+	if (Counts[nPlayer]++ >= 256)
+		return;
+	int x = 0, y = 0, tx = 0, ty = 0, nLife = -1, nDefend = -1;
+	DWORD dwTarget = 0;
+	SubWorld[Missle.m_nSubWorldId].Map2Mps(Missle.m_nRegionId, Missle.m_nCurrentMapX,
+		Missle.m_nCurrentMapY, Missle.m_nXOffset, Missle.m_nYOffset, &x, &y);
+	if (nTarget > 0 && nTarget < MAX_NPC && Npc[nTarget].m_Index)
+	{
+		Npc[nTarget].GetMpsPos(&tx, &ty);
+		dwTarget = Npc[nTarget].m_dwID;
+		nLife = Npc[nTarget].m_CurrentLife;
+		nDefend = Npc[nTarget].m_CurrentDefend;
+	}
+	int nAR = Missle.m_pMagicAttribsData && Missle.m_pMagicAttribsData->m_pDamageMagicAttribs ?
+		Missle.m_pMagicAttribsData->m_pDamageMagicAttribs[0].nValue[0] : -1;
+	SYSTEMTIME time;
+	GetLocalTime(&time);
+	printf("[MissileTrace] %02u:%02u:%02u.%03u reason=%s role=%s launcher=%lu skill=%d missile=%d born=%lu life=%d/%d start=%d pos=%d,%d z=%d target=%lu targetPos=%d,%d hp=%d->%d ar=%d defend=%d useAR=%d result=%d\n",
+		time.wHour, time.wMinute, time.wSecond, time.wMilliseconds, pszReason, Npc[nOwner].Name,
+		Missle.m_dwLauncherId, Missle.m_nSkillId, Missle.m_nMissleId, Missle.m_dwBornTime,
+		Missle.m_nCurrentLife, Missle.m_nLifeTime, Missle.m_nStartLifeTime, x, y,
+		Missle.m_nCurrentMapZ, dwTarget, tx, ty, nOldLife, nLife, nAR, nDefend,
+		Missle.m_bUseAttackRating, nResult);
+	fflush(stdout);
+}
+#endif
+
 TCollisionMatrix g_CollisionMatrix[64] =
 {
 	{0,	0, -1, 1, 0, 1, 1, 1}, // 0--------
@@ -171,6 +222,7 @@ void KMissle::Release()
 		m_pMagicAttribsData = NULL;
 	}
 	m_ulNextCalDamageTime = 0;
+	m_DamageTargetIntervals.clear();
 #endif
 	// 服务端也必须释放实体标识，避免已结束的子弹继续参与逐帧处理。
 	m_nMissleId = -1;
@@ -381,7 +433,12 @@ int KMissle::Activate()
 	{
 		if (m_bAutoExplode)
 		{
+#ifdef _SERVER
+			int nCollisionCount = ProcessCollision();
+			TraceMissleImpact(*this, "expiry", 0, -1, nCollisionCount);
+#else
 			ProcessCollision();//处理碰撞
+#endif
 		}
 		DoVanish();
 #ifdef _SERVER
@@ -507,6 +564,19 @@ int KMissle::CheckCollision()
 		return -1;
 	}
 
+#ifdef _SERVER
+	// 持续范围按当前伤害区扫描，不依赖初次碰撞目标或较小的碰撞探测区。
+	if (IsPersistentDamage() && m_eMoveKind == MISSLE_MMK_Stand)
+	{
+		if (ProcessCollision() > 0)
+		{
+			DoCollision();
+			return 1;
+		}
+		return 0;
+	}
+#endif
+
 	int nAbsX = 0;
 	int nAbsY = 0;
 	int nCellWidth = CellWidth;
@@ -541,10 +611,21 @@ int KMissle::CheckCollision()
 
 		if (nNpcIdx > 0)
 		{ 
+#ifdef _SERVER
+			int nCollisionCount = 0;
+			if (m_nDamageRange == 1)
+				nCollisionCount = ProcessCollision(m_nLauncher, Npc[nNpcIdx].m_RegionIndex, Npc[nNpcIdx].m_MapX, Npc[nNpcIdx].m_MapY, m_nDamageRange, m_eRelation);
+			else
+				nCollisionCount = ProcessCollision();
+			// 探测到目标不代表进入伤害范围；闪避目标仍计为一次有效碰撞。
+			if (m_nDamageRange > 0 && nCollisionCount <= 0)
+				return 0;
+#else
 			if (m_nDamageRange == 1)//在目标Npc处碰撞
 				ProcessCollision(m_nLauncher, Npc[nNpcIdx].m_RegionIndex , Npc[nNpcIdx].m_MapX, Npc[nNpcIdx].m_MapY, m_nDamageRange , m_eRelation);
 			else
 				ProcessCollision();//在子弹位置处理碰撞
+#endif
 			DoCollision();//子弹作碰撞后的效果
 			return 1;
 		}
@@ -561,7 +642,14 @@ int KMissle::CheckCollision()
 				nNpcIdx = SubWorld[m_nSubWorldId].m_Region[nSearchRegion].FindNpc(nRMx, nRMy, m_nLauncher, m_eRelation);
 				if (nNpcIdx > 0)
 				{
+#ifdef _SERVER
+					// 碰撞探测范围可能大于实际伤害范围，不能提前消耗落地或持续效果。
+					int nCollisionCount = ProcessCollision();
+					if (m_nDamageRange > 0 && nCollisionCount <= 0)
+						return 0;
+#else
 					ProcessCollision();//处理碰撞
+#endif
 					DoCollision();//子弹作碰撞后的效果
 					return 1;
 				}
@@ -605,6 +693,9 @@ void KMissle::OnFly()
 	//检测当前位置是否有障碍
 	if (TestBarrier()) 
 	{
+#ifdef _SERVER
+		TraceMissleImpact(*this, "barrier", 0, -1, 0);
+#endif
 #ifndef _SERVER 
 		int nSrcX3 = 0 ;
 		int nSrcY3 = 0 ;
@@ -818,7 +909,12 @@ void KMissle::OnFly()
 		{
 			if (m_bAutoExplode)
 			{
+#ifdef _SERVER
+				int nCollisionCount = ProcessCollision();
+				TraceMissleImpact(*this, "landing", 0, -1, nCollisionCount);
+#else
 				ProcessCollision();//处理碰撞
+#endif
 			}
 #ifndef _SERVER 
 			int nSrcX4 = 0 ;
@@ -1017,6 +1113,10 @@ KMissle&	KMissle::operator=(KMissle& Missle)
 	Missle.m_nHeightSpeed	=	m_nHeightSpeed;
 	Missle.m_bAutoExplode	=	m_bAutoExplode;
 	Missle.m_ulDamageInterval = m_ulDamageInterval;
+#ifdef _SERVER
+	Missle.m_ulNextCalDamageTime = 0;
+	Missle.m_DamageTargetIntervals.clear();
+#endif
 	strcpy(Missle.m_szMissleName	,	m_szMissleName);
 	
 #ifndef  _SERVER
@@ -1076,7 +1176,9 @@ BOOL KMissle::ProcessDamage(int nNpcId)
 	if (m_pMagicAttribsData) 
 	{
 		int nOldLife = Npc[nNpcId].m_CurrentLife;
-		if (Npc[nNpcId].ReceiveDamage(m_nLauncher, m_bIsMelee, m_pMagicAttribsData->m_pDamageMagicAttribs, m_bUseAttackRating, m_nDoHurtPercent))
+		BOOL bReceived = Npc[nNpcId].ReceiveDamage(m_nLauncher, m_bIsMelee, m_pMagicAttribsData->m_pDamageMagicAttribs, m_bUseAttackRating, m_nDoHurtPercent);
+		TraceMissleImpact(*this, bReceived ? "hit" : "rejected-hit", nNpcId, nOldLife, bReceived);
+		if (bReceived)
 		{
 			if (Npc[m_nLauncher].IsPlayer() && Npc[nNpcId].m_Kind == kind_normal &&
 				(Npc[nNpcId].m_CurrentLife < nOldLife || m_pMagicAttribsData->m_nStateMagicAttribsNum > 0))
@@ -1246,7 +1348,9 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 	return 0;
 #endif
 #ifdef _SERVER
-	if (m_ulDamageInterval)
+	BOOL bPersistentDamage = IsPersistentDamage();
+	unsigned long ulNow = g_SubWorldSet.GetGameTime();
+	if (m_ulDamageInterval && !bPersistentDamage)
 	{
 		if (m_ulNextCalDamageTime > g_SubWorldSet.GetGameTime())
 		{
@@ -1269,6 +1373,17 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 	int	nRet = 0;
 	int	nRMx, nRMy, nSearchRegion;
 #ifdef _SERVER
+	// 只保留尚在间隔内的实体；离开再进入不会重置该实体的间隔。
+	for (size_t n = 0; n < m_DamageTargetIntervals.size(); )
+	{
+		if (m_DamageTargetIntervals[n].ulNextDamageTime <= ulNow)
+		{
+			m_DamageTargetIntervals[n] = m_DamageTargetIntervals.back();
+			m_DamageTargetIntervals.pop_back();
+		}
+		else
+			++n;
+	}
 	struct CollisionTarget
 	{
 		int nIndex;
@@ -1315,7 +1430,7 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 					Target.nIndex = nIndex;
 					Target.dwID = Npc[nIndex].m_dwID;
 					Targets.push_back(Target);
-					if (nRange == 1)
+					if (nRange == 1 && !bPersistentDamage)
 						break;
 				}
 				pNode = (KIndexNode*)pNode->GetNext();
@@ -1345,6 +1460,25 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 		if (Npc[nIndex].IsMatch(Targets[n].dwID) && Npc[nIndex].m_SubWorldIndex == nSubWorld &&
 			Npc[nIndex].m_RegionIndex >= 0 && (NpcSet.GetRelation(nLauncherIdx, nIndex) & eRelation))
 		{
+			if (bPersistentDamage && m_ulDamageInterval)
+			{
+				BOOL bWaiting = FALSE;
+				for (size_t t = 0; t < m_DamageTargetIntervals.size(); t++)
+				{
+					if (m_DamageTargetIntervals[t].dwNpcID == Targets[n].dwID)
+					{
+						bWaiting = TRUE;
+						break;
+					}
+				}
+				if (bWaiting)
+					continue;
+				DamageTargetInterval Interval;
+				Interval.dwNpcID = Targets[n].dwID;
+				Interval.ulNextDamageTime = ulNow + m_ulDamageInterval;
+				m_DamageTargetIntervals.push_back(Interval);
+			}
+			// 闪避也消耗本次受击机会，不可下一帧重掷直到命中。
 			ProcessDamage(nIndex);
 			nRet++;
 		}
@@ -1353,7 +1487,7 @@ int KMissle::ProcessCollision(int nLauncherIdx, int nRegionId, int nMapX, int nM
 	// Empty probes must not consume the hit interval while a projectile approaches.
 	// Otherwise a short-range projectile can pass its target before the next probe.
 #ifdef _SERVER
-	if (nRet > 0 && m_ulDamageInterval)
+	if (nRet > 0 && m_ulDamageInterval && !bPersistentDamage)
 		m_ulNextCalDamageTime = g_SubWorldSet.GetGameTime() + m_ulDamageInterval;
 #endif
 	return nRet;

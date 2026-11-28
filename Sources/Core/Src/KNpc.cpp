@@ -407,11 +407,11 @@ int		IR_IsTimePassed(unsigned int uInterval, unsigned int& uLastTimer);
 #ifdef _SERVER
 void KNpc::TraceCombat(int nStage, int nSkill, int nTarget)
 {
-	static const char* Stages[] = {"request", "target-missing", "action-busy", "rejected", "accepted", "effect", "interrupted"};
+	static const char* Stages[] = {"request", "target-missing", "action-busy", "rejected", "accepted", "effect", "interrupted", "cooldown"};
 	static DWORD Ids[MAX_PLAYER] = {0};
-	static DWORD Last[MAX_PLAYER][7] = {0};
+	static DWORD Last[MAX_PLAYER][8] = {0};
 	if (!IsPlayer() || m_nPlayerIdx <= 0 || m_nPlayerIdx >= MAX_PLAYER ||
-		nStage < 0 || nStage >= 7 || m_SubWorldIndex < 0 || m_RegionIndex < 0)
+		nStage < 0 || nStage >= 8 || m_SubWorldIndex < 0 || m_RegionIndex < 0)
 		return;
 	if (Ids[m_nPlayerIdx] != m_dwID)
 	{
@@ -438,13 +438,14 @@ void KNpc::TraceCombat(int nStage, int nSkill, int nTarget)
 	const KSkill* skill = (const KSkill*)g_SkillManager.GetSkill(nSkill, m_SkillList.GetCurrentLevel(nSkill));
 	SYSTEMTIME time;
 	GetLocalTime(&time);
-	printf("[CombatTrace] %02u:%02u:%02u.%03u stage=%s role=%s player=%d npc=%lu world=%lu region=%d active=%d skill=%d doing=%d frame=%d/%d ai=%d state=%d hp=%d mana=%d freeze=%d stun=%d pos=%d,%d target=%lu targetRegion=%d targetLife=%d targetPos=%d,%d distance=%d radius=%d\n",
+	printf("[CombatTrace] %02u:%02u:%02u.%03u stage=%s role=%s player=%d npc=%lu world=%lu region=%d active=%d skill=%d doing=%d frame=%d/%d ai=%d state=%d hp=%d mana=%d freeze=%d stun=%d pos=%d,%d target=%lu targetRegion=%d targetLife=%d targetPos=%d,%d distance=%d radius=%d worldFrame=%lu cooldown=%lu\n",
 		time.wHour, time.wMinute, time.wSecond, time.wMilliseconds, Stages[nStage], Name,
 		m_nPlayerIdx, m_dwID, SubWorld[m_SubWorldIndex].m_SubWorldID, m_RegionIndex,
 		SubWorld[m_SubWorldIndex].m_Region[m_RegionIndex].IsActive(), nSkill, m_Doing,
 		m_Frames.nCurrentFrame, m_Frames.nTotalFrame, m_ProcessAI, m_ProcessState,
 		m_CurrentLife, m_CurrentMana, m_FreezeState.nTime, m_StunState.nTime,
-		x, y, targetId, targetRegion, targetLife, tx, ty, distance, skill ? skill->GetAttackRadius() : -1);
+		x, y, targetId, targetRegion, targetLife, tx, ty, distance, skill ? skill->GetAttackRadius() : -1,
+		SubWorld[m_SubWorldIndex].m_dwCurrentTime, m_SkillList.GetPlayerSkillCooldownFrames(nSkill));
 	fflush(stdout);
 }
 #endif
@@ -664,8 +665,15 @@ void KNpc::ProcCommand(int nAI)
 				if (!m_SkillList.CanCast(m_Command.Param_X, SubWorld[m_SubWorldIndex].m_dwCurrentTime))
 				{
 #ifdef _SERVER
-					// 冷却内请求只补同步真实到期帧，不再次施法、扣蓝或延长冷却。
-					if (m_SkillList.GetPlayerSkillCooldownFrames(m_Command.Param_X))
+					TraceCombat(7, m_Command.Param_X, m_Command.Param_Y == -1 ? m_Command.Param_Z : 0);
+					DWORD dwRemaining = m_SkillList.GetPlayerSkillCooldownFrames(m_Command.Param_X);
+					// Keep only near-expiry input (at most 3 logic frames), never cast early.
+					// The normal command slot lets a later move, stop or skill replace it.
+					if (dwRemaining > 0 && dwRemaining <= 3 && IsPlayer() &&
+						m_CurrentLife > 0 && m_nPlayerIdx > 0 && m_nPlayerIdx < MAX_PLAYER &&
+						Player[m_nPlayerIdx].m_bFinishLoading && !Player[m_nPlayerIdx].m_bExchangeServer)
+						return;
+					if (dwRemaining)
 						m_SkillList.SyncPlayerSkillCooldowns(m_Command.Param_X);
 #endif
 					break;
@@ -1566,9 +1574,18 @@ void KNpc::DoStand()
 	}
 	else
 	{
+#ifdef _SERVER
+		BOOL bStopMovement = !IsPlayer() && (m_Doing == do_walk || m_Doing == do_run);
+#endif
 		m_Doing = do_stand;
 		m_Frames.nCurrentFrame = 0;
 		GetMpsPos(&m_DesX, &m_DesY);
+#ifdef _SERVER
+		// End the remote predictor at our real endpoint, including fixed-point offsets.
+		// Compact status alone may be ignored by the client's prediction mode.
+		if (bStopMovement)
+			SyncMovement((BYTE)s2c_npcwalk);
+#endif
 #ifndef _SERVER
 		if (m_FightMode)
 			m_ClientDoing = cdo_fightstand;
@@ -1704,42 +1721,7 @@ void KNpc::DoRun()
 
 #ifdef _SERVER
 
-	GAME_NPC_MOVE_SYNC NetCommand;
-	memset(&NetCommand, 0, sizeof(NetCommand));
-	NetCommand.ProtocolType = (BYTE)s2c_npcrun;
-	NetCommand.ID = m_dwID;
-	int nMpsX, nMpsY;
-	GetMpsPos(&nMpsX, &nMpsY);
-	NetCommand.MapX = (WORD)nMpsX;
-	NetCommand.MapY = (WORD)nMpsY;
-	NetCommand.MapHigh = (BYTE)(((nMpsX >> 16) & 15) | ((nMpsY >> 12) & 240));
-	NetCommand.OffX = (WORD)m_OffX;
-	NetCommand.OffY = (WORD)m_OffY;
-	NetCommand.TargetX = (WORD)m_DesX;
-	NetCommand.TargetY = (WORD)m_DesY;
-	NetCommand.TargetHigh = (BYTE)(((m_DesX >> 16) & 15) | ((m_DesY >> 12) & 240));
-
-	POINT	POff[8] = 
-	{
-		{0, 32},
-		{-16, 32},
-		{-16, 0},
-		{-16, -32},
-		{0, -32},
-		{16, -32},
-		{16, 0},
-		{16, 32},
-	};
-
-	int nMaxCount = MAX_BROADCAST_COUNT;
-	CURREGION.BroadCast(&NetCommand, sizeof(NetCommand), nMaxCount, m_MapX, m_MapY);
-	int i;
-	for (i = 0; i < 8; i++)
-	{
-		if (CONREGIONIDX(i) == -1)
-			continue;
-		CONREGION(i).BroadCast(&NetCommand, sizeof(NetCommand), nMaxCount, m_MapX - POff[i].x, m_MapY - POff[i].y);
-	}
+	SyncMovement((BYTE)s2c_npcrun);
 #endif
 
 	if (m_Doing == do_run)
@@ -1848,6 +1830,7 @@ void KNpc::DoSkill(int nX, int nY)
 		if (!m_SkillList.CanCast(m_ActiveSkillID, SubWorld[m_SubWorldIndex].m_dwCurrentTime))
 		{
 #ifdef _SERVER
+			TraceCombat(7, m_ActiveSkillID, nX == -1 ? nY : 0);
 			if (m_SkillList.GetPlayerSkillCooldownFrames(m_ActiveSkillID))
 				m_SkillList.SyncPlayerSkillCooldowns(m_ActiveSkillID);
 #endif
@@ -1952,10 +1935,10 @@ void KNpc::DoSkill(int nX, int nY)
 #ifdef _SERVER
 				if (IsPlayer() && ((KSkill*)pSkill)->GetDelayPerCast(m_Index) > 0)
 				{
-					// The client predicts animation-end + configured delay at its effect frame.
-					// Reserve that endpoint after the actual action length is known. The cast
-					// broadcast above must reach the client before its authoritative timer.
-					int nActionFrames = max(0, m_Frames.nTotalFrame - m_Frames.nCurrentFrame);
+					// ProcStatus advances the first action frame in this same activation.
+					// Match the client's effect-frame endpoint: now - current + total + delay.
+					// Do not count the already scheduled first tick a second time.
+					int nActionFrames = max(0, m_Frames.nTotalFrame - m_Frames.nCurrentFrame - 1);
 					m_SkillList.SetNextCastTime(m_ActiveSkillID,
 						SubWorld[m_SubWorldIndex].m_dwCurrentTime + nActionFrames +
 						((KSkill*)pSkill)->GetDelayPerCast(m_Index));
@@ -2288,27 +2271,14 @@ void KNpc::Goto(int nMpsX, int nMpsY)
 		DoWalk();
 }
 
-void KNpc::DoWalk()
-{
 #ifdef _SERVER
-	if (m_CurrentAdditionalAttrib[288] > 0 && !m_CurrentAdditionalAttrib[317])
-	{
-		DoStand();
-		m_ProcessAI = 1;
+void KNpc::SyncMovement(BYTE bProtocol)
+{
+	if (!m_Index || m_SubWorldIndex < 0 || m_RegionIndex < 0)
 		return;
-	}
-#endif
-	_ASSERT(m_RegionIndex >= 0);
-
-	if (m_CurrentWalkSpeed)
-		m_Frames.nTotalFrame = (m_WalkFrame * m_WalkSpeed) / m_CurrentWalkSpeed + 1;
-	else
-		m_Frames.nTotalFrame = m_WalkFrame;
-	
-#ifdef _SERVER		// Server端的代码
 	GAME_NPC_MOVE_SYNC NetCommand;
 	memset(&NetCommand, 0, sizeof(NetCommand));
-	NetCommand.ProtocolType = (BYTE)s2c_npcwalk;
+	NetCommand.ProtocolType = bProtocol;
 	NetCommand.ID = m_dwID;
 	int nMpsX, nMpsY;
 	GetMpsPos(&nMpsX, &nMpsY);
@@ -2340,7 +2310,29 @@ void KNpc::DoWalk()
 		if (CONREGIONIDX(i) == -1)
 			continue;
 		CONREGION(i).BroadCast(&NetCommand, sizeof(NetCommand), nMaxCount, m_MapX - POff[i].x, m_MapY - POff[i].y);
-	}	
+	}
+}
+#endif
+
+void KNpc::DoWalk()
+{
+#ifdef _SERVER
+	if (m_CurrentAdditionalAttrib[288] > 0 && !m_CurrentAdditionalAttrib[317])
+	{
+		DoStand();
+		m_ProcessAI = 1;
+		return;
+	}
+#endif
+	_ASSERT(m_RegionIndex >= 0);
+
+	if (m_CurrentWalkSpeed)
+		m_Frames.nTotalFrame = (m_WalkFrame * m_WalkSpeed) / m_CurrentWalkSpeed + 1;
+	else
+		m_Frames.nTotalFrame = m_WalkFrame;
+
+#ifdef _SERVER		// Server端的代码
+	SyncMovement((BYTE)s2c_npcwalk);
 #endif
 
 	if (m_Doing == do_walk)
@@ -3683,7 +3675,11 @@ BOOL KNpc::ReconcilePlayerMovement(DWORD dwClientFrame, int nFrames, int nX, int
 	int nBestDistance = nDistance;
 	for (int i = 0; i < nMissing; i++)
 	{
-		if (g_GetDistance(nFixedX >> 10, nFixedY >> 10, m_DesX, m_DesY) <= nSpeed)
+		// Match the native pathfinder: a step is allowed at distance >= speed.
+		// Rounded integer distance would discard valid final steps near the boundary.
+		LONGLONG nDeltaToX = (nFixedX >> 10) - m_DesX;
+		LONGLONG nDeltaToY = (nFixedY >> 10) - m_DesY;
+		if (nDeltaToX * nDeltaToX + nDeltaToY * nDeltaToY < (LONGLONG)nSpeed * nSpeed)
 			break;
 		int nDir = g_GetPlayerMoveDirIndex(nFixedX >> 10, nFixedY >> 10, m_DesX, m_DesY);
 		int nDeltaX = g_DirCos(nDir, 64) * nSpeed;
@@ -4018,6 +4014,7 @@ void KNpc::Load(int nNpcSettingIdx, int nLevel)
 		m_WalkSpeed = NpcSet.GetPlayerWalkSpeed();
 		m_RunSpeed = NpcSet.GetPlayerRunSpeed();
 		m_AttackFrame = NpcSet.GetPlayerAttackFrame();
+		m_CastFrame = NpcSet.GetPlayerCastFrame();
 		m_HurtFrame	= NpcSet.GetPlayerHurtFrame();
 	}
 	else

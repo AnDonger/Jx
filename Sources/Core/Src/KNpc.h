@@ -708,6 +708,7 @@ public:
 	BOOL				SendPositionSync(int nClient);
 	void				TraceCombat(int nStage, int nSkill, int nTarget);
 	void SendItemBuffGraphics(int nClient = -1);
+	void SyncMovement(BYTE bProtocol);
 	void SendFreezeStateSync(int nClient = -1);
 	BOOL CanPolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds, int nBuffTemplate = 0);
 	BOOL PolyMorph(int nType, BOOL bCanCast, int nSafeGuard, int nSpeed, int nSeconds, int nBuffTemplate = 0, DWORD dwItemEndTime = 0);

@@ -68,6 +68,7 @@ typedef struct
 	int		nWalkSpeed;
 	int		nRunSpeed;
 	int		nAttackFrame;
+	int		nCastFrame;
 	int		nHurtFrame;
 } PlayerBaseValue;
 
@@ -130,6 +131,7 @@ public:
 	int				GetPlayerWalkSpeed() { return m_cPlayerBaseValue.nWalkSpeed; };
 	int				GetPlayerRunSpeed() { return m_cPlayerBaseValue.nRunSpeed; };
 	int				GetPlayerAttackFrame() { return m_cPlayerBaseValue.nAttackFrame; };
+	int				GetPlayerCastFrame() { return m_cPlayerBaseValue.nCastFrame; };
 	int				GetPlayerHurtFrame() { return m_cPlayerBaseValue.nHurtFrame; };
 #ifndef _SERVER
 	int				GetPlayerStandFrame(BOOL bMale) 
